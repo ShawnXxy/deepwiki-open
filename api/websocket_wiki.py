@@ -499,8 +499,14 @@ This file contains...
 
             # Initialize Azure AI client
             model = AzureAIClient()
+            
+            # For Azure OpenAI, we need to use deployment name instead of model name
+            from api.config import get_azure_deployment_name
+            deployment_name = get_azure_deployment_name(request.model)
+            logger.info(f"Using Azure deployment: {deployment_name}")
+            
             model_kwargs = {
-                "model": request.model,
+                "model": deployment_name,  # Use deployment name
                 "stream": True,
                 "temperature": model_config["temperature"],
                 "top_p": model_config["top_p"]
