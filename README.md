@@ -4,7 +4,10 @@
 
 **DeepWiki** is my own implementation attempt of DeepWiki, automatically creates beautiful, interactive wikis for any GitHub, GitLab, or BitBucket repository! Just enter a repo name, and DeepWiki will:
 
-1. Analyze the code structure
+1. Analyze the2. **Add to your `.env` file** (see `.env.example` for full template):
+   ```bash
+   AZURE_OPENAI_EMBEDDING_API_KEY=your_api_key
+   AZURE_OPENAI_EMBEDDING_ENDPOINT=https://your-resource.openai.azure.come structure
 2. Generate comprehensive documentation
 3. Create visual diagrams to explain how everything works
 4. Organize it all into an easy-to-navigate wiki
@@ -36,7 +39,9 @@
 git clone https://github.com/AsyncFuncAI/deepwiki-open.git
 cd deepwiki-open
 
-# Create a .env file with your API keys
+# Create a .env file from the example template
+cp .env.example .env
+# Edit .env with your actual API keys, or create manually:
 echo "GOOGLE_API_KEY=your_google_api_key" > .env
 echo "OPENAI_API_KEY=your_openai_api_key" >> .env
 # Optional: Add OpenRouter API key if you want to use OpenRouter models
@@ -65,7 +70,7 @@ For detailed instructions on using DeepWiki with Ollama and Docker, see [Ollama 
 
 #### Step 1: Set Up Your API Keys
 
-Create a `.env` file in the project root with these keys:
+Create a `.env` file in the project root with these keys (you can copy from `.env.example`):
 
 ```
 # Not required if using Azure OpenAI model
