@@ -198,7 +198,9 @@ export default function RepoWikiPage() {
       ? 'gitlab'
       : repoUrl?.includes('github.com')
         ? 'github'
-        : searchParams.get('type') || 'github';
+        : repoUrl?.includes('dev.azure.com') || repoUrl?.includes('visualstudio.com')
+          ? 'azuredevops'
+          : searchParams.get('type') || 'github';
 
   // Import language context for translations
   const { messages } = useLanguage();
@@ -1451,6 +1453,43 @@ IMPORTANT:
           }
         } catch (err) {
           console.warn('Could not fetch Bitbucket README.md, continuing with empty README', err);
+        }
+      }
+      else if (effectiveRepoInfo.type === 'azuredevops') {
+        // Azure DevOps API approach
+        try {
+          setLoadingMessage(messages.loading?.fetchingStructure || 'Fetching Azure DevOps repository structure...');
+
+          // Use the data pipeline API for Azure DevOps repositories
+          const response = await fetch('/api/azure-devops/structure', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              repo_url: effectiveRepoInfo.repoUrl,
+              token: currentToken
+            })
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => 'No error details available');
+            throw new Error(`Azure DevOps API error (${response.status}): ${errorText}`);
+          }
+
+          const data = await response.json();
+          fileTreeData = data.file_tree || '';
+          readmeContent = data.readme || '';
+          
+          // Store the default branch in state (Azure DevOps typically uses 'main' or 'master')
+          setDefaultBranch(data.default_branch || 'main');
+
+          if (!fileTreeData) {
+            throw new Error('Could not fetch repository structure. Repository might not exist, be empty or private. Please check your Personal Access Token (PAT).');
+          }
+        } catch (err) {
+          console.error('Error fetching Azure DevOps repository structure:', err);
+          throw err;
         }
       }
 

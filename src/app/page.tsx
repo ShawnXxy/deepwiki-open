@@ -188,7 +188,6 @@ export default function Home() {
 
     // Handle Windows absolute paths (e.g., C:\path\to\folder)
     const windowsPathRegex = /^[a-zA-Z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*$/;
-    const customGitRegex = /^(?:https?:\/\/)?([^\/]+)\/(.+?)\/([^\/]+)(?:\.git)?\/?$/;
 
     if (windowsPathRegex.test(input)) {
       type = 'local';
@@ -203,32 +202,67 @@ export default function Home() {
       repo = input.split('/').filter(Boolean).pop() || 'local-repo';
       owner = 'local';
     }
-    else if (customGitRegex.test(input)) {
-      // Detect repository type based on domain
-      const domain = extractUrlDomain(input);
-      if (domain?.includes('github.com')) {
-        type = 'github';
-      } else if (domain?.includes('gitlab.com') || domain?.includes('gitlab.')) {
-        type = 'gitlab';
-      } else if (domain?.includes('bitbucket.org') || domain?.includes('bitbucket.')) {
-        type = 'bitbucket';
-      } else if (domain?.includes('dev.azure.com') || domain?.includes('visualstudio.com')) {
-        type = 'azuredevops';
-      } else {
-        type = 'web'; // fallback for other git hosting services
-      }
-
-      fullPath = extractUrlPath(input)?.replace(/\.git$/, '');
-      const parts = fullPath?.split('/') ?? [];
-      if (parts.length >= 2) {
-        repo = parts[parts.length - 1] || '';
-        owner = parts[parts.length - 2] || '';
+    else if (input.includes('dev.azure.com') || input.includes('visualstudio.com')) {
+      // Handle Azure DevOps URLs specifically
+      type = 'azuredevops';
+      
+      // Azure DevOps URL patterns:
+      // https://dev.azure.com/{organization}/{project}/_git/{repository}
+      // https://{organization}.visualstudio.com/{project}/_git/{repository}
+      
+      try {
+        const url = new URL(input);
+        
+        if (url.hostname === 'dev.azure.com') {
+          // Format: dev.azure.com/{organization}/{project}/_git/{repository}
+          const pathParts = url.pathname.split('/').filter(Boolean);
+          if (pathParts.length >= 4 && pathParts[2] === '_git') {
+            owner = pathParts[0]; // organization
+            repo = pathParts[3];  // repository
+            fullPath = `${pathParts[0]}/${pathParts[1]}/_git/${pathParts[3]}`;
+          }
+        } else if (url.hostname.includes('visualstudio.com')) {
+          // Format: {organization}.visualstudio.com/{project}/_git/{repository}
+          const pathParts = url.pathname.split('/').filter(Boolean);
+          if (pathParts.length >= 3 && pathParts[1] === '_git') {
+            owner = url.hostname.split('.')[0]; // organization from subdomain
+            repo = pathParts[2]; // repository
+            fullPath = `${owner}/${pathParts[0]}/_git/${pathParts[2]}`;
+          }
+        }
+      } catch (error) {
+        console.error('Error parsing Azure DevOps URL:', error);
+        return null;
       }
     }
-    // Unsupported URL formats
     else {
-      console.error('Unsupported URL format:', input);
-      return null;
+      // Handle other git hosting services
+      const customGitRegex = /^(?:https?:\/\/)?([^\/]+)\/(.+?)\/([^\/]+)(?:\.git)?\/?$/;
+      
+      if (customGitRegex.test(input)) {
+        // Detect repository type based on domain
+        const domain = extractUrlDomain(input);
+        if (domain?.includes('github.com')) {
+          type = 'github';
+        } else if (domain?.includes('gitlab.com') || domain?.includes('gitlab.')) {
+          type = 'gitlab';
+        } else if (domain?.includes('bitbucket.org') || domain?.includes('bitbucket.')) {
+          type = 'bitbucket';
+        } else {
+          type = 'web'; // fallback for other git hosting services
+        }
+
+        fullPath = extractUrlPath(input)?.replace(/\.git$/, '');
+        const parts = fullPath?.split('/') ?? [];
+        if (parts.length >= 2) {
+          repo = parts[parts.length - 1] || '';
+          owner = parts[parts.length - 2] || '';
+        }
+      } else {
+        // Unsupported URL formats
+        console.error('Unsupported URL format:', input);
+        return null;
+      }
     }
 
     if (!owner || !repo) {
