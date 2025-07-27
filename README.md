@@ -2,7 +2,7 @@
 
 ![DeepWiki Banner](screenshots/Deepwiki.png)
 
-**DeepWiki** is my own implementation attempt of DeepWiki, automatically creates beautiful, interactive wikis for any GitHub, GitLab, or BitBucket repository! Just enter a repo name, and DeepWiki will:
+**DeepWiki** is my own implementation attempt of DeepWiki, automatically creates beautiful, interactive wikis for any GitHub, GitLab, BitBucket, or Azure DevOps repository! Just enter a repo name, and DeepWiki will:
 
 1. Analyze the2. **Add to your `.env` file** (see `.env.example` for full template):
    ```bash
@@ -21,7 +21,7 @@
 
 ## ✨ Features
 
-- **Instant Documentation**: Turn any GitHub, GitLab or BitBucket repo into a wiki in seconds
+- **Instant Documentation**: Turn any GitHub, GitLab, BitBucket, or Azure DevOps repo into a wiki in seconds
 - **Private Repository Support**: Securely access private repositories with personal access tokens
 - **Smart Analysis**: AI-powered understanding of code structure and relationships
 - **Beautiful Diagrams**: Automatic Mermaid diagrams to visualize architecture and data flow
@@ -129,15 +129,15 @@ yarn dev
 #### Step 4: Use DeepWiki!
 
 1. Open [http://localhost:3000](http://localhost:3000) in your browser
-2. Enter a GitHub, GitLab, or Bitbucket repository (like `https://github.com/openai/codex`, `https://github.com/microsoft/autogen`, `https://gitlab.com/gitlab-org/gitlab`, or `https://bitbucket.org/redradish/atlassian_app_versions`)
-3. For private repositories, click "+ Add access tokens" and enter your GitHub or GitLab personal access token
+2. Enter a GitHub, GitLab, BitBucket, or Azure DevOps repository (like `https://github.com/openai/codex`, `https://github.com/microsoft/autogen`, `https://gitlab.com/gitlab-org/gitlab`, `https://bitbucket.org/redradish/atlassian_app_versions`, or `https://dev.azure.com/microsoft/vscode/_git/vscode`)
+3. For private repositories, click "+ Add access tokens" and enter your GitHub, GitLab, BitBucket, or Azure DevOps personal access token
 4. Click "Generate Wiki" and watch the magic happen!
 
 ## 🔍 How It Works
 
 DeepWiki uses AI to:
 
-1. Clone and analyze the GitHub, GitLab, or Bitbucket repository (including private repos with token authentication)
+1. Clone and analyze the GitHub, GitLab, BitBucket, or Azure DevOps repository (including private repos with token authentication)
 2. Create embeddings of the code for smart retrieval
 3. Generate documentation with context-aware AI (using Google Gemini, OpenAI, OpenRouter, Azure OpenAI, or local Ollama models)
 4. Create visual diagrams to explain code relationships
