@@ -264,10 +264,22 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
       let planContent = '';
 
       try {
-        // Create WebSocket URL from the server base URL
-        const serverBaseUrl = process.env.SERVER_BASE_URL || 'http://localhost:8001';
-        const wsBaseUrl = serverBaseUrl.replace(/^http/, 'ws')? serverBaseUrl.replace(/^https/, 'wss'): serverBaseUrl.replace(/^http/, 'ws');
-        const wsUrl = `${wsBaseUrl}/ws/chat`;
+        // Create WebSocket URL with proper network detection
+        const getWebSocketUrl = () => {
+          // For client-side, derive from current window location
+          if (typeof window !== 'undefined') {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const hostname = window.location.hostname;
+            const port = '8001'; // Backend port
+            return `${protocol}//${hostname}:${port}/ws/chat`;
+          }
+          
+          // Fallback for server-side rendering
+          return 'ws://localhost:8001/ws/chat';
+        };
+        
+        const wsUrl = getWebSocketUrl();
+        console.log(`Attempting WebSocket connection to: ${wsUrl}`);
 
         // Create a new WebSocket connection
         const ws = new WebSocket(wsUrl);
@@ -540,10 +552,22 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
         let slideContent = '';
 
         try {
-          // Create WebSocket URL from the server base URL
-          const serverBaseUrl = process.env.SERVER_BASE_URL || 'http://localhost:8001';
-          const wsBaseUrl = serverBaseUrl.replace(/^http/, 'ws')? serverBaseUrl.replace(/^https/, 'wss'): serverBaseUrl.replace(/^http/, 'ws');
-          const wsUrl = `${wsBaseUrl}/ws/chat`;
+          // Create WebSocket URL with proper network detection
+          const getWebSocketUrl = () => {
+            // For client-side, derive from current window location
+            if (typeof window !== 'undefined') {
+              const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+              const hostname = window.location.hostname;
+              const port = '8001'; // Backend port
+              return `${protocol}//${hostname}:${port}/ws/chat`;
+            }
+            
+            // Fallback for server-side rendering
+            return 'ws://localhost:8001/ws/chat';
+          };
+          
+          const wsUrl = getWebSocketUrl();
+          console.log(`Attempting WebSocket connection to: ${wsUrl}`);
 
           // Create a new WebSocket connection
           const ws = new WebSocket(wsUrl);

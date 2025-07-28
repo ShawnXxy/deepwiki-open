@@ -519,42 +519,47 @@ Remember:
         let content = '';
 
         try {
-          // Create WebSocket URL from the server base URL
-          const serverBaseUrl = process.env.SERVER_BASE_URL || 'http://localhost:8001';
-          const wsBaseUrl = serverBaseUrl.replace(/^http/, 'ws')? serverBaseUrl.replace(/^https/, 'wss'): serverBaseUrl.replace(/^http/, 'ws');
-          const wsUrl = `${wsBaseUrl}/ws/chat`;
+          // Create WebSocket URL with proper network detection
+          const { getWebSocketUrl, getTimeoutConfig } = await import('@/utils/networkConfig');
+          const wsUrl = getWebSocketUrl();
+          const timeouts = getTimeoutConfig();
+          
+          console.log(`Attempting WebSocket connection to: ${wsUrl}`);
+          console.log(`Using timeout config:`, timeouts);
 
           // Create a new WebSocket connection
           const ws = new WebSocket(wsUrl);
 
           // Create a promise that resolves when the WebSocket connection is complete
           await new Promise<void>((resolve, reject) => {
+            let connectionTimeout: NodeJS.Timeout;
+            
             // Set up event handlers
             ws.onopen = () => {
               console.log(`WebSocket connection established for page: ${page.title}`);
-              // Send the request as JSON
-              ws.send(JSON.stringify(requestBody));
-              resolve();
+              if (connectionTimeout) clearTimeout(connectionTimeout);
+              try {
+                // Send the request as JSON
+                ws.send(JSON.stringify(requestBody));
+                resolve();
+              } catch (error) {
+                console.error('Error sending WebSocket message:', error);
+                reject(new Error('Failed to send WebSocket message'));
+              }
             };
 
             ws.onerror = (error) => {
               console.error('WebSocket error:', error);
+              if (connectionTimeout) clearTimeout(connectionTimeout);
               reject(new Error('WebSocket connection failed'));
             };
 
-            // If the connection doesn't open within 5 seconds, fall back to HTTP
-            const timeout = setTimeout(() => {
+            // If the connection doesn't open within the configured timeout, fall back to HTTP
+            connectionTimeout = setTimeout(() => {
+              console.warn('WebSocket connection timeout, will fallback to HTTP');
+              ws.close();
               reject(new Error('WebSocket connection timeout'));
-            }, 5000);
-
-            // Clear the timeout if the connection opens successfully
-            ws.onopen = () => {
-              clearTimeout(timeout);
-              console.log(`WebSocket connection established for page: ${page.title}`);
-              // Send the request as JSON
-              ws.send(JSON.stringify(requestBody));
-              resolve();
-            };
+            }, timeouts.connectionTimeout);
           });
 
           // Create a promise that resolves when the WebSocket response is complete
@@ -816,10 +821,13 @@ IMPORTANT:
       let responseText = '';
 
       try {
-        // Create WebSocket URL from the server base URL
-        const serverBaseUrl = process.env.SERVER_BASE_URL || 'http://localhost:8001';
-        const wsBaseUrl = serverBaseUrl.replace(/^http/, 'ws')? serverBaseUrl.replace(/^https/, 'wss'): serverBaseUrl.replace(/^http/, 'ws');
-        const wsUrl = `${wsBaseUrl}/ws/chat`;
+        // Create WebSocket URL with proper network detection
+        const { getWebSocketUrl, getTimeoutConfig } = await import('@/utils/networkConfig');
+        const wsUrl = getWebSocketUrl();
+        const timeouts = getTimeoutConfig();
+        
+        console.log(`Attempting WebSocket connection to: ${wsUrl}`);
+        console.log(`Using timeout config:`, timeouts);
 
         // Create a new WebSocket connection
         const ws = new WebSocket(wsUrl);
