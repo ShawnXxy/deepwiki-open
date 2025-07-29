@@ -317,6 +317,11 @@ const Ask: React.FC<AskProps> = ({
         requestBody.token = repoInfo.token;
       }
 
+      // Add branch if available
+      if (repoInfo?.branch) {
+        requestBody.branch = repoInfo.branch;
+      }
+
       // Close any existing WebSocket connection
       closeWebSocket(webSocketRef.current);
 
@@ -557,6 +562,11 @@ const Ask: React.FC<AskProps> = ({
       // Add tokens if available
       if (repoInfo?.token) {
         requestBody.token = repoInfo.token;
+      }
+
+      // Add branch if available
+      if (repoInfo?.branch) {
+        requestBody.branch = repoInfo.branch;
       }
 
       // Close any existing WebSocket connection

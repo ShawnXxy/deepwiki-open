@@ -94,6 +94,7 @@ export default function Home() {
           setIsCustomModel(config.isCustomModel || false);
           setCustomModel(config.customModel || '');
           setSelectedPlatform(config.selectedPlatform || 'github');
+          setSelectedBranch(config.selectedBranch || 'main'); // Load cached branch or default to 'main'
           setExcludedDirs(config.excludedDirs || '');
           setExcludedFiles(config.excludedFiles || '');
           setIncludedDirs(config.includedDirs || '');
@@ -136,6 +137,9 @@ export default function Home() {
   const [includedFiles, setIncludedFiles] = useState('');
   const [selectedPlatform, setSelectedPlatform] = useState<'github' | 'gitlab' | 'bitbucket' | 'azuredevops'>('github');
   const [accessToken, setAccessToken] = useState('');
+  
+  // Branch selection state - default to 'main' with fallback to 'master'
+  const [selectedBranch, setSelectedBranch] = useState<string>('main');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState<string>(language);
@@ -354,6 +358,7 @@ export default function Home() {
           isCustomModel,
           customModel,
           selectedPlatform,
+          selectedBranch, // Include branch in saved config
           excludedDirs,
           excludedFiles,
           includedDirs,
@@ -398,6 +403,12 @@ export default function Home() {
     if (isCustomModel && customModel) {
       params.append('custom_model', customModel);
     }
+    
+    // Add branch parameter if specified and not default
+    if (selectedBranch && selectedBranch.trim() !== '' && selectedBranch.trim() !== 'main') {
+      params.append('branch', selectedBranch.trim());
+    }
+    
     // Add file filters configuration
     if (excludedDirs) {
       params.append('excluded_dirs', excludedDirs);
@@ -496,6 +507,8 @@ export default function Home() {
             setCustomModel={setCustomModel}
             selectedPlatform={selectedPlatform}
             setSelectedPlatform={setSelectedPlatform}
+            selectedBranch={selectedBranch}
+            setSelectedBranch={setSelectedBranch}
             accessToken={accessToken}
             setAccessToken={setAccessToken}
             excludedDirs={excludedDirs}

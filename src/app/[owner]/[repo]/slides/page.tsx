@@ -20,6 +20,7 @@ const addTokensToRequestBody = (
   isCustomModel: boolean = false,
   customModel: string = '',
   language: string = 'en',
+  branch?: string,
 ) => {
   if (token !== '') {
     requestBody.token = token;
@@ -33,6 +34,11 @@ const addTokensToRequestBody = (
   }
 
   requestBody.language = language;
+
+  // Add branch parameter if provided
+  if (branch) {
+    requestBody.branch = branch;
+  }
 };
 
 interface Slide {
@@ -54,6 +60,7 @@ export default function SlidesPage() {
   // Extract tokens from search params
   const token = searchParams.get('token') || '';
   const repoType = searchParams.get('type') || 'github';
+  const branch = searchParams.get('branch') || null;
   const localPath = searchParams.get('local_path') ? decodeURIComponent(searchParams.get('local_path') || '') : undefined;
   const repoUrl = searchParams.get('repo_url') ? decodeURIComponent(searchParams.get('repo_url') || '') : undefined;
   const providerParam = searchParams.get('provider') || '';
@@ -71,9 +78,10 @@ export default function SlidesPage() {
     repo,
     type: repoType,
     token: token || null,
+    branch: branch,
     localPath: localPath || null,
     repoUrl: repoUrl || null
-  }), [owner, repo, repoType, token, localPath, repoUrl]);
+  }), [owner, repo, repoType, token, branch, localPath, repoUrl]);
 
   // State variables
   const [isLoading, setIsLoading] = useState(false);
@@ -258,7 +266,7 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
       };
 
       // Add tokens if available
-      addTokensToRequestBody(planRequestBody, token, repoInfo.type, providerParam, modelParam, isCustomModelParam, customModelParam, language);
+      addTokensToRequestBody(planRequestBody, token, repoInfo.type, providerParam, modelParam, isCustomModelParam, customModelParam, language, repoInfo.branch || undefined);
 
       // Use WebSocket for communication
       let planContent = '';
@@ -546,7 +554,7 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
         };
 
         // Add tokens if available
-        addTokensToRequestBody(slideRequestBody, token, repoInfo.type, providerParam, modelParam, isCustomModelParam, customModelParam, language);
+        addTokensToRequestBody(slideRequestBody, token, repoInfo.type, providerParam, modelParam, isCustomModelParam, customModelParam, language, repoInfo.branch || undefined);
 
         // Use WebSocket for communication
         let slideContent = '';

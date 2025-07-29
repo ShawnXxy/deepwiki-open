@@ -3,6 +3,7 @@ export interface RepoInfo {
     repo: string;
     type: string;
     token: string | null;
+    branch: string | null;
     localPath: string | null;
     repoUrl: string | null;
 }

@@ -21,6 +21,7 @@ const addTokensToRequestBody = (
   isCustomModel: boolean = false,
   customModel: string = '',
   language: string = 'en',
+  branch?: string,
 ) => {
   if (token !== '') {
     requestBody.token = token;
@@ -34,6 +35,11 @@ const addTokensToRequestBody = (
   }
 
   requestBody.language = language;
+
+  // Add branch parameter if provided
+  if (branch) {
+    requestBody.branch = branch;
+  }
 };
 
 export default function WorkshopPage() {
@@ -48,6 +54,7 @@ export default function WorkshopPage() {
   // Extract tokens from search params
   const token = searchParams.get('token') || '';
   const repoType = searchParams.get('type') || 'github';
+  const branch = searchParams.get('branch') || null;
   const localPath = searchParams.get('local_path') ? decodeURIComponent(searchParams.get('local_path') || '') : undefined;
   const repoUrl = searchParams.get('repo_url') ? decodeURIComponent(searchParams.get('repo_url') || '') : undefined;
   const providerParam = searchParams.get('provider') || '';
@@ -65,9 +72,10 @@ export default function WorkshopPage() {
     repo,
     type: repoType,
     token: token || null,
+    branch: branch,
     localPath: localPath || null,
     repoUrl: repoUrl || null
-  }), [owner, repo, repoType, token, localPath, repoUrl]);
+  }), [owner, repo, repoType, token, branch, localPath, repoUrl]);
 
   // State variables
   const [isLoading, setIsLoading] = useState(false);
@@ -310,7 +318,7 @@ Make the workshop content in ${language === 'en' ? 'English' :
       };
 
       // Add tokens if available
-      addTokensToRequestBody(requestBody, token, repoInfo.type, providerParam, modelParam, isCustomModelParam, customModelParam, language);
+      addTokensToRequestBody(requestBody, token, repoInfo.type, providerParam, modelParam, isCustomModelParam, customModelParam, language, repoInfo.branch || undefined);
 
       // Use WebSocket for communication
       let content = '';

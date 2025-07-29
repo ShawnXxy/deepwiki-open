@@ -55,14 +55,21 @@ def count_tokens(text: str, is_ollama_embedder: bool = None) -> int:
         # Rough approximation: 4 characters per token
         return len(text) // 4
 
-def download_repo(repo_url: str, local_path: str, type: str = "github", access_token: str = None) -> str:
+def download_repo(repo_url: str, local_path: str, type: str = "github", 
+                   access_token: str = None, branch: str = None) -> str:
     """
-    Downloads a Git repository (GitHub, GitLab, or Bitbucket) to a specified local path.
+    Downloads a Git repository (GitHub, GitLab, or Bitbucket) to a specified 
+    local path.
 
     Args:
         repo_url (str): The URL of the Git repository to clone.
-        local_path (str): The local directory where the repository will be cloned.
+        local_path (str): The local directory where the repository will be 
+                         cloned.
+        type (str): The type of repository (github, gitlab, bitbucket, 
+                   azuredevops).
         access_token (str, optional): Access token for private repositories.
+        branch (str, optional): Specific branch to clone. If None, uses 
+                               default branch with fallback logic.
 
     Returns:
         str: The output message from the `git` command.
@@ -112,25 +119,81 @@ def download_repo(repo_url: str, local_path: str, type: str = "github", access_t
 
             logger.info("Using access token for authentication")
 
-        # Clone the repository
+        # Clone the repository with branch handling
         logger.info(f"Cloning repository from {repo_url} to {local_path}")
-        # We use repo_url in the log to avoid exposing the token in logs
-        result = subprocess.run(
-            ["git", "clone", clone_url, local_path],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
-        logger.info("Repository cloned successfully")
-        return result.stdout.decode("utf-8")
-
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr.decode('utf-8')
-        # Sanitize error message to remove any tokens
-        if access_token and access_token in error_msg:
-            error_msg = error_msg.replace(access_token, "***TOKEN***")
-        raise ValueError(f"Error during cloning: {error_msg}")
+        
+        # Build git clone command with branch parameter if specified
+        clone_cmd = ["git", "clone"]
+        
+        # Add branch parameter if specified, with fallback logic
+        if branch and branch.strip():
+            # Try specified branch first
+            clone_cmd.extend(["-b", branch.strip()])
+            logger.info(f"Attempting to clone branch: {branch.strip()}")
+        
+        clone_cmd.extend([clone_url, local_path])
+        
+        try:
+            # We use repo_url in the log to avoid exposing the token in logs
+            result = subprocess.run(
+                clone_cmd,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            logger.info("Repository cloned successfully")
+            return result.stdout.decode("utf-8")
+            
+        except subprocess.CalledProcessError as e:
+            # If specified branch fails, try fallback branches
+            if branch and branch.strip() and branch.strip() not in ['main', 'master']:
+                logger.warning(f"Branch {branch.strip()} not found, trying fallback branches")
+                
+                # Clean up failed clone attempt
+                if os.path.exists(local_path):
+                    import shutil
+                    shutil.rmtree(local_path)
+                
+                # Try with 'main' branch
+                for fallback_branch in ['main', 'master']:
+                    try:
+                        logger.info(f"Trying fallback branch: {fallback_branch}")
+                        clone_cmd_fallback = ["git", "clone", "-b", fallback_branch, clone_url, local_path]
+                        result = subprocess.run(
+                            clone_cmd_fallback,
+                            check=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                        )
+                        logger.info(f"Repository cloned successfully using fallback branch: {fallback_branch}")
+                        return result.stdout.decode("utf-8")
+                    except subprocess.CalledProcessError:
+                        # Clean up and try next fallback
+                        if os.path.exists(local_path):
+                            shutil.rmtree(local_path)
+                        continue
+                
+                # If all fallback branches fail, try without branch specification
+                try:
+                    logger.info("Trying clone without branch specification (default branch)")
+                    clone_cmd_default = ["git", "clone", clone_url, local_path]
+                    result = subprocess.run(
+                        clone_cmd_default,
+                        check=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    logger.info("Repository cloned successfully using default branch")
+                    return result.stdout.decode("utf-8")
+                except subprocess.CalledProcessError:
+                    pass
+            
+            # If we get here, all attempts failed
+            error_msg = e.stderr.decode('utf-8')
+            # Sanitize error message to remove any tokens
+            if access_token and access_token in error_msg:
+                error_msg = error_msg.replace(access_token, "***TOKEN***")
+            raise ValueError(f"Error during cloning: {error_msg}")
     except Exception as e:
         raise ValueError(f"An unexpected error occurred: {str(e)}")
 
@@ -784,7 +847,8 @@ class DatabaseManager:
         self.repo_url_or_path = None
         self.repo_paths = None
 
-    def prepare_database(self, repo_url_or_path: str, type: str = "github", access_token: str = None, is_ollama_embedder: bool = None,
+    def prepare_database(self, repo_url_or_path: str, type: str = "github", access_token: str = None, 
+                       branch: str = None, is_ollama_embedder: bool = None,
                        excluded_dirs: List[str] = None, excluded_files: List[str] = None,
                        included_dirs: List[str] = None, included_files: List[str] = None) -> List[Document]:
         """
@@ -792,7 +856,9 @@ class DatabaseManager:
 
         Args:
             repo_url_or_path (str): The URL or local path of the repository
+            type (str): Type of repository (github, gitlab, bitbucket, azuredevops)
             access_token (str, optional): Access token for private repositories
+            branch (str, optional): Branch name to clone/process
             is_ollama_embedder (bool, optional): Whether to use Ollama for embedding.
                                                If None, will be determined from configuration.
             excluded_dirs (List[str], optional): List of directories to exclude from processing
@@ -804,9 +870,12 @@ class DatabaseManager:
             List[Document]: List of Document objects
         """
         self.reset_database()
-        self._create_repo(repo_url_or_path, type, access_token)
-        return self.prepare_db_index(is_ollama_embedder=is_ollama_embedder, excluded_dirs=excluded_dirs, excluded_files=excluded_files,
-                                   included_dirs=included_dirs, included_files=included_files)
+        self._create_repo(repo_url_or_path, type, access_token, branch)
+        return self.prepare_db_index(is_ollama_embedder=is_ollama_embedder, 
+                                   excluded_dirs=excluded_dirs, 
+                                   excluded_files=excluded_files,
+                                   included_dirs=included_dirs, 
+                                   included_files=included_files)
 
     def reset_database(self):
         """
@@ -831,16 +900,19 @@ class DatabaseManager:
             repo_name = url_parts[-1].replace(".git", "")
         return repo_name
 
-    def _create_repo(self, repo_url_or_path: str, repo_type: str = "github", access_token: str = None) -> None:
+    def _create_repo(self, repo_url_or_path: str, repo_type: str = "github", 
+                    access_token: str = None, branch: str = None) -> None:
         """
         Download and prepare all paths.
         Paths:
-        ~/.adalflow/repos/{owner}_{repo_name} (for url, local path will be the same)
+        ~/.adalflow/repos/{owner}_{repo_name} (for url, local path same)
         ~/.adalflow/databases/{owner}_{repo_name}.pkl
 
         Args:
             repo_url_or_path (str): The URL or local path of the repository
-            access_token (str, optional): Access token for private repositories
+            repo_type (str): Type of repository (github, gitlab, etc.)
+            access_token (str, optional): Access token for private repos
+            branch (str, optional): Branch name to clone/process
         """
         logger.info(f"Preparing repo storage for {repo_url_or_path}...")
 
@@ -859,9 +931,11 @@ class DatabaseManager:
                 # Check if the repository directory already exists and is not empty
                 if not (os.path.exists(save_repo_dir) and os.listdir(save_repo_dir)):
                     # Only download if the repository doesn't exist or is empty
-                    download_repo(repo_url_or_path, save_repo_dir, repo_type, access_token)
+                    download_repo(repo_url_or_path, save_repo_dir, repo_type, 
+                                access_token, branch)
                 else:
-                    logger.info(f"Repository already exists at {save_repo_dir}. Using existing repository.")
+                    logger.info(f"Repository already exists at {save_repo_dir}. "
+                              f"Using existing repository.")
             else:  # local path
                 repo_name = os.path.basename(repo_url_or_path)
                 save_repo_dir = repo_url_or_path
@@ -928,16 +1002,20 @@ class DatabaseManager:
         logger.info(f"Total transformed documents: {len(transformed_docs)}")
         return transformed_docs
 
-    def prepare_retriever(self, repo_url_or_path: str, type: str = "github", access_token: str = None):
+    def prepare_retriever(self, repo_url_or_path: str, type: str = "github", 
+                         access_token: str = None, branch: str = None):
         """
         Prepare the retriever for a repository.
         This is a compatibility method for the isolated API.
 
         Args:
             repo_url_or_path (str): The URL or local path of the repository
-            access_token (str, optional): Access token for private repositories
+            type (str): Type of repository (github, gitlab, etc.)
+            access_token (str, optional): Access token for private repos
+            branch (str, optional): Branch name to clone/process
 
         Returns:
             List[Document]: List of Document objects
         """
-        return self.prepare_database(repo_url_or_path, type, access_token)
+        return self.prepare_database(repo_url_or_path, type, access_token, 
+                                   branch)

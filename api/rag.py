@@ -406,20 +406,33 @@ IMPORTANT FORMATTING RULES:
 
         return valid_documents
 
-    def prepare_retriever(self, repo_url_or_path: str, type: str = "github", access_token: str = None,
-                      excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                      included_dirs: List[str] = None, included_files: List[str] = None):
+    def prepare_retriever(
+        self,
+        repo_url_or_path: str,
+        type: str = "github",
+        access_token: str = None,
+        branch: str = None,
+        excluded_dirs: List[str] = None,
+        excluded_files: List[str] = None,
+        included_dirs: List[str] = None,
+        included_files: List[str] = None
+    ):
         """
         Prepare the retriever for a repository.
         Will load database from local storage if available.
 
         Args:
             repo_url_or_path: URL or local path to the repository
+            type: Repository type (github, gitlab, bitbucket, azuredevops)
             access_token: Optional access token for private repositories
-            excluded_dirs: Optional list of directories to exclude from processing
-            excluded_files: Optional list of file patterns to exclude from processing
+            branch: Optional specific branch to clone/process
+            excluded_dirs: Optional list of directories to exclude from 
+                          processing
+            excluded_files: Optional list of file patterns to exclude from
+                           processing
             included_dirs: Optional list of directories to include exclusively
-            included_files: Optional list of file patterns to include exclusively
+            included_files: Optional list of file patterns to include 
+                           exclusively
         """
         self.initialize_db_manager()
         self.repo_url_or_path = repo_url_or_path
@@ -427,6 +440,7 @@ IMPORTANT FORMATTING RULES:
             repo_url_or_path,
             type,
             access_token,
+            branch=branch,
             is_ollama_embedder=self.is_ollama_embedder,
             excluded_dirs=excluded_dirs,
             excluded_files=excluded_files,

@@ -3,7 +3,7 @@
  * This replaces the HTTP streaming endpoint with a WebSocket connection
  */
 
-import { getServerBaseUrl, getWebSocketUrl, getTimeoutConfig } from './networkConfig';
+import { getWebSocketUrl, getTimeoutConfig } from './networkConfig';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -16,6 +16,7 @@ export interface ChatCompletionRequest {
   filePath?: string;
   token?: string;
   type?: string;
+  branch?: string;
   provider?: string;
   model?: string;
   language?: string;
@@ -47,6 +48,7 @@ export const createChatWebSocket = (
   const ws = new WebSocket(wsUrl);
   
   // Set up event handlers with timeout protection
+  // eslint-disable-next-line prefer-const
   let connectionTimeout: NodeJS.Timeout | undefined;
   
   ws.onopen = () => {

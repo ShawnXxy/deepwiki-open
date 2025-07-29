@@ -35,6 +35,10 @@ interface ConfigurationModalProps {
   selectedPlatform: 'github' | 'gitlab' | 'bitbucket' | 'azuredevops';
   setSelectedPlatform: (value: 'github' | 'gitlab' | 'bitbucket' | 'azuredevops') => void;
 
+  // Branch selection
+  selectedBranch: string;
+  setSelectedBranch: (value: string) => void;
+
   // Access token
   accessToken: string;
   setAccessToken: (value: string) => void;
@@ -79,6 +83,8 @@ export default function ConfigurationModal({
   setCustomModel,
   selectedPlatform,
   setSelectedPlatform,
+  selectedBranch,
+  setSelectedBranch,
   accessToken,
   setAccessToken,
   excludedDirs,
@@ -132,6 +138,29 @@ export default function ConfigurationModal({
               </label>
               <div className="bg-[var(--background)]/70 p-3 rounded-md border border-[var(--border-color)] text-sm text-[var(--foreground)]">
                 {repositoryInput}
+              </div>
+            </div>
+
+            {/* Branch selection */}
+            <div className="mb-4">
+              <label htmlFor="branch-input" className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                {t.form?.branch || 'Branch'}
+              </label>
+              <input
+                type="text"
+                id="branch-input"
+                value={selectedBranch}
+                onChange={(e) => setSelectedBranch(e.target.value)}
+                placeholder="main"
+                className="input-japanese block w-full px-3 py-2 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
+              />
+              <div className="flex items-center mt-1 text-xs text-[var(--muted)]">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1 text-[var(--muted)]"
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                    d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                {t.form?.branchDescription || 'Leave empty for default branch. Falls back to "main" then "master" if specified branch is not found.'}
               </div>
             </div>
 

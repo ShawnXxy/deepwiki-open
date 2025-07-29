@@ -103,6 +103,7 @@ const addTokensToRequestBody = (
   isCustomModel: boolean = false,
   customModel: string = '',
   language: string = 'en',
+  branch?: string,
   excludedDirs?: string,
   excludedFiles?: string,
   includedDirs?: string,
@@ -110,6 +111,11 @@ const addTokensToRequestBody = (
 ): void => {
   if (token !== '') {
     requestBody.token = token;
+  }
+
+  // Add branch parameter if provided
+  if (branch) {
+    requestBody.branch = branch;
   }
 
   // Add provider-based model selection parameters
@@ -192,6 +198,7 @@ export default function RepoWikiPage() {
   const isCustomModelParam = searchParams.get('is_custom_model') === 'true';
   const customModelParam = searchParams.get('custom_model') || '';
   const language = searchParams.get('language') || 'en';
+  const branch = searchParams.get('branch') || null;
   const repoType = repoUrl?.includes('bitbucket.org')
     ? 'bitbucket'
     : repoUrl?.includes('gitlab.com')
@@ -211,9 +218,10 @@ export default function RepoWikiPage() {
     repo,
     type: repoType,
     token: token || null,
+    branch: branch,
     localPath: localPath || null,
     repoUrl: repoUrl || null
-  }), [owner, repo, repoType, localPath, repoUrl, token]);
+  }), [owner, repo, repoType, localPath, repoUrl, token, branch]);
 
   // State variables
   const [isLoading, setIsLoading] = useState(true);
@@ -513,7 +521,7 @@ Remember:
         };
 
         // Add tokens if available
-        addTokensToRequestBody(requestBody, currentToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
+        addTokensToRequestBody(requestBody, currentToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, effectiveRepoInfo.branch || undefined, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
 
         // Use WebSocket for communication
         let content = '';
@@ -532,6 +540,7 @@ Remember:
 
           // Create a promise that resolves when the WebSocket connection is complete
           await new Promise<void>((resolve, reject) => {
+            // eslint-disable-next-line prefer-const
             let connectionTimeout: NodeJS.Timeout;
             
             // Set up event handlers
@@ -815,7 +824,7 @@ IMPORTANT:
       };
 
       // Add tokens if available
-      addTokensToRequestBody(requestBody, currentToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
+      addTokensToRequestBody(requestBody, currentToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, effectiveRepoInfo.branch || undefined, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
 
       // Use WebSocket for communication
       let responseText = '';
