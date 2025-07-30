@@ -475,7 +475,8 @@ def get_model_config(provider=None, model=None):
     # If model not provided, use default model for the provider
     if not model:
         if provider == "azure" and is_azure_openai_configured():
-            model = "gpt-4o"  # Default Azure model for text generation
+            # Default Azure model - changed to GPT-4.1 for improved performance
+            model = "gpt-4.1"
         else:
             model = provider_config.get("default_model")
             if not model:
