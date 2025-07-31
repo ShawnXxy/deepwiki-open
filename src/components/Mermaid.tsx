@@ -303,6 +303,42 @@ const FullScreenModal: React.FC<{
   );
 };
 
+/**
+ * Sanitizes Mermaid diagram content to remove problematic patterns that cause parsing errors
+ * @param content - Raw Mermaid diagram content
+ * @returns Sanitized content safe for Mermaid rendering
+ */
+const sanitizeMermaidContent = (content: string): string => {
+  if (!content) return content;
+
+  let sanitized = content;
+
+  // Remove source citations that break Mermaid syntax
+  // Pattern: Sources: [filename.ext:line-range]() or Sources: [filename.ext:line]()
+  sanitized = sanitized.replace(/Sources:\s*\[([^\]]+)\]\(\)/g, (match, filename) => {
+    // Convert to a safer format for Mermaid
+    return `%% Source: ${filename}`;
+  });
+
+  // Remove or escape other problematic patterns
+  // Remove standalone square brackets that aren't part of valid Mermaid syntax
+  sanitized = sanitized.replace(/\[([^\]]*)\]\(\)/g, '($1)');
+  
+  // Escape problematic characters in node labels
+  // Replace square brackets in text content with parentheses to avoid syntax conflicts
+  sanitized = sanitized.replace(/(?<!^|\s)(.*?)\[(.*?)\](.*?)(?=\s|$)/g, '$1($2)$3');
+
+  // Log the sanitization for debugging
+  if (content !== sanitized) {
+    console.log('Mermaid content sanitized:', {
+      original: content.substring(0, 200) + (content.length > 200 ? '...' : ''),
+      sanitized: sanitized.substring(0, 200) + (sanitized.length > 200 ? '...' : '')
+    });
+  }
+
+  return sanitized;
+};
+
 const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled = false }) => {
   const [svg, setSvg] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -365,8 +401,11 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
         setError(null);
         setSvg('');
 
-        // Render the chart directly without preprocessing
-        const { svg: renderedSvg } = await mermaid.render(idRef.current, chart);
+        // Sanitize the chart content before rendering to prevent parsing errors
+        const sanitizedChart = sanitizeMermaidContent(chart);
+
+        // Render the sanitized chart
+        const { svg: renderedSvg } = await mermaid.render(idRef.current, sanitizedChart);
 
         if (!isMounted) return;
 
@@ -383,6 +422,8 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
         }, 50);
       } catch (err) {
         console.error('Mermaid rendering error:', err);
+        console.error('Original chart content:', chart);
+        console.error('Sanitized chart content:', sanitizeMermaidContent(chart));
 
         const errorMessage = err instanceof Error ? err.message : String(err);
 
@@ -390,9 +431,17 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
           setError(`Failed to render diagram: ${errorMessage}`);
 
           if (mermaidRef.current) {
+            const sanitizedChart = sanitizeMermaidContent(chart);
             mermaidRef.current.innerHTML = `
               <div class="text-red-500 dark:text-red-400 text-xs mb-1">Syntax error in diagram</div>
-              <pre class="text-xs overflow-auto p-2 bg-gray-100 dark:bg-gray-800 rounded">${chart}</pre>
+              <details class="text-xs mb-2">
+                <summary class="cursor-pointer text-gray-600 dark:text-gray-400">Show original content</summary>
+                <pre class="text-xs overflow-auto p-2 bg-gray-100 dark:bg-gray-800 rounded mt-1">${chart}</pre>
+              </details>
+              <details class="text-xs">
+                <summary class="cursor-pointer text-gray-600 dark:text-gray-400">Show sanitized content</summary>
+                <pre class="text-xs overflow-auto p-2 bg-gray-100 dark:bg-gray-800 rounded mt-1">${sanitizedChart}</pre>
+              </details>
             `;
           }
         }
