@@ -8,6 +8,8 @@ import ThemeToggle from '@/components/theme-toggle';
 import WikiTreeView from '@/components/WikiTreeView';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { RepoInfo } from '@/types/repoinfo';
+import { processCitations, generateFileUrl } from '@/utils/citationProcessor';
+import { detectCurrentBranch } from '@/utils/branchDetection';
 import getRepoUrl from '@/utils/getRepoUrl';
 import { extractUrlDomain, extractUrlPath } from '@/utils/urlDecoder';
 import Link from 'next/link';
@@ -284,40 +286,6 @@ export default function RepoWikiPage() {
   // Default branch state
   const [defaultBranch, setDefaultBranch] = useState<string>('main');
 
-  // Helper function to generate proper repository file URLs
-  const generateFileUrl = useCallback((filePath: string): string => {
-    if (effectiveRepoInfo.type === 'local') {
-      // For local repositories, we can't generate web URLs
-      return filePath;
-    }
-
-    const repoUrl = effectiveRepoInfo.repoUrl;
-    if (!repoUrl) {
-      return filePath;
-    }
-
-    try {
-      const url = new URL(repoUrl);
-      const hostname = url.hostname;
-      
-      if (hostname === 'github.com' || hostname.includes('github')) {
-        // GitHub URL format: https://github.com/owner/repo/blob/branch/path
-        return `${repoUrl}/blob/${defaultBranch}/${filePath}`;
-      } else if (hostname === 'gitlab.com' || hostname.includes('gitlab')) {
-        // GitLab URL format: https://gitlab.com/owner/repo/-/blob/branch/path
-        return `${repoUrl}/-/blob/${defaultBranch}/${filePath}`;
-      } else if (hostname === 'bitbucket.org' || hostname.includes('bitbucket')) {
-        // Bitbucket URL format: https://bitbucket.org/owner/repo/src/branch/path
-        return `${repoUrl}/src/${defaultBranch}/${filePath}`;
-      }
-    } catch (error) {
-      console.warn('Error generating file URL:', error);
-    }
-
-    // Fallback to just the file path
-    return filePath;
-  }, [effectiveRepoInfo, defaultBranch]);
-
   // Memoize repo info to avoid triggering updates in callbacks
 
   // Add useEffect to handle scroll reset
@@ -434,7 +402,7 @@ Format it exactly like this:
 Remember, do not provide any acknowledgements, disclaimers, apologies, or any other preface before the \`<details>\` block. JUST START with the \`<details>\` block.
 The following files were used as context for generating this wiki page:
 
-${filePaths.map(path => `- [${path}](${generateFileUrl(path)})`).join('\n')}
+${filePaths.map(path => `- [${path}](${generateFileUrl(path, effectiveRepoInfo, detectCurrentBranch(effectiveRepoInfo, 'master'))})`).join('\n')}
 <!-- Add additional relevant files if fewer than 5 were provided -->
 </details>
 
@@ -668,7 +636,7 @@ Remember:
         setLoadingMessage(undefined); // Clear specific loading message
       }
     });
-  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, language, activeContentRequests, generateFileUrl]);
+  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, language, activeContentRequests]);
 
   // Determine the wiki structure from repository data
   const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string) => {
@@ -2183,7 +2151,11 @@ IMPORTANT:
 
                   <div className="prose prose-sm md:prose-base lg:prose-lg max-w-none">
                     <Markdown
-                      content={generatedPages[currentPageId].content}
+                      content={processCitations(
+                        generatedPages[currentPageId].content, 
+                        effectiveRepoInfo, 
+                        detectCurrentBranch(effectiveRepoInfo, 'master')
+                      )}
                     />
                   </div>
 

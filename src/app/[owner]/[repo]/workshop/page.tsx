@@ -9,6 +9,8 @@ import Markdown from '@/components/Markdown';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { RepoInfo } from '@/types/repoinfo';
 import getRepoUrl from '@/utils/getRepoUrl';
+import { processCitations } from '@/utils/citationProcessor';
+import { detectCurrentBranch } from '@/utils/branchDetection';
 
 // Helper function to add tokens and other parameters to request body
 const addTokensToRequestBody = (
@@ -644,7 +646,7 @@ Estimated time: 20-30 minutes | Combines concepts from all exercises
                 <p className="text-red-700 dark:text-red-300 text-sm">{exportError}</p>
               </div>
             )}
-            <Markdown content={workshopContent} />
+            <Markdown content={processCitations(workshopContent, repoInfo, detectCurrentBranch(repoInfo, 'master'))} />
           </div>
         )}
       </main>

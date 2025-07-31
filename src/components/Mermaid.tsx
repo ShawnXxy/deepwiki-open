@@ -305,7 +305,7 @@ const FullScreenModal: React.FC<{
 
 /**
  * Sanitizes Mermaid diagram content to remove problematic patterns that cause parsing errors
- * @param content - Raw Mermaid diagram content
+ * @param content - Raw Mermaid diagram content  
  * @returns Sanitized content safe for Mermaid rendering
  */
 const sanitizeMermaidContent = (content: string): string => {
@@ -313,20 +313,32 @@ const sanitizeMermaidContent = (content: string): string => {
 
   let sanitized = content;
 
-  // Remove source citations that break Mermaid syntax
-  // Pattern: Sources: [filename.ext:line-range]() or Sources: [filename.ext:line]()
+  // Handle source citations that might break Mermaid syntax
+  // Only convert citations with empty URLs to comments, preserve properly formatted ones
   sanitized = sanitized.replace(/Sources:\s*\[([^\]]+)\]\(\)/g, (match, filename) => {
-    // Convert to a safer format for Mermaid
+    // Convert citations with empty URLs to safer format for Mermaid
     return `%% Source: ${filename}`;
   });
 
-  // Remove or escape other problematic patterns
-  // Remove standalone square brackets that aren't part of valid Mermaid syntax
-  sanitized = sanitized.replace(/\[([^\]]*)\]\(\)/g, '($1)');
-  
-  // Escape problematic characters in node labels
-  // Replace square brackets in text content with parentheses to avoid syntax conflicts
-  sanitized = sanitized.replace(/(?<!^|\s)(.*?)\[(.*?)\](.*?)(?=\s|$)/g, '$1($2)$3');
+  // If citations already have URLs, convert them to comments with URLs preserved
+  sanitized = sanitized.replace(/Sources:\s*(\[([^\]]+)\]\([^)]+\)(?:,\s*)?)+/g, (match) => {
+    // Extract all citations and convert to comments
+    const citationPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+    const comments: string[] = [];
+    let citationMatch;
+    
+    while ((citationMatch = citationPattern.exec(match)) !== null) {
+      const filename = citationMatch[1];
+      const url = citationMatch[2];
+      comments.push(`%% Source: ${filename} - ${url}`);
+    }
+    
+    return comments.join('\n');
+  });
+
+  // Remove or escape other problematic patterns only if they're not part of valid Mermaid syntax
+  // Be more careful with square brackets - only replace standalone ones not part of valid Mermaid syntax
+  sanitized = sanitized.replace(/\[([^\]]*)\]\(\)(?!\s*-->|\s*---|\s*--)/g, '($1)');
 
   // Log the sanitization for debugging
   if (content !== sanitized) {

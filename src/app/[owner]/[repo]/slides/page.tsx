@@ -8,6 +8,8 @@ import ThemeToggle from '@/components/theme-toggle';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { RepoInfo } from '@/types/repoinfo';
 import getRepoUrl from '@/utils/getRepoUrl';
+import { processCitations } from '@/utils/citationProcessor';
+import { detectCurrentBranch } from '@/utils/branchDetection';
 
 // Helper function to add tokens and other parameters to request body
 const addTokensToRequestBody = (
@@ -1283,7 +1285,7 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
               >
                 {/* Include Font Awesome for icons */}
                 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" />
-                <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: slides[currentSlideIndex]?.html || '' }} />
+                <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: processCitations(slides[currentSlideIndex]?.html || '', repoInfo, detectCurrentBranch(repoInfo, 'main')) }} />
               </div>
             </div>
 

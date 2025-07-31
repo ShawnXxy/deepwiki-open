@@ -8,6 +8,8 @@ import RepoInfo from '@/types/repoinfo';
 import getRepoUrl from '@/utils/getRepoUrl';
 import ModelSelectionModal from './ModelSelectionModal';
 import { createChatWebSocket, closeWebSocket, ChatCompletionRequest } from '@/utils/websocketClient';
+import { processCitations } from '@/utils/citationProcessor';
+import { detectCurrentBranch } from '@/utils/branchDetection';
 
 interface Model {
   id: string;
@@ -748,7 +750,7 @@ const Ask: React.FC<AskProps> = ({
               ref={responseRef}
               className="p-4 max-h-[500px] overflow-y-auto"
             >
-              <Markdown content={response} />
+              <Markdown content={processCitations(response, repoInfo, detectCurrentBranch(repoInfo, 'main'))} />
             </div>
 
             {/* Research navigation and clear button */}
