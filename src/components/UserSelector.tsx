@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
-// Define the interfaces for our model configuration
+// Define the interfaces for model configuration
 interface Model {
   id: string;
   name: string;
@@ -52,8 +52,6 @@ export default function UserSelector({
   setIsCustomModel,
   customModel,
   setCustomModel,
-
-  // File filter configuration
   showFileFilters = false,
   excludedDirs = '',
   setExcludedDirs,
@@ -64,7 +62,7 @@ export default function UserSelector({
   includedFiles = '',
   setIncludedFiles
 }: ModelSelectorProps) {
-  // State to manage the visibility of the filters modal and filter section
+  // State to manage the visibility of the filter section
   const [isFilterSectionOpen, setIsFilterSectionOpen] = useState(false);
   // State to manage filter mode: 'exclude' or 'include'
   const [filterMode, setFilterMode] = useState<'exclude' | 'include'>('exclude');
@@ -95,12 +93,14 @@ export default function UserSelector({
         const data = await response.json();
         setModelConfig(data);
 
-        // Initialize provider and model with defaults from API if not already set
+        // Initialize provider and model with defaults from API (always Azure)
         if (!provider && data.defaultProvider) {
           setProvider(data.defaultProvider);
 
           // Find the default provider and set its default model
-          const selectedProvider = data.providers.find((p: Provider) => p.id === data.defaultProvider);
+          const selectedProvider = data.providers.find(
+            (p: Provider) => p.id === data.defaultProvider
+          );
           if (selectedProvider && selectedProvider.models.length > 0) {
             setModel(selectedProvider.models[0].id);
           }
@@ -108,6 +108,24 @@ export default function UserSelector({
       } catch (err) {
         console.error('Failed to fetch model configurations:', err);
         setError('Failed to load model configurations. Using default options.');
+        // Set fallback Azure configuration
+        setModelConfig({
+          defaultProvider: 'azure',
+          providers: [{
+            id: 'azure',
+            name: 'Azure OpenAI',
+            supportsCustomModel: true,
+            models: [
+              { id: 'gpt-4.1', name: 'gpt-4.1' },
+              { id: 'gpt-4o', name: 'gpt-4o' },
+              { id: 'gpt-4', name: 'gpt-4' }
+            ]
+          }]
+        });
+        if (!provider) {
+          setProvider('azure');
+          setModel('gpt-4.1');
+        }
       } finally {
         setIsLoading(false);
       }
@@ -116,149 +134,37 @@ export default function UserSelector({
     fetchModelConfig();
   }, [provider, setModel, setProvider]);
 
-  // Handler for changing provider
-  const handleProviderChange = (newProvider: string) => {
-    setProvider(newProvider);
-    setTimeout(() => {
-      // Reset custom model state when changing providers
-      setIsCustomModel(false);
-
-      // Set default model for the selected provider
-      if (modelConfig) {
-        const selectedProvider = modelConfig.providers.find((p: Provider) => p.id === newProvider);
-        if (selectedProvider && selectedProvider.models.length > 0) {
-          setModel(selectedProvider.models[0].id);
-        }
-      }
-    }, 10);
-  };
-
-  // Default excluded directories from config.py
+  // Default excluded directories
   const defaultExcludedDirs =
 `./.venv/
 ./venv/
 ./env/
-./virtualenv/
 ./node_modules/
-./bower_components/
-./jspm_packages/
 ./.git/
-./.svn/
-./.hg/
-./.bzr/
 ./__pycache__/
-./.pytest_cache/
-./.mypy_cache/
-./.ruff_cache/
-./.coverage/
 ./dist/
 ./build/
-./out/
-./target/
-./bin/
-./obj/
 ./docs/
-./_docs/
-./site-docs/
-./_site/
 ./.idea/
 ./.vscode/
-./.vs/
-./.eclipse/
-./.settings/
 ./logs/
-./log/
-./tmp/
-./temp/
-./.eng`;
+./tmp/`;
 
-  // Default excluded files from config.py
+  // Default excluded files
   const defaultExcludedFiles =
 `package-lock.json
 yarn.lock
-pnpm-lock.yaml
-npm-shrinkwrap.json
 poetry.lock
-Pipfile.lock
-requirements.txt.lock
-Cargo.lock
-composer.lock
-.lock
+*.lock
 .DS_Store
-Thumbs.db
-desktop.ini
-*.lnk
 .env
-.env.*
-*.env
-*.cfg
-*.ini
-.flaskenv
 .gitignore
-.gitattributes
-.gitmodules
-.github
-.gitlab-ci.yml
-.prettierrc
-.eslintrc
-.eslintignore
-.stylelintrc
-.editorconfig
-.jshintrc
-.pylintrc
-.flake8
-mypy.ini
-pyproject.toml
-tsconfig.json
-webpack.config.js
-babel.config.js
-rollup.config.js
-jest.config.js
-karma.conf.js
-vite.config.js
-next.config.js
 *.min.js
 *.min.css
-*.bundle.js
-*.bundle.css
 *.map
-*.gz
-*.zip
-*.tar
-*.tgz
-*.rar
 *.pyc
-*.pyo
-*.pyd
-*.so
-*.dll
-*.class
 *.exe
-*.o
-*.a
-*.jpg
-*.jpeg
-*.png
-*.gif
-*.ico
-*.svg
-*.webp
-*.mp3
-*.mp4
-*.wav
-*.avi
-*.mov
-*.webm
-*.csv
-*.tsv
-*.xls
-*.xlsx
-*.db
-*.sqlite
-*.sqlite3
-*.pdf
-*.docx
-*.pptx`;
+*.dll`;
 
   // Display loading state
   if (isLoading) {
@@ -269,6 +175,9 @@ next.config.js
     );
   }
 
+  // Get Azure provider config (always Azure)
+  const azureProvider = modelConfig?.providers.find((p: Provider) => p.id === 'azure');
+
   return (
     <div className="flex flex-col gap-3">
       <div className="space-y-4">
@@ -276,29 +185,22 @@ next.config.js
           <div className="text-sm text-red-500 mb-2">{error}</div>
         )}
 
-        {/* Provider Selection */}
+        {/* Provider Info (Azure OpenAI - read only) */}
         <div>
-          <label htmlFor="provider-dropdown" className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
+          <label className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
             {t.form?.modelProvider || 'Model Provider'}
           </label>
-          <select
-            id="provider-dropdown"
-            value={provider}
-            onChange={(e) => handleProviderChange(e.target.value)}
-            className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
-          >
-            <option value="" disabled>{t.form?.selectProvider || 'Select Provider'}</option>
-            {modelConfig?.providers.map((providerOption) => (
-              <option key={providerOption.id} value={providerOption.id}>
-                {t.form?.[`provider${providerOption.id.charAt(0).toUpperCase() + providerOption.id.slice(1)}`] || providerOption.name}
-              </option>
-            ))}
-          </select>
+          <div className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-[var(--background)]/50 text-[var(--foreground)] border border-[var(--border-color)]">
+            Azure OpenAI
+          </div>
         </div>
 
-        {/* Model Selection - consistent height regardless of type */}
+        {/* Model Selection */}
         <div>
-          <label htmlFor={isCustomModel ? "custom-model-input" : "model-dropdown"} className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
+          <label 
+            htmlFor={isCustomModel ? "custom-model-input" : "model-dropdown"} 
+            className="block text-xs font-medium text-[var(--foreground)] mb-1.5"
+          >
             {t.form?.modelSelection || 'Model Selection'}
           </label>
 
@@ -311,7 +213,7 @@ next.config.js
                 setCustomModel(e.target.value);
                 setModel(e.target.value);
               }}
-              placeholder={t.form?.customModelPlaceholder || 'Enter custom model name'}
+              placeholder={t.form?.customModelPlaceholder || 'Enter custom model/deployment name'}
               className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
             />
           ) : (
@@ -320,9 +222,9 @@ next.config.js
               value={model}
               onChange={(e) => setModel(e.target.value)}
               className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
-              disabled={!provider || isLoading || !modelConfig?.providers.find(p => p.id === provider)?.models?.length}
+              disabled={isLoading || !azureProvider?.models?.length}
             >
-              {modelConfig?.providers.find((p: Provider) => p.id === provider)?.models.map((modelOption) => (
+              {azureProvider?.models.map((modelOption) => (
                 <option key={modelOption.id} value={modelOption.id}>
                   {modelOption.name}
                 </option>
@@ -331,8 +233,8 @@ next.config.js
           )}
         </div>
 
-        {/* Custom model toggle - only when provider supports it */}
-        {modelConfig?.providers.find((p: Provider) => p.id === provider)?.supportsCustomModel && (
+        {/* Custom model toggle */}
+        {azureProvider?.supportsCustomModel && (
           <div className="mb-2">
             <div className="flex items-center pb-1">
               <div
@@ -367,12 +269,13 @@ next.config.js
                   }
                 }}
               >
-                {t.form?.useCustomModel || 'Use custom model'}
+                {t.form?.useCustomModel || 'Use custom deployment'}
               </label>
             </div>
           </div>
         )}
 
+        {/* File Filters Section */}
         {showFileFilters && (
           <div className="mt-4">
             <button
@@ -417,8 +320,8 @@ next.config.js
                   </div>
                   <p className="text-xs text-[var(--muted)] mt-1">
                     {filterMode === 'exclude'
-                      ? (t.form?.excludeModeDescription || 'Specify paths to exclude from processing (default behavior)')
-                      : (t.form?.includeModeDescription || 'Specify only the paths to include, ignoring all others')
+                      ? (t.form?.excludeModeDescription || 'Specify paths to exclude from processing')
+                      : (t.form?.includeModeDescription || 'Specify only the paths to include')
                     }
                   </p>
                 </div>
@@ -460,7 +363,7 @@ next.config.js
                       </div>
                       {showDefaultDirs && (
                         <div className="mt-2 p-2 rounded bg-[var(--background)]/50 text-xs">
-                          <p className="mb-1 text-[var(--muted)]">{t.form?.defaultNote || 'These defaults are already applied. Add your custom exclusions above.'}</p>
+                          <p className="mb-1 text-[var(--muted)]">{t.form?.defaultNote || 'These defaults are already applied.'}</p>
                           <pre className="whitespace-pre-wrap font-mono text-[var(--muted)] overflow-y-auto max-h-32">{defaultExcludedDirs}</pre>
                         </div>
                       )}
@@ -505,7 +408,7 @@ next.config.js
                       </div>
                       {showDefaultFiles && (
                         <div className="mt-2 p-2 rounded bg-[var(--background)]/50 text-xs">
-                          <p className="mb-1 text-[var(--muted)]">{t.form?.defaultNote || 'These defaults are already applied. Add your custom exclusions above.'}</p>
+                          <p className="mb-1 text-[var(--muted)]">{t.form?.defaultNote || 'These defaults are already applied.'}</p>
                           <pre className="whitespace-pre-wrap font-mono text-[var(--muted)] overflow-y-auto max-h-32">{defaultExcludedFiles}</pre>
                         </div>
                       )}

@@ -7,7 +7,6 @@ from typing import List, Optional, Dict, Any, Literal
 import json
 from datetime import datetime
 from pydantic import BaseModel, Field
-import google.generativeai as genai
 import asyncio
 
 # Configure logging
@@ -180,7 +179,7 @@ async def get_model_config():
 
         # Create providers from the config file
         providers = []
-        default_provider = configs.get("default_provider", "google")
+        default_provider = configs.get("default_provider", "azure")
 
         # Add provider configuration based on config.py
         for provider_id, provider_config in configs["providers"].items():
@@ -209,19 +208,20 @@ async def get_model_config():
 
     except Exception as e:
         logger.error(f"Error creating model configuration: {str(e)}")
-        # Return some default configuration in case of error
+        # Return Azure default configuration in case of error
         return ModelConfig(
             providers=[
                 Provider(
-                    id="google",
-                    name="Google",
+                    id="azure",
+                    name="Azure OpenAI",
                     supportsCustomModel=True,
                     models=[
-                        Model(id="gemini-2.5-flash", name="Gemini 2.5 Flash")
+                        Model(id="gpt-4.1", name="gpt-4.1"),
+                        Model(id="gpt-4o", name="gpt-4o"),
                     ]
                 )
             ],
-            defaultProvider="google"
+            defaultProvider="azure"
         )
 
 @app.post("/export/wiki")

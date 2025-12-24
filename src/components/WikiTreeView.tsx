@@ -91,6 +91,7 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
             {/* Render pages in this section */}
             {section.pages.map(pageId => {
               const page = wikiStructure.pages.find(p => p.id === pageId);
+              console.log(`WikiTreeView: Looking for pageId "${pageId}", found:`, page ? page.id : 'NOT FOUND');
               if (!page) return null;
 
               return (
@@ -166,6 +167,8 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
   // Log information about the sections for debugging
   console.log("WikiTreeView: Rendering tree view with sections:", wikiStructure.sections);
   console.log("WikiTreeView: Root sections:", wikiStructure.rootSections);
+  console.log("WikiTreeView: Pages array:", wikiStructure.pages);
+  console.log("WikiTreeView: Pages IDs:", wikiStructure.pages.map(p => p.id));
 
   return (
     <div className="space-y-1">
