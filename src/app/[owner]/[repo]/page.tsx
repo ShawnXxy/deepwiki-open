@@ -970,11 +970,57 @@ IMPORTANT:
       // Parse pages using DOM
       pages = [];
 
-      if (parseError && (!pagesEls || pagesEls.length === 0)) {
-        console.warn('DOM parsing failed, trying regex fallback');
-      }
-
-      pagesEls.forEach(pageEl => {
+      if (parseError || !pagesEls || pagesEls.length === 0) {
+        console.warn('DOM parsing failed or no pages found, trying regex fallback');
+        
+        // Regex fallback for parsing pages
+        const pageRegex = /<page\s+id="([^"]+)"[^>]*>([\s\S]*?)<\/page>/g;
+        let pageMatch;
+        
+        while ((pageMatch = pageRegex.exec(xmlText)) !== null) {
+          const pageId = pageMatch[1];
+          const pageContent = pageMatch[2];
+          
+          // Extract title
+          const titleMatch = pageContent.match(/<title>([^<]*)<\/title>/);
+          const pageTitle = titleMatch ? titleMatch[1] : '';
+          
+          // Extract importance
+          const importanceMatch = pageContent.match(/<importance>([^<]*)<\/importance>/);
+          const importance = importanceMatch ? 
+            (importanceMatch[1] === 'high' ? 'high' : 
+             importanceMatch[1] === 'medium' ? 'medium' : 'low') : 'medium';
+          
+          // Extract file paths
+          const filePaths: string[] = [];
+          const filePathRegex = /<file_path>([^<]*)<\/file_path>/g;
+          let filePathMatch;
+          while ((filePathMatch = filePathRegex.exec(pageContent)) !== null) {
+            if (filePathMatch[1]) filePaths.push(filePathMatch[1]);
+          }
+          
+          // Extract related pages
+          const relatedPages: string[] = [];
+          const relatedRegex = /<related>([^<]*)<\/related>/g;
+          let relatedMatch;
+          while ((relatedMatch = relatedRegex.exec(pageContent)) !== null) {
+            if (relatedMatch[1]) relatedPages.push(relatedMatch[1]);
+          }
+          
+          pages.push({
+            id: pageId,
+            title: pageTitle,
+            content: '',
+            filePaths,
+            importance: importance as 'high' | 'medium' | 'low',
+            relatedPages
+          });
+        }
+        
+        console.log('Regex fallback parsed pages:', pages.map(p => p.id));
+      } else {
+        // DOM parsing succeeded
+        pagesEls.forEach(pageEl => {
         const id = pageEl.getAttribute('id') || `page-${pages.length + 1}`;
         const titleEl = pageEl.querySelector('title');
         const importanceEl = pageEl.querySelector('importance');
@@ -1005,10 +1051,13 @@ IMPORTANT:
           relatedPages
         });
       });
+      } // Close else block for DOM parsing
 
       // Extract sections if they exist in the XML
       const sections: WikiSection[] = [];
       const rootSections: string[] = [];
+
+      console.log("Parsed pages with IDs:", pages.map(p => p.id));
 
       // Try to parse sections if we're in comprehensive view
       if (isComprehensiveView) {
@@ -1023,12 +1072,16 @@ IMPORTANT:
             const sectionRefEls = sectionEl.querySelectorAll('section_ref');
 
             const title = titleEl ? titleEl.textContent || '' : '';
-            const pages: string[] = [];
+            const sectionPages: string[] = [];
             const subsections: string[] = [];
 
             pageRefEls.forEach(el => {
-              if (el.textContent) pages.push(el.textContent);
+              if (el.textContent) sectionPages.push(el.textContent);
             });
+            
+            console.log(`Section "${id}" has page_refs:`, sectionPages);
+
+            console.log(`Section "${id}" has page_refs:`, sectionPages);
 
             sectionRefEls.forEach(el => {
               if (el.textContent) subsections.push(el.textContent);
@@ -1037,7 +1090,7 @@ IMPORTANT:
             sections.push({
               id,
               title,
-              pages,
+              pages: sectionPages,
               subsections: subsections.length > 0 ? subsections : undefined
             });
 

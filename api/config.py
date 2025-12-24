@@ -1,3 +1,8 @@
+"""
+Configuration module for DeepWiki.
+This module handles loading and managing configuration for Azure OpenAI services.
+"""
+
 import os
 import json
 import logging
@@ -11,23 +16,8 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-from api.openai_client import OpenAIClient
-from api.openrouter_client import OpenRouterClient
-from api.bedrock_client import BedrockClient
-from api.google_embedder_client import GoogleEmbedderClient
+# Import Azure AI client
 from api.azureai_client import AzureAIClient
-from api.dashscope_client import DashscopeClient
-from adalflow import GoogleGenAIClient, OllamaClient
-
-# Get API keys from environment variables
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
-GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
-OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
-AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
-AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
-AWS_SESSION_TOKEN = os.environ.get('AWS_SESSION_TOKEN')
-AWS_REGION = os.environ.get('AWS_REGION')
-AWS_ROLE_ARN = os.environ.get('AWS_ROLE_ARN')
 
 # Azure OpenAI environment variables
 AZURE_OPENAI_API_KEY = os.environ.get('AZURE_OPENAI_API_KEY')
@@ -38,24 +28,6 @@ AZURE_OPENAI_EMBEDDING_ENDPOINT = os.environ.get('AZURE_OPENAI_EMBEDDING_ENDPOIN
 AZURE_OPENAI_EMBEDDING_API_KEY = os.environ.get('AZURE_OPENAI_EMBEDDING_API_KEY')
 AZURE_OPENAI_EMBEDDING_VERSION = os.environ.get('AZURE_OPENAI_EMBEDDING_VERSION')
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.environ.get('AZURE_OPENAI_EMBEDDING_DEPLOYMENT')
-
-# Set keys in environment (in case they're needed elsewhere in the code)
-if OPENAI_API_KEY:
-    os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
-if GOOGLE_API_KEY:
-    os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
-if OPENROUTER_API_KEY:
-    os.environ["OPENROUTER_API_KEY"] = OPENROUTER_API_KEY
-if AWS_ACCESS_KEY_ID:
-    os.environ["AWS_ACCESS_KEY_ID"] = AWS_ACCESS_KEY_ID
-if AWS_SECRET_ACCESS_KEY:
-    os.environ["AWS_SECRET_ACCESS_KEY"] = AWS_SECRET_ACCESS_KEY
-if AWS_SESSION_TOKEN:
-    os.environ["AWS_SESSION_TOKEN"] = AWS_SESSION_TOKEN
-if AWS_REGION:
-    os.environ["AWS_REGION"] = AWS_REGION
-if AWS_ROLE_ARN:
-    os.environ["AWS_ROLE_ARN"] = AWS_ROLE_ARN
 
 # Set Azure OpenAI environment variables
 if AZURE_OPENAI_API_KEY:
@@ -119,17 +91,16 @@ def get_azure_deployment_name(model_name: str) -> str:
     """
     Get the Azure OpenAI deployment name for a given model name.
     
+    The deployment name is taken directly from the model_name parameter,
+    which should come from the config file or user selection.
+    
     Args:
-        model_name: The model name (e.g., 'gpt-4o')
+        model_name: The model name from config (e.g., 'gpt-4.1', 'o4-mini')
     
     Returns:
         The deployment name to use for Azure OpenAI API calls
     """
-    # If explicit deployment is set, use it
-    if AZURE_OPENAI_DEPLOYMENT:
-        return AZURE_OPENAI_DEPLOYMENT
-    
-    # Otherwise, use the model name as the deployment name
+    # Use the model name from config/request as the deployment name
     return model_name
 
 
@@ -147,34 +118,28 @@ def get_azure_openai_embedding_config() -> Dict[str, str]:
         "api_version": AZURE_OPENAI_EMBEDDING_VERSION or AZURE_OPENAI_VERSION or "2024-12-01-preview"
     }
 
+
 # Wiki authentication settings
 raw_auth_mode = os.environ.get('DEEPWIKI_AUTH_MODE', 'False')
 WIKI_AUTH_MODE = raw_auth_mode.lower() in ['true', '1', 't']
 WIKI_AUTH_CODE = os.environ.get('DEEPWIKI_AUTH_CODE', '')
 
-# Embedder settings
-EMBEDDER_TYPE = os.environ.get('DEEPWIKI_EMBEDDER_TYPE', 'openai').lower()
-
 # Get configuration directory from environment variable, or use default if not set
 CONFIG_DIR = os.environ.get('DEEPWIKI_CONFIG_DIR', None)
 
-# Client class mapping
+# Client class mapping (Azure only)
 CLIENT_CLASSES = {
-    "GoogleGenAIClient": GoogleGenAIClient,
-    "GoogleEmbedderClient": GoogleEmbedderClient,
-    "OpenAIClient": OpenAIClient,
-    "OpenRouterClient": OpenRouterClient,
-    "OllamaClient": OllamaClient,
-    "BedrockClient": BedrockClient,
     "AzureAIClient": AzureAIClient,
-    "DashscopeClient": DashscopeClient
 }
 
-def replace_env_placeholders(config: Union[Dict[str, Any], List[Any], str, Any]) -> Union[Dict[str, Any], List[Any], str, Any]:
+
+def replace_env_placeholders(
+    config: Union[Dict[str, Any], List[Any], str, Any]
+) -> Union[Dict[str, Any], List[Any], str, Any]:
     """
     Recursively replace placeholders like "${ENV_VAR}" in string values
     within a nested configuration structure (dicts, lists, strings)
-    with environment variable values. Logs a warning if a placeholder is not found.
+    with environment variable values.
     """
     pattern = re.compile(r"\$\{([A-Z0-9_]+)\}")
 
@@ -184,7 +149,7 @@ def replace_env_placeholders(config: Union[Dict[str, Any], List[Any], str, Any])
         env_var_value = os.environ.get(env_var_name)
         if env_var_value is None:
             logger.warning(
-                f"Environment variable placeholder '{original_placeholder}' was not found in the environment. "
+                f"Environment variable placeholder '{original_placeholder}' not found. "
                 f"The placeholder string will be used as is."
             )
             return original_placeholder
@@ -197,17 +162,15 @@ def replace_env_placeholders(config: Union[Dict[str, Any], List[Any], str, Any])
     elif isinstance(config, str):
         return pattern.sub(replacer, config)
     else:
-        # Handles numbers, booleans, None, etc.
         return config
 
-# Load JSON configuration file
+
 def load_json_config(filename):
+    """Load JSON configuration file from config directory."""
     try:
-        # If environment variable is set, use the directory specified by it
         if CONFIG_DIR:
             config_path = Path(CONFIG_DIR) / filename
         else:
-            # Otherwise use default directory
             config_path = Path(__file__).parent / "config" / filename
 
         logger.info(f"Loading configuration from {config_path}")
@@ -224,53 +187,35 @@ def load_json_config(filename):
         logger.error(f"Error loading configuration file {filename}: {str(e)}")
         return {}
 
-# Load generator model configuration
+
 def load_generator_config():
+    """Load generator model configuration for Azure OpenAI."""
     generator_config = load_json_config("generator.json")
 
-    # Add client classes to each provider
+    # Add client class for Azure provider
     if "providers" in generator_config:
         for provider_id, provider_config in generator_config["providers"].items():
-            # Try to set client class from client_class
-            if provider_config.get("client_class") in CLIENT_CLASSES:
+            if provider_id == "azure":
+                provider_config["model_client"] = AzureAIClient
+            elif provider_config.get("client_class") in CLIENT_CLASSES:
                 provider_config["model_client"] = CLIENT_CLASSES[provider_config["client_class"]]
-            # Fall back to default mapping based on provider_id
-            elif provider_id in ["google", "openai", "openrouter", "ollama", "bedrock", "azure", "dashscope"]:
-                default_map = {
-                    "google": GoogleGenAIClient,
-                    "openai": OpenAIClient,
-                    "openrouter": OpenRouterClient,
-                    "ollama": OllamaClient,
-                    "bedrock": BedrockClient,
-                    "azure": AzureAIClient,
-                    "dashscope": DashscopeClient
-                }
-                provider_config["model_client"] = default_map[provider_id]
-            else:
-                logger.warning(f"Unknown provider or client class: {provider_id}")
 
     return generator_config
 
-# Load embedder configuration
+
 def load_embedder_config():
-    # Determine which embedder config file to load based on Azure OpenAI availability
-    use_azure = is_azure_openai_configured()
-    print(f"DEBUG: load_embedder_config called. use_azure={use_azure}")
-    
-    if use_azure:
-        # Try to load Azure-specific embedder config first
-        azure_config_path = Path(__file__).parent / "config" / "embedder.azure.json"
-        if azure_config_path.exists():
-            logger.info("Loading Azure-specific embedder configuration")
-            embedder_config = load_json_config("embedder.azure.json")
-        else:
-            logger.info("Azure-specific config not found, loading default embedder configuration")
-            embedder_config = load_json_config("embedder.json")
+    """Load embedder configuration for Azure OpenAI."""
+    # Load Azure-specific embedder config
+    azure_config_path = Path(__file__).parent / "config" / "embedder.azure.json"
+    if azure_config_path.exists():
+        logger.info("Loading Azure-specific embedder configuration")
+        embedder_config = load_json_config("embedder.azure.json")
     else:
+        logger.info("Loading default embedder configuration")
         embedder_config = load_json_config("embedder.json")
 
-    # Process client classes
-    for key in ["embedder", "embedder_ollama", "embedder_azure", "embedder_google", "embedder_bedrock"]:
+    # Process client classes for Azure embedder
+    for key in ["embedder", "embedder_azure"]:
         if key in embedder_config and "client_class" in embedder_config[key]:
             class_name = embedder_config[key]["client_class"]
             if class_name in CLIENT_CLASSES:
@@ -278,103 +223,44 @@ def load_embedder_config():
 
     return embedder_config
 
+
 def get_embedder_config():
     """
-    Get the current embedder configuration based on DEEPWIKI_EMBEDDER_TYPE.
+    Get the current embedder configuration for Azure OpenAI.
 
     Returns:
         dict: The embedder configuration with model_client resolved
     """
-    embedder_type = EMBEDDER_TYPE
-    if embedder_type == 'bedrock' and 'embedder_bedrock' in configs:
-        return configs.get("embedder_bedrock", {})
-    elif embedder_type == 'google' and 'embedder_google' in configs:
-        return configs.get("embedder_google", {})
-    elif embedder_type == 'ollama' and 'embedder_ollama' in configs:
-        return configs.get("embedder_ollama", {})
-    else:
-        return configs.get("embedder", {})
+    return configs.get("embedder", {})
 
-def is_ollama_embedder():
+
+def get_embedder_type() -> str:
     """
-    Check if the current embedder configuration uses OllamaClient.
+    Get the current embedder type.
 
     Returns:
-        bool: True if using OllamaClient, False otherwise
+        str: Always returns 'azure' as only Azure OpenAI is supported
     """
-    embedder_config = get_embedder_config()
-    if not embedder_config:
-        return False
+    return 'azure'
 
-    # Check if model_client is OllamaClient
-    model_client = embedder_config.get("model_client")
-    if model_client:
-        return model_client.__name__ == "OllamaClient"
 
-    # Fallback: check client_class string
-    client_class = embedder_config.get("client_class", "")
-    return client_class == "OllamaClient"
-
-def is_google_embedder():
+def is_ollama_embedder() -> bool:
     """
-    Check if the current embedder configuration uses GoogleEmbedderClient.
-
-    Returns:
-        bool: True if using GoogleEmbedderClient, False otherwise
-    """
-    embedder_config = get_embedder_config()
-    if not embedder_config:
-        return False
-
-    # Check if model_client is GoogleEmbedderClient
-    model_client = embedder_config.get("model_client")
-    if model_client:
-        return model_client.__name__ == "GoogleEmbedderClient"
-
-    # Fallback: check client_class string
-    client_class = embedder_config.get("client_class", "")
-    return client_class == "GoogleEmbedderClient"
-
-def is_bedrock_embedder():
-    """
-    Check if the current embedder configuration uses BedrockClient.
-
-    Returns:
-        bool: True if using BedrockClient, False otherwise
-    """
-    embedder_config = get_embedder_config()
-    if not embedder_config:
-        return False
-
-    model_client = embedder_config.get("model_client")
-    if model_client:
-        return model_client.__name__ == "BedrockClient"
-
-    client_class = embedder_config.get("client_class", "")
-    return client_class == "BedrockClient"
-
-def get_embedder_type():
-    """
-    Get the current embedder type based on configuration.
+    Check if the current embedder is Ollama.
     
     Returns:
-        str: 'bedrock', 'ollama', 'google', or 'openai' (default)
+        bool: Always returns False as Ollama is not supported
     """
-    if is_bedrock_embedder():
-        return 'bedrock'
-    elif is_ollama_embedder():
-        return 'ollama'
-    elif is_google_embedder():
-        return 'google'
-    else:
-        return 'openai'
+    return False
 
-# Load repository and file filters configuration
+
 def load_repo_config():
+    """Load repository and file filters configuration."""
     return load_json_config("repo.json")
 
-# Load language configuration
+
 def load_lang_config():
+    """Load language configuration."""
     default_config = {
         "supported_languages": {
             "en": "English",
@@ -391,33 +277,31 @@ def load_lang_config():
         "default": "en"
     }
 
-    loaded_config = load_json_config("lang.json") # Let load_json_config handle path and loading
+    loaded_config = load_json_config("lang.json")
 
     if not loaded_config:
         return default_config
 
     if "supported_languages" not in loaded_config or "default" not in loaded_config:
-        logger.warning("Language configuration file 'lang.json' is malformed. Using default language configuration.")
+        logger.warning(
+            "Language configuration file 'lang.json' is malformed. "
+            "Using default language configuration."
+        )
         return default_config
 
     return loaded_config
 
+
 # Default excluded directories and files
 DEFAULT_EXCLUDED_DIRS: List[str] = [
-    # Virtual environments and package managers
     "./.venv/", "./venv/", "./env/", "./virtualenv/",
     "./node_modules/", "./bower_components/", "./jspm_packages/",
-    # Version control
     "./.git/", "./.svn/", "./.hg/", "./.bzr/",
-    # Cache and compiled files
-    "./__pycache__/", "./.pytest_cache/", "./.mypy_cache/", "./.ruff_cache/", "./.coverage/",
-    # Build and distribution
+    "./__pycache__/", "./.pytest_cache/", "./.mypy_cache/",
+    "./.ruff_cache/", "./.coverage/",
     "./dist/", "./build/", "./out/", "./target/", "./bin/", "./obj/",
-    # Documentation
     "./docs/", "./_docs/", "./site-docs/", "./_site/",
-    # IDE specific
     "./.idea/", "./.vscode/", "./.vs/", "./.eclipse/", "./.settings/",
-    # Logs and temporary files
     "./logs/", "./log/", "./tmp/", "./temp/",
 ]
 
@@ -452,53 +336,52 @@ embedder_config = load_embedder_config()
 repo_config = load_repo_config()
 lang_config = load_lang_config()
 
-# Check if Azure OpenAI is configured and update default settings
-use_azure_openai = is_azure_openai_configured()
+# Validate Azure OpenAI configuration
+if not is_azure_openai_configured():
+    logger.warning(
+        "Azure OpenAI is not properly configured. Please set the following:\n"
+        "- AZURE_OPENAI_API_KEY\n"
+        "- AZURE_OPENAI_ENDPOINT\n"
+        "- AZURE_OPENAI_VERSION\n"
+        "- AZURE_OPENAI_EMBEDDING_ENDPOINT (or use AZURE_OPENAI_ENDPOINT)\n"
+        "- AZURE_OPENAI_EMBEDDING_API_KEY (or use AZURE_OPENAI_API_KEY)\n"
+    )
 
-# Update configuration
+# Set default provider to Azure
+configs["default_provider"] = "azure"
+logger.info("Using Azure OpenAI as default provider")
+
+# Update provider configuration
 if generator_config:
-    # Set default provider to Azure if configured, otherwise use original default
-    if use_azure_openai:
-        configs["default_provider"] = "azure"
-        logger.info("Using Azure OpenAI as default provider for text generation")
-    else:
-        configs["default_provider"] = generator_config.get("default_provider", "google")
-    
     configs["providers"] = generator_config.get("providers", {})
 
-# Update embedder configuration - switch to Azure if configured
+# Update embedder configuration for Azure
 if embedder_config:
-    if use_azure_openai:
-        # Use embedder_azure configuration if available, otherwise create it
-        if "embedder_azure" in embedder_config:
-            logger.info("Using embedder_azure configuration from config file")
-            configs["embedder"] = embedder_config["embedder_azure"]
-        else:
-            # Create Azure OpenAI embedder configuration
-            azure_config = get_azure_openai_embedding_config()
-            configs["embedder"] = {
-                "client_class": "AzureAIClient",
-                "model_client": AzureAIClient,
-                "batch_size": 100,
-                "model_kwargs": {
-                    "model": (AZURE_OPENAI_EMBEDDING_DEPLOYMENT or
-                              "text-embedding-3-large"),
-                    "dimensions": 3072,
-                    "encoding_format": "float"
-                },
-                "initialize_kwargs": azure_config
-            }
-        logger.info("Using Azure OpenAI for embeddings with text-embedding-3-large model")
-        # Still copy other configurations like text_splitter and retriever
-        for key in ["retriever", "text_splitter"]:
-            if key in embedder_config:
-                configs[key] = embedder_config[key]
+    if "embedder_azure" in embedder_config:
+        logger.info("Using embedder_azure configuration from config file")
+        configs["embedder"] = embedder_config["embedder_azure"]
+    elif "embedder" in embedder_config:
+        configs["embedder"] = embedder_config["embedder"]
     else:
-        # Use original embedder configuration
-        for key in ["embedder", "embedder_ollama", "embedder_google", "embedder_bedrock", "retriever",
-                    "text_splitter"]:
-            if key in embedder_config:
-                configs[key] = embedder_config[key]
+        # Create default Azure OpenAI embedder configuration
+        azure_config = get_azure_openai_embedding_config()
+        configs["embedder"] = {
+            "client_class": "AzureAIClient",
+            "model_client": AzureAIClient,
+            "batch_size": 10,
+            "model_kwargs": {
+                "model": (AZURE_OPENAI_EMBEDDING_DEPLOYMENT or "text-embedding-3-large"),
+                "dimensions": 3072,
+                "encoding_format": "float"
+            },
+            "initialize_kwargs": azure_config
+        }
+    logger.info("Using Azure OpenAI for embeddings")
+    
+    # Copy retriever and text_splitter configurations
+    for key in ["retriever", "text_splitter"]:
+        if key in embedder_config:
+            configs[key] = embedder_config[key]
 
 # Update repository configuration
 if repo_config:
@@ -513,76 +396,53 @@ if lang_config:
 
 def get_model_config(provider=None, model=None):
     """
-    Get configuration for the specified provider and model.
-    If Azure OpenAI is configured and no provider is specified, it will use Azure.
+    Get configuration for Azure OpenAI model.
 
     Parameters:
-        provider (str): Model provider ('google', 'openai', 'openrouter', 'ollama', 'bedrock', 'azure')
-                       If None and Azure is configured, defaults to 'azure'
+        provider (str): Model provider (ignored, always uses 'azure')
         model (str): Model name, or None to use default model
 
     Returns:
         dict: Configuration containing model_client, model and other parameters
     """
-    # Auto-detect provider if not specified or empty
-    if not provider:  # handles None and empty string ''
-        if is_azure_openai_configured():
-            provider = "azure"
-        else:
-            provider = configs.get("default_provider", "google")
+    # Always use Azure provider
+    provider = "azure"
     
-    # Get provider configuration
     if "providers" not in configs:
         raise ValueError("Provider configuration not loaded")
 
     provider_config = configs["providers"].get(provider)
     if not provider_config:
-        raise ValueError(f"Configuration for provider '{provider}' not found")
+        raise ValueError("Azure provider configuration not found")
 
     model_client = provider_config.get("model_client")
     if not model_client:
-        raise ValueError(f"Model client not specified for provider '{provider}'")
+        raise ValueError("Model client not specified for Azure provider")
 
-    # If model not provided, use default model for the provider
+    # If model not provided, use default model
     if not model:
-        if provider == "azure" and is_azure_openai_configured():
-            # Default Azure model - changed to GPT-4.1 for improved performance
-            model = "gpt-4.1"
-        else:
-            model = provider_config.get("default_model")
-            if not model:
-                raise ValueError(f"No default model specified for provider '{provider}'")
+        model = "gpt-4.1"
 
     # Get model parameters (if present)
     model_params = {}
     if model in provider_config.get("models", {}):
         model_params = provider_config["models"][model]
-        logger.info(f"Found model '{model}' in provider config with params: {model_params}")
+        logger.info(f"Found model '{model}' in Azure config with params: {model_params}")
     else:
-        logger.warning(f"Model '{model}' not found in provider '{provider}' models. Available models: {list(provider_config.get('models', {}).keys())}")
+        logger.warning(
+            f"Model '{model}' not found in Azure models. "
+            f"Available models: {list(provider_config.get('models', {}).keys())}"
+        )
         default_model = provider_config.get("default_model")
         if default_model and default_model in provider_config.get("models", {}):
             model_params = provider_config["models"][default_model]
             logger.info(f"Using default model '{default_model}' params: {model_params}")
 
-    # Prepare base configuration
+    # Prepare Azure configuration
     result = {
         "model_client": model_client,
+        "initialize_kwargs": get_azure_openai_text_config(),
+        "model_kwargs": {"model": model, **model_params}
     }
-
-    # Add Azure-specific initialization parameters
-    if provider == "azure" and is_azure_openai_configured():
-        result["initialize_kwargs"] = get_azure_openai_text_config()
-
-    # Provider-specific adjustments
-    if provider == "ollama":
-        # Ollama uses a slightly different parameter structure
-        if "options" in model_params:
-            result["model_kwargs"] = {"model": model, **model_params["options"]}
-        else:
-            result["model_kwargs"] = {"model": model}
-    else:
-        # Standard structure for other providers
-        result["model_kwargs"] = {"model": model, **model_params}
 
     return result

@@ -44,30 +44,16 @@ if is_development:
 import uvicorn
 
 # Import Azure configuration functions
-from api.config import is_azure_openai_configured, GOOGLE_API_KEY
+from api.config import is_azure_openai_configured
 
-# Check for required environment variables - bypass if Azure OpenAI is configured
+# Check for Azure OpenAI configuration
 use_azure_openai = is_azure_openai_configured()
 
 if use_azure_openai:
-    logger.info("Azure OpenAI configuration detected. Using Azure OpenAI for both text generation and embeddings.")
+    logger.info("Azure OpenAI configuration detected. Using Azure OpenAI for text generation and embeddings.")
 else:
-    required_env_vars = ['GOOGLE_API_KEY', 'OPENAI_API_KEY']
-    missing_vars = [var for var in required_env_vars if not os.environ.get(var)]
-    if missing_vars:
-        logger.warning(f"Missing environment variables: {', '.join(missing_vars)}")
-        logger.warning("Some functionality may not work correctly without these variables.")
-
-# Configure Google Generative AI (only if not using Azure OpenAI exclusively)
-import google.generativeai as genai
-
-if GOOGLE_API_KEY and not use_azure_openai:
-    genai.configure(api_key=GOOGLE_API_KEY)
-else:
-    if not use_azure_openai:
-        logger.warning("GOOGLE_API_KEY not configured")
-    else:
-        logger.info("Using Azure OpenAI instead of Google Generative AI")
+    logger.error("Azure OpenAI is not configured. Please set the required environment variables.")
+    logger.error("Required: AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_VERSION")
 
 if __name__ == "__main__":
     # Get port from environment variable or use default
