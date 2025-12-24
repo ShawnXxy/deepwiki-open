@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 from api.openai_client import OpenAIClient
 from api.openrouter_client import OpenRouterClient
 from api.bedrock_client import BedrockClient
+from api.google_embedder_client import GoogleEmbedderClient
 from api.azureai_client import AzureAIClient
 from api.dashscope_client import DashscopeClient
 from adalflow import GoogleGenAIClient, OllamaClient
@@ -24,6 +25,7 @@ GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY')
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY')
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
 AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
+AWS_SESSION_TOKEN = os.environ.get('AWS_SESSION_TOKEN')
 AWS_REGION = os.environ.get('AWS_REGION')
 AWS_ROLE_ARN = os.environ.get('AWS_ROLE_ARN')
 
@@ -48,6 +50,8 @@ if AWS_ACCESS_KEY_ID:
     os.environ["AWS_ACCESS_KEY_ID"] = AWS_ACCESS_KEY_ID
 if AWS_SECRET_ACCESS_KEY:
     os.environ["AWS_SECRET_ACCESS_KEY"] = AWS_SECRET_ACCESS_KEY
+if AWS_SESSION_TOKEN:
+    os.environ["AWS_SESSION_TOKEN"] = AWS_SESSION_TOKEN
 if AWS_REGION:
     os.environ["AWS_REGION"] = AWS_REGION
 if AWS_ROLE_ARN:
@@ -148,12 +152,16 @@ raw_auth_mode = os.environ.get('DEEPWIKI_AUTH_MODE', 'False')
 WIKI_AUTH_MODE = raw_auth_mode.lower() in ['true', '1', 't']
 WIKI_AUTH_CODE = os.environ.get('DEEPWIKI_AUTH_CODE', '')
 
+# Embedder settings
+EMBEDDER_TYPE = os.environ.get('DEEPWIKI_EMBEDDER_TYPE', 'openai').lower()
+
 # Get configuration directory from environment variable, or use default if not set
 CONFIG_DIR = os.environ.get('DEEPWIKI_CONFIG_DIR', None)
 
 # Client class mapping
 CLIENT_CLASSES = {
     "GoogleGenAIClient": GoogleGenAIClient,
+    "GoogleEmbedderClient": GoogleEmbedderClient,
     "OpenAIClient": OpenAIClient,
     "OpenRouterClient": OpenRouterClient,
     "OllamaClient": OllamaClient,
@@ -261,7 +269,7 @@ def load_embedder_config():
         embedder_config = load_json_config("embedder.json")
 
     # Process client classes
-    for key in ["embedder", "embedder_ollama", "embedder_azure"]:
+    for key in ["embedder", "embedder_ollama", "embedder_azure", "embedder_google", "embedder_bedrock"]:
         if key in embedder_config and "client_class" in embedder_config[key]:
             class_name = embedder_config[key]["client_class"]
             if class_name in CLIENT_CLASSES:
@@ -271,12 +279,20 @@ def load_embedder_config():
 
 def get_embedder_config():
     """
-    Get the current embedder configuration.
+    Get the current embedder configuration based on DEEPWIKI_EMBEDDER_TYPE.
 
     Returns:
         dict: The embedder configuration with model_client resolved
     """
-    return configs.get("embedder", {})
+    embedder_type = EMBEDDER_TYPE
+    if embedder_type == 'bedrock' and 'embedder_bedrock' in configs:
+        return configs.get("embedder_bedrock", {})
+    elif embedder_type == 'google' and 'embedder_google' in configs:
+        return configs.get("embedder_google", {})
+    elif embedder_type == 'ollama' and 'embedder_ollama' in configs:
+        return configs.get("embedder_ollama", {})
+    else:
+        return configs.get("embedder", {})
 
 def is_ollama_embedder():
     """
@@ -297,6 +313,60 @@ def is_ollama_embedder():
     # Fallback: check client_class string
     client_class = embedder_config.get("client_class", "")
     return client_class == "OllamaClient"
+
+def is_google_embedder():
+    """
+    Check if the current embedder configuration uses GoogleEmbedderClient.
+
+    Returns:
+        bool: True if using GoogleEmbedderClient, False otherwise
+    """
+    embedder_config = get_embedder_config()
+    if not embedder_config:
+        return False
+
+    # Check if model_client is GoogleEmbedderClient
+    model_client = embedder_config.get("model_client")
+    if model_client:
+        return model_client.__name__ == "GoogleEmbedderClient"
+
+    # Fallback: check client_class string
+    client_class = embedder_config.get("client_class", "")
+    return client_class == "GoogleEmbedderClient"
+
+def is_bedrock_embedder():
+    """
+    Check if the current embedder configuration uses BedrockClient.
+
+    Returns:
+        bool: True if using BedrockClient, False otherwise
+    """
+    embedder_config = get_embedder_config()
+    if not embedder_config:
+        return False
+
+    model_client = embedder_config.get("model_client")
+    if model_client:
+        return model_client.__name__ == "BedrockClient"
+
+    client_class = embedder_config.get("client_class", "")
+    return client_class == "BedrockClient"
+
+def get_embedder_type():
+    """
+    Get the current embedder type based on configuration.
+    
+    Returns:
+        str: 'bedrock', 'ollama', 'google', or 'openai' (default)
+    """
+    if is_bedrock_embedder():
+        return 'bedrock'
+    elif is_ollama_embedder():
+        return 'ollama'
+    elif is_google_embedder():
+        return 'google'
+    else:
+        return 'openai'
 
 # Load repository and file filters configuration
 def load_repo_config():
@@ -424,7 +494,7 @@ if embedder_config:
                 configs[key] = embedder_config[key]
     else:
         # Use original embedder configuration
-        for key in ["embedder", "embedder_ollama", "retriever",
+        for key in ["embedder", "embedder_ollama", "embedder_google", "embedder_bedrock", "retriever",
                     "text_splitter"]:
             if key in embedder_config:
                 configs[key] = embedder_config[key]

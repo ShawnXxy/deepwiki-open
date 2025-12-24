@@ -74,7 +74,7 @@ OPENROUTER_API_KEY=your_openrouter_api_key
 
 ```bash
 # 安装Python依赖
-pip install -r api/requirements.txt
+python -m pip install poetry==2.0.1 && poetry install -C api
 
 # 启动API服务器
 python -m api.main
@@ -256,8 +256,8 @@ DeepWiki 现在实现了灵活的基于提供者的模型选择系统，支持�
 
 ### 支持的提供商和模型
 
-- **Google**: 默认使用 `gemini-2.0-flash`，还支持 `gemini-1.5-flash`、`gemini-1.0-pro` 等
-- **OpenAI**: 默认使用 `gpt-4o`，还支持 `o4-mini` 等
+- **Google**: 默认使用 `gemini-2.5-flash`，还支持 `gemini-2.5-flash-lite`、`gemini-2.5-pro` 等
+- **OpenAI**: 默认使用 `gpt-5-nano`，还支持 `gpt-5`, `4o` 等
 - **OpenRouter**: 通过统一 API 访问多种模型，包括 Claude、Llama、Mistral 等
 - **Ollama**: 支持本地运行的开源模型，如 `llama3`
 

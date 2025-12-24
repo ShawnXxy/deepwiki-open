@@ -67,7 +67,7 @@ OPENROUTER_API_KEY=your_openrouter_api_key
 
 ```bash
 # Cài đặt Python dependencies
-pip install -r api/requirements.txt
+python -m pip install poetry==2.0.1 && poetry install -C api
 
 # Chạy API server
 python -m api.main
@@ -251,8 +251,8 @@ DeepWiki hiện đã triển khai một hệ thống lựa chọn mô hình linh
 
 ### Các nhà cung cấp và mô hình được hỗ trợ
 
-- **Google**: Mặc định là `gemini-2.0-flash`, cũng hỗ trợ `gemini-1.5-flash`, `gemini-1.0-pro`, v.v.
-- **OpenAI**: Mặc định là `gpt-4o`, cũng hỗ trợ `o4-mini`, v.v.
+- **Google**: Mặc định là `gemini-2.5-flash`, cũng hỗ trợ `gemini-2.5-flash-lite`, `gemini-2.5-pro`, v.v.
+- **OpenAI**: Mặc định là `gpt-5-nano`, cũng hỗ trợ `gpt-5`, `4o`, v.v.
 - **OpenRouter**: Truy cập nhiều mô hình qua một API thống nhất, bao gồm Claude, Llama, Mistral, v.v.
 - **Ollama**: Hỗ trợ các mô hình mã nguồn mở chạy cục bộ như `llama3`
 

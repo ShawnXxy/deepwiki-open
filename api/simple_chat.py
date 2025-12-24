@@ -17,7 +17,14 @@ from api.openai_client import OpenAIClient
 from api.openrouter_client import OpenRouterClient
 from api.bedrock_client import BedrockClient
 from api.azureai_client import AzureAIClient
+from api.dashscope_client import DashscopeClient
 from api.rag import RAG
+from api.prompts import (
+    DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
+    DEEP_RESEARCH_FINAL_ITERATION_PROMPT,
+    DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT,
+    SIMPLE_CHAT_SYSTEM_PROMPT
+)
 
 # Configure logging
 from api.logging_config import setup_logging
@@ -58,7 +65,7 @@ class ChatCompletionRequest(BaseModel):
     branch: Optional[str] = Field(None, description="Specific branch to clone/process (defaults to main/master)")
 
     # model parameters
-    provider: str = Field("google", description="Model provider (google, openai, openrouter, ollama, bedrock, azure)")
+    provider: str = Field("google", description="Model provider (google, openai, openrouter, ollama, bedrock, azure, dashscope)")
     model: Optional[str] = Field(None, description="Model name for the specified provider")
 
     language: Optional[str] = Field("en", description="Language for content generation (e.g., 'en', 'ja', 'zh', 'es', 'kr', 'vi')")
@@ -261,138 +268,35 @@ async def chat_completions_stream(request: ChatCompletionRequest):
             is_final_iteration = research_iteration >= 5
 
             if is_first_iteration:
-                system_prompt = f"""<role>
-You are an expert code analyst examining the {repo_type} repository: {repo_url} ({repo_name}).
-You are conducting a multi-turn Deep Research process to thoroughly investigate the specific topic in the user's query.
-Your goal is to provide detailed, focused information EXCLUSIVELY about this topic.
-IMPORTANT:You MUST respond in {language_name} language.
-</role>
-
-<guidelines>
-- This is the first iteration of a multi-turn research process focused EXCLUSIVELY on the user's query
-- Start your response with "## Research Plan"
-- Outline your approach to investigating this specific topic
-- If the topic is about a specific file or feature (like "Dockerfile"), focus ONLY on that file or feature
-- Clearly state the specific topic you're researching to maintain focus throughout all iterations
-- Identify the key aspects you'll need to research
-- Provide initial findings based on the information available
-- End with "## Next Steps" indicating what you'll investigate in the next iteration
-- Do NOT provide a final conclusion yet - this is just the beginning of the research
-- Do NOT include general repository information unless directly relevant to the query
-- Focus EXCLUSIVELY on the specific topic being researched - do not drift to related topics
-- Your research MUST directly address the original question
-- NEVER respond with just "Continue the research" as an answer - always provide substantive research findings
-- Remember that this topic will be maintained across all research iterations
-</guidelines>
-
-<style>
-- Be concise but thorough
-- Use markdown formatting to improve readability
-- Cite specific files and code sections when relevant
-</style>"""
+                system_prompt = DEEP_RESEARCH_FIRST_ITERATION_PROMPT.format(
+                    repo_type=repo_type,
+                    repo_url=repo_url,
+                    repo_name=repo_name,
+                    language_name=language_name
+                )
             elif is_final_iteration:
-                system_prompt = f"""<role>
-You are an expert code analyst examining the {repo_type} repository: {repo_url} ({repo_name}).
-You are in the final iteration of a Deep Research process focused EXCLUSIVELY on the latest user query.
-Your goal is to synthesize all previous findings and provide a comprehensive conclusion that directly addresses this specific topic and ONLY this topic.
-IMPORTANT:You MUST respond in {language_name} language.
-</role>
-
-<guidelines>
-- This is the final iteration of the research process
-- CAREFULLY review the entire conversation history to understand all previous findings
-- Synthesize ALL findings from previous iterations into a comprehensive conclusion
-- Start with "## Final Conclusion"
-- Your conclusion MUST directly address the original question
-- Stay STRICTLY focused on the specific topic - do not drift to related topics
-- Include specific code references and implementation details related to the topic
-- Highlight the most important discoveries and insights about this specific functionality
-- Provide a complete and definitive answer to the original question
-- Do NOT include general repository information unless directly relevant to the query
-- Focus exclusively on the specific topic being researched
-- NEVER respond with "Continue the research" as an answer - always provide a complete conclusion
-- If the topic is about a specific file or feature (like "Dockerfile"), focus ONLY on that file or feature
-- Ensure your conclusion builds on and references key findings from previous iterations
-</guidelines>
-
-<style>
-- Be concise but thorough
-- Use markdown formatting to improve readability
-- Cite specific files and code sections when relevant
-- Structure your response with clear headings
-- End with actionable insights or recommendations when appropriate
-</style>"""
+                system_prompt = DEEP_RESEARCH_FINAL_ITERATION_PROMPT.format(
+                    repo_type=repo_type,
+                    repo_url=repo_url,
+                    repo_name=repo_name,
+                    research_iteration=research_iteration,
+                    language_name=language_name
+                )
             else:
-                system_prompt = f"""<role>
-You are an expert code analyst examining the {repo_type} repository: {repo_url} ({repo_name}).
-You are currently in iteration {research_iteration} of a Deep Research process focused EXCLUSIVELY on the latest user query.
-Your goal is to build upon previous research iterations and go deeper into this specific topic without deviating from it.
-IMPORTANT:You MUST respond in {language_name} language.
-</role>
-
-<guidelines>
-- CAREFULLY review the conversation history to understand what has been researched so far
-- Your response MUST build on previous research iterations - do not repeat information already covered
-- Identify gaps or areas that need further exploration related to this specific topic
-- Focus on one specific aspect that needs deeper investigation in this iteration
-- Start your response with "## Research Update {research_iteration}"
-- Clearly explain what you're investigating in this iteration
-- Provide new insights that weren't covered in previous iterations
-- If this is iteration 3, prepare for a final conclusion in the next iteration
-- Do NOT include general repository information unless directly relevant to the query
-- Focus EXCLUSIVELY on the specific topic being researched - do not drift to related topics
-- If the topic is about a specific file or feature (like "Dockerfile"), focus ONLY on that file or feature
-- NEVER respond with just "Continue the research" as an answer - always provide substantive research findings
-- Your research MUST directly address the original question
-- Maintain continuity with previous research iterations - this is a continuous investigation
-</guidelines>
-
-<style>
-- Be concise but thorough
-- Focus on providing new information, not repeating what's already been covered
-- Use markdown formatting to improve readability
-- Cite specific files and code sections when relevant
-</style>"""
+                system_prompt = DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT.format(
+                    repo_type=repo_type,
+                    repo_url=repo_url,
+                    repo_name=repo_name,
+                    research_iteration=research_iteration,
+                    language_name=language_name
+                )
         else:
-            system_prompt = f"""<role>
-You are an expert code analyst examining the {repo_type} repository: {repo_url} ({repo_name}).
-You provide direct, concise, and accurate information about code repositories.
-You NEVER start responses with markdown headers or code fences.
-IMPORTANT:You MUST respond in {language_name} language.
-</role>
-
-<guidelines>
-- Answer the user's question directly without ANY preamble or filler phrases
-- DO NOT include any rationale, explanation, or extra comments.
-- DO NOT start with preambles like "Okay, here's a breakdown" or "Here's an explanation"
-- DO NOT start with markdown headers like "## Analysis of..." or any file path references
-- DO NOT start with ```markdown code fences
-- DO NOT end your response with ``` closing fences
-- DO NOT start by repeating or acknowledging the question
-- JUST START with the direct answer to the question
-
-<example_of_what_not_to_do>
-```markdown
-## Analysis of `adalflow/adalflow/datasets/gsm8k.py`
-
-This file contains...
-```
-</example_of_what_not_to_do>
-
-- Format your response with proper markdown including headings, lists, and code blocks WITHIN your answer
-- For code analysis, organize your response with clear sections
-- Think step by step and structure your answer logically
-- Start with the most relevant information that directly addresses the user's query
-- Be precise and technical when discussing code
-- Your response language should be in the same language as the user's query
-</guidelines>
-
-<style>
-- Use concise, direct language
-- Prioritize accuracy over verbosity
-- When showing code, include line numbers and file paths when relevant
-- Use markdown formatting to improve readability
-</style>"""
+            system_prompt = SIMPLE_CHAT_SYSTEM_PROMPT.format(
+                repo_type=repo_type,
+                repo_url=repo_url,
+                repo_name=repo_name,
+                language_name=language_name
+            )
 
         # Fetch file content if provided
         file_content = ""
@@ -545,15 +449,31 @@ This file contains...
                 model_kwargs=model_kwargs,
                 model_type=ModelType.LLM
             )
+        elif request.provider == "dashscope":
+            logger.info(f"Using Dashscope with model: {request.model}")
+
+            model = DashscopeClient()
+            model_kwargs = {
+                "model": request.model,
+                "stream": True,
+                "temperature": model_config["temperature"],
+                "top_p": model_config["top_p"],
+            }
+
+            api_kwargs = model.convert_inputs_to_api_kwargs(
+                input=prompt,
+                model_kwargs=model_kwargs,
+                model_type=ModelType.LLM,
+            )
         else:
-            # Initialize Google Generative AI model
+            # Initialize Google Generative AI model (default provider)
             model = genai.GenerativeModel(
                 model_name=model_config["model"],
                 generation_config={
                     "temperature": model_config["temperature"],
                     "top_p": model_config["top_p"],
-                    "top_k": model_config["top_k"]
-                }
+                    "top_k": model_config["top_k"],
+                },
             )
 
         # Create a streaming response
@@ -627,12 +547,29 @@ This file contains...
                     except Exception as e_azure:
                         logger.error(f"Error with Azure AI API: {str(e_azure)}")
                         yield f"\nError with Azure AI API: {str(e_azure)}\n\nPlease check that you have set the AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_VERSION environment variables with valid values."
+                elif request.provider == "dashscope":
+                    try:
+                        logger.info("Making Dashscope API call")
+                        response = await model.acall(
+                            api_kwargs=api_kwargs, model_type=ModelType.LLM
+                        )
+                        # DashscopeClient.acall with stream=True returns an async
+                        # generator of text chunks
+                        async for text in response:
+                            if text:
+                                yield text
+                    except Exception as e_dashscope:
+                        logger.error(f"Error with Dashscope API: {str(e_dashscope)}")
+                        yield (
+                            f"\nError with Dashscope API: {str(e_dashscope)}\n\n"
+                            "Please check that you have set the DASHSCOPE_API_KEY (and optionally "
+                            "DASHSCOPE_WORKSPACE_ID) environment variables with valid values."
+                        )
                 else:
-                    # Generate streaming response
+                    # Google Generative AI (default provider)
                     response = model.generate_content(prompt, stream=True)
-                    # Stream the response
                     for chunk in response:
-                        if hasattr(chunk, 'text'):
+                        if hasattr(chunk, "text"):
                             yield chunk.text
 
             except Exception as e_outer:
@@ -761,23 +698,51 @@ This file contains...
                             except Exception as e_fallback:
                                 logger.error(f"Error with Azure AI API fallback: {str(e_fallback)}")
                                 yield f"\nError with Azure AI API fallback: {str(e_fallback)}\n\nPlease check that you have set the AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_VERSION environment variables with valid values."
+                        elif request.provider == "dashscope":
+                            try:
+                                # Create new api_kwargs with the simplified prompt
+                                fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
+                                    input=simplified_prompt,
+                                    model_kwargs=model_kwargs,
+                                    model_type=ModelType.LLM,
+                                )
+
+                                logger.info("Making fallback Dashscope API call")
+                                fallback_response = await model.acall(
+                                    api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM
+                                )
+
+                                # DashscopeClient.acall (stream=True) returns an async
+                                # generator of text chunks
+                                async for text in fallback_response:
+                                    if text:
+                                        yield text
+                            except Exception as e_fallback:
+                                logger.error(
+                                    f"Error with Dashscope API fallback: {str(e_fallback)}"
+                                )
+                                yield (
+                                    f"\nError with Dashscope API fallback: {str(e_fallback)}\n\n"
+                                    "Please check that you have set the DASHSCOPE_API_KEY (and optionally "
+                                    "DASHSCOPE_WORKSPACE_ID) environment variables with valid values."
+                                )
                         else:
-                            # Initialize Google Generative AI model
+                            # Google Generative AI fallback (default provider)
                             model_config = get_model_config(request.provider, request.model)
                             fallback_model = genai.GenerativeModel(
-                                model_name=model_config["model"],
+                                model_name=model_config["model_kwargs"]["model"],
                                 generation_config={
                                     "temperature": model_config["model_kwargs"].get("temperature", 0.7),
                                     "top_p": model_config["model_kwargs"].get("top_p", 0.8),
-                                    "top_k": model_config["model_kwargs"].get("top_k", 40)
-                                }
+                                    "top_k": model_config["model_kwargs"].get("top_k", 40),
+                                },
                             )
 
-                            # Get streaming response using simplified prompt
-                            fallback_response = fallback_model.generate_content(simplified_prompt, stream=True)
-                            # Stream the fallback response
+                            fallback_response = fallback_model.generate_content(
+                                simplified_prompt, stream=True
+                            )
                             for chunk in fallback_response:
-                                if hasattr(chunk, 'text'):
+                                if hasattr(chunk, "text"):
                                     yield chunk.text
                     except Exception as e2:
                         logger.error(f"Error in fallback streaming response: {str(e2)}")

@@ -80,7 +80,7 @@ OLLAMA_HOST=your_ollama_host
 
 ```bash
 # 安裝 Python 相依性
-pip install -r api/requirements.txt
+python -m pip install poetry==2.0.1 && poetry install -C api
 
 # 啟動 API 伺服器
 python -m api.main
@@ -183,8 +183,8 @@ DeepWiki 現在實作了靈活的基於提供商的模型選擇系統，支援�
 
 ### 支援的提供商和模型
 
-- **Google**：預設 `gemini-2.0-flash`，也支援 `gemini-1.5-flash`、`gemini-1.0-pro` 等
-- **OpenAI**：預設 `gpt-4o`，也支援 `o4-mini` 等
+- **Google**：預設 `gemini-2.5-flash`，也支援 `gemini-2.5-flash-lite`、`gemini-2.5-pro` 等
+- **OpenAI**：預設 `gpt-5-nano`，也支援 `gpt-5`, `4o` 等
 - **OpenRouter**：透過統一 API 存取多種模型，包括 Claude、Llama、Mistral 等
 - **Ollama**：支援本機執行的開源模型，如 `llama3`
 

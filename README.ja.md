@@ -76,7 +76,7 @@ OPENROUTER_API_KEY=your_openrouter_api_key
 
 ```bash
 # Pythonの依存関係をインストール
-pip install -r api/requirements.txt
+python -m pip install poetry==2.0.1 && poetry install -C api
 
 # APIサーバーを起動
 python -m api.main
@@ -299,8 +299,8 @@ DeepWikiでは、複数のLLMプロバイダーをサポートする柔軟なプ
 
 ### サポートされているプロバイダーとモデル
 
-- **Google**: デフォルトは `gemini-2.0-flash`、また `gemini-1.5-flash`、`gemini-1.0-pro` などもサポート
-- **OpenAI**: デフォルトは `gpt-4o`、また `o4-mini` などもサポート
+- **Google**: デフォルトは `gemini-2.5-flash`、また `gemini-2.5-flash-lite`、`gemini-2.5-pro` などもサポート
+- **OpenAI**: デフォルトは `gpt-5-nano`、また `gpt-5`、 `4o` などもサポート
 - **OpenRouter**: Claude、Llama、Mistralなど、統一APIを通じて複数のモデルにアクセス
 - **Ollama**: `llama3` などのローカルで実行するオープンソースモデルをサポート
 

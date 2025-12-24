@@ -7,7 +7,6 @@ import json
 import tiktoken
 import logging
 import base64
-import re
 import glob
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
@@ -25,27 +24,42 @@ logger = logging.getLogger(__name__)
 # Maximum token limit for OpenAI embedding models
 MAX_EMBEDDING_TOKENS = 8192
 
-def count_tokens(text: str, is_ollama_embedder: bool = None) -> int:
+def count_tokens(text: str, embedder_type: str = None, is_ollama_embedder: bool = None) -> int:
     """
     Count the number of tokens in a text string using tiktoken.
 
     Args:
         text (str): The text to count tokens for.
-        is_ollama_embedder (bool, optional): Whether using Ollama embeddings.
+        embedder_type (str, optional): The embedder type ('openai', 'google', 'ollama', 'bedrock').
+                                     If None, will be determined from configuration.
+        is_ollama_embedder (bool, optional): DEPRECATED. Use embedder_type instead.
                                            If None, will be determined from configuration.
 
     Returns:
         int: The number of tokens in the text.
     """
     try:
-        # Determine if using Ollama embedder if not specified
-        if is_ollama_embedder is None:
-            from api.config import is_ollama_embedder as check_ollama
-            is_ollama_embedder = check_ollama()
+        # Handle backward compatibility
+        if embedder_type is None and is_ollama_embedder is not None:
+            embedder_type = 'ollama' if is_ollama_embedder else None
+        
+        # Determine embedder type if not specified
+        if embedder_type is None:
+            from api.config import get_embedder_type
+            embedder_type = get_embedder_type()
 
-        if is_ollama_embedder:
+        # Choose encoding based on embedder type
+        if embedder_type == 'ollama':
+            # Ollama typically uses cl100k_base encoding
             encoding = tiktoken.get_encoding("cl100k_base")
-        else:
+        elif embedder_type == 'google':
+            # Google uses similar tokenization to GPT models for rough estimation
+            encoding = tiktoken.get_encoding("cl100k_base")
+        elif embedder_type == 'bedrock':
+            # Bedrock embedding models vary; use a common GPT-like encoding for rough estimation
+            encoding = tiktoken.get_encoding("cl100k_base")
+        else:  # OpenAI or default
+            # Use OpenAI embedding model encoding
             encoding = tiktoken.encoding_for_model("text-embedding-3-small")
 
         return len(encoding.encode(text))
@@ -55,6 +69,7 @@ def count_tokens(text: str, is_ollama_embedder: bool = None) -> int:
         # Rough approximation: 4 characters per token
         return len(text) // 4
 
+def download_repo(repo_url: str, local_path: str, repo_type: str = None, access_token: str = None) -> str:
 def download_repo(repo_url: str, local_path: str, type: str = "github", 
                    access_token: str = None, branch: str = None) -> str:
     """
@@ -62,6 +77,7 @@ def download_repo(repo_url: str, local_path: str, type: str = "github",
     local path.
 
     Args:
+        repo_type(str): Type of repository
         repo_url (str): The URL of the Git repository to clone.
         local_path (str): The local directory where the repository will be 
                          cloned.
@@ -97,17 +113,19 @@ def download_repo(repo_url: str, local_path: str, type: str = "github",
         clone_url = repo_url
         if access_token:
             parsed = urlparse(repo_url)
+            # URL-encode the token to handle special characters
+            encoded_token = quote(access_token, safe='')
             # Determine the repository type and format the URL accordingly
-            if type == "github":
+            if repo_type == "github":
                 # Format: https://{token}@{domain}/owner/repo.git
                 # Works for both github.com and enterprise GitHub domains
-                clone_url = urlunparse((parsed.scheme, f"{access_token}@{parsed.netloc}", parsed.path, '', '', ''))
-            elif type == "gitlab":
+                clone_url = urlunparse((parsed.scheme, f"{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+            elif repo_type == "gitlab":
                 # Format: https://oauth2:{token}@gitlab.com/owner/repo.git
-                clone_url = urlunparse((parsed.scheme, f"oauth2:{access_token}@{parsed.netloc}", parsed.path, '', '', ''))
-            elif type == "bitbucket":
+                clone_url = urlunparse((parsed.scheme, f"oauth2:{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+            elif repo_type == "bitbucket":
                 # Format: https://x-token-auth:{token}@bitbucket.org/owner/repo.git
-                clone_url = urlunparse((parsed.scheme, f"x-token-auth:{access_token}@{parsed.netloc}", parsed.path, '', '', ''))
+                clone_url = urlunparse((parsed.scheme, f"x-token-auth:{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
             elif type == "azuredevops":
                 # Format: https://{token}@{domain}/owner/repo.git
                 # Azure DevOps supports PAT authentication similar to GitHub
@@ -136,7 +154,7 @@ def download_repo(repo_url: str, local_path: str, type: str = "github",
         try:
             # We use repo_url in the log to avoid exposing the token in logs
             result = subprocess.run(
-                clone_cmd,
+                "--depth=1", "--single-branch", clone_cmd,
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -190,24 +208,31 @@ def download_repo(repo_url: str, local_path: str, type: str = "github",
             
             # If we get here, all attempts failed
             error_msg = e.stderr.decode('utf-8')
-            # Sanitize error message to remove any tokens
-            if access_token and access_token in error_msg:
+            # Sanitize error message to remove any tokens (both raw and URL-encoded)
+            if access_token:
+            # Remove raw token
                 error_msg = error_msg.replace(access_token, "***TOKEN***")
-            raise ValueError(f"Error during cloning: {error_msg}")
+                # Also remove URL-encoded token to prevent leaking encoded version
+            encoded_token = quote(access_token, safe='')
+            error_msg = error_msg.replace(encoded_token, "***TOKEN***")
+        raise ValueError(f"Error during cloning: {error_msg}")
     except Exception as e:
         raise ValueError(f"An unexpected error occurred: {str(e)}")
 
 # Alias for backward compatibility
 download_github_repo = download_repo
 
-def read_all_documents(path: str, is_ollama_embedder: bool = None, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
+def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder: bool = None, 
+                      excluded_dirs: List[str] = None, excluded_files: List[str] = None,
                       included_dirs: List[str] = None, included_files: List[str] = None):
     """
     Recursively reads all documents in a directory and its subdirectories.
 
     Args:
         path (str): The root directory path.
-        is_ollama_embedder (bool, optional): Whether using Ollama embeddings for token counting.
+        embedder_type (str, optional): The embedder type ('openai', 'google', 'ollama').
+                                     If None, will be determined from configuration.
+        is_ollama_embedder (bool, optional): DEPRECATED. Use embedder_type instead.
                                            If None, will be determined from configuration.
         excluded_dirs (List[str], optional): List of directories to exclude from processing.
             Overrides the default configuration if provided.
@@ -221,6 +246,9 @@ def read_all_documents(path: str, is_ollama_embedder: bool = None, excluded_dirs
     Returns:
         list: A list of Document objects with metadata.
     """
+    # Handle backward compatibility
+    if embedder_type is None and is_ollama_embedder is not None:
+        embedder_type = 'ollama' if is_ollama_embedder else None
     documents = []
     # File extensions to look for, prioritizing code files
     code_extensions = [".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp", ".go", ".rs",
@@ -366,7 +394,7 @@ def read_all_documents(path: str, is_ollama_embedder: bool = None, excluded_dirs
                     )
 
                     # Check token count
-                    token_count = count_tokens(content, is_ollama_embedder)
+                    token_count = count_tokens(content, embedder_type)
                     if token_count > MAX_EMBEDDING_TOKENS * 10:
                         logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
                         continue
@@ -400,7 +428,7 @@ def read_all_documents(path: str, is_ollama_embedder: bool = None, excluded_dirs
                     relative_path = os.path.relpath(file_path, path)
 
                     # Check token count
-                    token_count = count_tokens(content, is_ollama_embedder)
+                    token_count = count_tokens(content, embedder_type)
                     if token_count > MAX_EMBEDDING_TOKENS:
                         logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
                         continue
@@ -423,33 +451,40 @@ def read_all_documents(path: str, is_ollama_embedder: bool = None, excluded_dirs
     logger.info(f"Found {len(documents)} documents")
     return documents
 
-def prepare_data_pipeline(is_ollama_embedder: bool = None):
+def prepare_data_pipeline(embedder_type: str = None, is_ollama_embedder: bool = None):
     """
     Creates and returns the data transformation pipeline.
 
     Args:
-        is_ollama_embedder (bool, optional): Whether to use Ollama for embedding.
+        embedder_type (str, optional): The embedder type ('openai', 'google', 'ollama').
+                                     If None, will be determined from configuration.
+        is_ollama_embedder (bool, optional): DEPRECATED. Use embedder_type instead.
                                            If None, will be determined from configuration.
 
     Returns:
         adal.Sequential: The data transformation pipeline
     """
-    from api.config import get_embedder_config, is_ollama_embedder as check_ollama
+    from api.config import get_embedder_config, get_embedder_type
 
-    # Determine if using Ollama embedder if not specified
-    if is_ollama_embedder is None:
-        is_ollama_embedder = check_ollama()
+    # Handle backward compatibility
+    if embedder_type is None and is_ollama_embedder is not None:
+        embedder_type = 'ollama' if is_ollama_embedder else None
+    
+    # Determine embedder type if not specified
+    if embedder_type is None:
+        embedder_type = get_embedder_type()
 
     splitter = TextSplitter(**configs["text_splitter"])
     embedder_config = get_embedder_config()
 
-    embedder = get_embedder()
+    embedder = get_embedder(embedder_type=embedder_type)
 
-    if is_ollama_embedder:
+    # Choose appropriate processor based on embedder type
+    if embedder_type == 'ollama':
         # Use Ollama document processor for single-document processing
         embedder_transformer = OllamaDocumentProcessor(embedder=embedder)
     else:
-        # Use batch processing for other embedders
+        # Use batch processing for OpenAI and Google embedders
         batch_size = embedder_config.get("batch_size", 500)
         embedder_transformer = ToEmbeddings(
             embedder=embedder, batch_size=batch_size
@@ -461,7 +496,7 @@ def prepare_data_pipeline(is_ollama_embedder: bool = None):
     return data_transformer
 
 def transform_documents_and_save_to_db(
-    documents: List[Document], db_path: str, is_ollama_embedder: bool = None
+    documents: List[Document], db_path: str, embedder_type: str = None, is_ollama_embedder: bool = None
 ) -> LocalDB:
     """
     Transforms a list of documents and saves them to a local database.
@@ -469,11 +504,13 @@ def transform_documents_and_save_to_db(
     Args:
         documents (list): A list of `Document` objects.
         db_path (str): The path to the local database file.
-        is_ollama_embedder (bool, optional): Whether to use Ollama for embedding.
+        embedder_type (str, optional): The embedder type ('openai', 'google', 'ollama').
+                                     If None, will be determined from configuration.
+        is_ollama_embedder (bool, optional): DEPRECATED. Use embedder_type instead.
                                            If None, will be determined from configuration.
     """
     # Get the data transformer
-    data_transformer = prepare_data_pipeline(is_ollama_embedder)
+    data_transformer = prepare_data_pipeline(embedder_type, is_ollama_embedder)
 
     # Save the documents to a local database
     db = LocalDB()
@@ -826,11 +863,11 @@ def get_file_content(repo_url: str, file_path: str, type: str = "github", access
     Raises:
         ValueError: If the file cannot be fetched or if the URL is not valid
     """
-    if type == "github":
+    if repo_type == "github":
         return get_github_file_content(repo_url, file_path, access_token)
-    elif type == "gitlab":
+    elif repo_type == "gitlab":
         return get_gitlab_file_content(repo_url, file_path, access_token)
-    elif type == "bitbucket":
+    elif repo_type == "bitbucket":
         return get_bitbucket_file_content(repo_url, file_path, access_token)
     elif type == "azuredevops":
         return get_azuredevops_file_content(repo_url, file_path, access_token)
@@ -847,19 +884,23 @@ class DatabaseManager:
         self.repo_url_or_path = None
         self.repo_paths = None
 
-    def prepare_database(self, repo_url_or_path: str, type: str = "github", access_token: str = None, 
-                       branch: str = None, is_ollama_embedder: bool = None,
-                       excluded_dirs: List[str] = None, excluded_files: List[str] = None,
-                       included_dirs: List[str] = None, included_files: List[str] = None) -> List[Document]:
+    def prepare_database(self, repo_url_or_path: str, repo_type: str = None, access_token: str = None, 
+                       branch: str = None,
+                         embedder_type: str = None, is_ollama_embedder: bool = None,
+                         excluded_dirs: List[str] = None, excluded_files: List[str] = None,
+                         included_dirs: List[str] = None, included_files: List[str] = None) -> List[Document]:
         """
         Create a new database from the repository.
 
         Args:
+            repo_type(str): Type of repository
             repo_url_or_path (str): The URL or local path of the repository
             type (str): Type of repository (github, gitlab, bitbucket, azuredevops)
             access_token (str, optional): Access token for private repositories
             branch (str, optional): Branch name to clone/process
-            is_ollama_embedder (bool, optional): Whether to use Ollama for embedding.
+            embedder_type (str, optional): Embedder type to use ('openai', 'google', 'ollama').
+                                         If None, will be determined from configuration.
+            is_ollama_embedder (bool, optional): DEPRECATED. Use embedder_type instead.
                                                If None, will be determined from configuration.
             excluded_dirs (List[str], optional): List of directories to exclude from processing
             excluded_files (List[str], optional): List of file patterns to exclude from processing
@@ -869,9 +910,13 @@ class DatabaseManager:
         Returns:
             List[Document]: List of Document objects
         """
+        # Handle backward compatibility
+        if embedder_type is None and is_ollama_embedder is not None:
+            embedder_type = 'ollama' if is_ollama_embedder else None
+        
         self.reset_database()
-        self._create_repo(repo_url_or_path, type, access_token, branch)
-        return self.prepare_db_index(is_ollama_embedder=is_ollama_embedder, 
+        self._create_repo(repo_url_or_path, repo_type, access_token, branch)
+        return self.prepare_db_index(embedder_type=embedder_type, 
                                    excluded_dirs=excluded_dirs, 
                                    excluded_files=excluded_files,
                                    included_dirs=included_dirs, 
@@ -900,7 +945,7 @@ class DatabaseManager:
             repo_name = url_parts[-1].replace(".git", "")
         return repo_name
 
-    def _create_repo(self, repo_url_or_path: str, repo_type: str = "github", 
+    def _create_repo(self, repo_url_or_path: str, repo_type: str = None, 
                     access_token: str = None, branch: str = None) -> None:
         """
         Download and prepare all paths.
@@ -909,6 +954,7 @@ class DatabaseManager:
         ~/.adalflow/databases/{owner}_{repo_name}.pkl
 
         Args:
+            repo_type(str): Type of repository
             repo_url_or_path (str): The URL or local path of the repository
             repo_type (str): Type of repository (github, gitlab, etc.)
             access_token (str, optional): Access token for private repos
@@ -917,6 +963,9 @@ class DatabaseManager:
         logger.info(f"Preparing repo storage for {repo_url_or_path}...")
 
         try:
+            # Strip whitespace to handle URLs with leading/trailing spaces
+            repo_url_or_path = repo_url_or_path.strip()
+            
             root_path = get_adalflow_default_root_path()
 
             os.makedirs(root_path, exist_ok=True)
@@ -955,13 +1004,16 @@ class DatabaseManager:
             logger.error(f"Failed to create repository structure: {e}")
             raise
 
-    def prepare_db_index(self, is_ollama_embedder: bool = None, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
+    def prepare_db_index(self, embedder_type: str = None, is_ollama_embedder: bool = None, 
+                        excluded_dirs: List[str] = None, excluded_files: List[str] = None,
                         included_dirs: List[str] = None, included_files: List[str] = None) -> List[Document]:
         """
         Prepare the indexed database for the repository.
 
         Args:
-            is_ollama_embedder (bool, optional): Whether to use Ollama for embedding.
+            embedder_type (str, optional): Embedder type to use ('openai', 'google', 'ollama').
+                                         If None, will be determined from configuration.
+            is_ollama_embedder (bool, optional): DEPRECATED. Use embedder_type instead.
                                                If None, will be determined from configuration.
             excluded_dirs (List[str], optional): List of directories to exclude from processing
             excluded_files (List[str], optional): List of file patterns to exclude from processing
@@ -971,6 +1023,9 @@ class DatabaseManager:
         Returns:
             List[Document]: List of Document objects
         """
+        # Handle backward compatibility
+        if embedder_type is None and is_ollama_embedder is not None:
+            embedder_type = 'ollama' if is_ollama_embedder else None
         # check the database
         if self.repo_paths and os.path.exists(self.repo_paths["save_db_file"]):
             logger.info("Loading existing database...")
@@ -988,27 +1043,28 @@ class DatabaseManager:
         logger.info("Creating new database...")
         documents = read_all_documents(
             self.repo_paths["save_repo_dir"],
-            is_ollama_embedder=is_ollama_embedder,
+            embedder_type=embedder_type,
             excluded_dirs=excluded_dirs,
             excluded_files=excluded_files,
             included_dirs=included_dirs,
             included_files=included_files
         )
         self.db = transform_documents_and_save_to_db(
-            documents, self.repo_paths["save_db_file"], is_ollama_embedder=is_ollama_embedder
+            documents, self.repo_paths["save_db_file"], embedder_type=embedder_type
         )
         logger.info(f"Total documents: {len(documents)}")
         transformed_docs = self.db.get_transformed_data(key="split_and_embed")
         logger.info(f"Total transformed documents: {len(transformed_docs)}")
         return transformed_docs
 
-    def prepare_retriever(self, repo_url_or_path: str, type: str = "github", 
+    def prepare_retriever(self, repo_url_or_path: str, repo_type: str = None, 
                          access_token: str = None, branch: str = None):
         """
         Prepare the retriever for a repository.
         This is a compatibility method for the isolated API.
 
         Args:
+            repo_type(str): Type of repository
             repo_url_or_path (str): The URL or local path of the repository
             type (str): Type of repository (github, gitlab, etc.)
             access_token (str, optional): Access token for private repos
@@ -1017,5 +1073,5 @@ class DatabaseManager:
         Returns:
             List[Document]: List of Document objects
         """
-        return self.prepare_database(repo_url_or_path, type, access_token, 
+        return self.prepare_database(repo_url_or_path, repo_type, access_token, 
                                    branch)

@@ -29,6 +29,7 @@
 - **Ask Feature**: Chat with your repository using RAG-powered AI to get accurate answers
 - **DeepResearch**: Multi-turn research process that thoroughly investigates complex topics
 - **Multiple Model Providers**: Support for Google Gemini, OpenAI, OpenRouter, and local Ollama models
+- **Flexible Embeddings**: Choose between OpenAI, Google AI, or local Ollama embeddings for optimal performance
 
 ## 🚀 Quick Start (Super Easy!)
 
@@ -44,6 +45,8 @@ cp .env.example .env
 # Edit .env with your actual API keys, or create manually:
 echo "GOOGLE_API_KEY=your_google_api_key" > .env
 echo "OPENAI_API_KEY=your_openai_api_key" >> .env
+# Optional: Use Google AI embeddings instead of OpenAI (recommended if using Google models)
+echo "DEEPWIKI_EMBEDDER_TYPE=google" >> .env
 # Optional: Add OpenRouter API key if you want to use OpenRouter models
 echo "OPENROUTER_API_KEY=your_openrouter_api_key" >> .env
 # Optional: Add Ollama host if not local. defaults to http://localhost:11434
@@ -106,7 +109,7 @@ OLLAMA_HOST=your_ollama_host
 
 ```bash
 # Install Python dependencies
-pip install -r api/requirements.txt
+python -m pip install poetry==2.0.1 && poetry install -C api
 
 # Start the API server
 python -m api.main
@@ -351,7 +354,90 @@ If you want to use embedding models compatible with the OpenAI API (such as Alib
    ```
 3. The program will automatically substitute placeholders in embedder.json with the values from your environment variables.
 
-This allows you to seamlessly switch to any OpenAI-compatible service without code changes.
+This allows you to seamlessly switch to any OpenAI-compatible embedding service without code changes.
+
+## 🧠 Using Google AI Embeddings
+
+DeepWiki now supports Google AI's latest embedding models as an alternative to OpenAI embeddings. This provides better integration when you're already using Google Gemini models for text generation.
+
+### Features
+
+- **Latest Model**: Uses Google's `text-embedding-004` model
+- **Same API Key**: Uses your existing `GOOGLE_API_KEY` (no additional setup required)
+- **Better Integration**: Optimized for use with Google Gemini text generation models
+- **Task-Specific**: Supports semantic similarity, retrieval, and classification tasks
+- **Batch Processing**: Efficient processing of multiple texts
+
+### How to Enable Google AI Embeddings
+
+**Option 1: Environment Variable (Recommended)**
+
+Set the embedder type in your `.env` file:
+
+```bash
+# Your existing Google API key
+GOOGLE_API_KEY=your_google_api_key
+
+# Enable Google AI embeddings
+DEEPWIKI_EMBEDDER_TYPE=google
+```
+
+**Option 2: Docker Environment**
+
+```bash
+docker run -p 8001:8001 -p 3000:3000 \
+  -e GOOGLE_API_KEY=your_google_api_key \
+  -e DEEPWIKI_EMBEDDER_TYPE=google \
+  -v ~/.adalflow:/root/.adalflow \
+  ghcr.io/asyncfuncai/deepwiki-open:latest
+```
+
+**Option 3: Docker Compose**
+
+Add to your `.env` file:
+
+```bash
+GOOGLE_API_KEY=your_google_api_key
+DEEPWIKI_EMBEDDER_TYPE=google
+```
+
+Then run:
+
+```bash
+docker-compose up
+```
+
+### Available Embedder Types
+
+| Type | Description | API Key Required | Notes |
+|------|-------------|------------------|-------|
+| `openai` | OpenAI embeddings (default) | `OPENAI_API_KEY` | Uses `text-embedding-3-small` model |
+| `google` | Google AI embeddings | `GOOGLE_API_KEY` | Uses `text-embedding-004` model |
+| `ollama` | Local Ollama embeddings | None | Requires local Ollama installation |
+
+### Why Use Google AI Embeddings?
+
+- **Consistency**: If you're using Google Gemini for text generation, using Google embeddings provides better semantic consistency
+- **Performance**: Google's latest embedding model offers excellent performance for retrieval tasks
+- **Cost**: Competitive pricing compared to OpenAI
+- **No Additional Setup**: Uses the same API key as your text generation models
+
+### Switching Between Embedders
+
+You can easily switch between different embedding providers:
+
+```bash
+# Use OpenAI embeddings (default)
+export DEEPWIKI_EMBEDDER_TYPE=openai
+
+# Use Google AI embeddings
+export DEEPWIKI_EMBEDDER_TYPE=google
+
+# Use local Ollama embeddings
+export DEEPWIKI_EMBEDDER_TYPE=ollama
+```
+
+**Note**: When switching embedders, you may need to regenerate your repository embeddings as different models produce different vector spaces.
 
 ### 📊 Logging & Debugging
 
@@ -393,37 +479,33 @@ docker-compose up
 
 ### Environment Variables Reference
 
-| Variable                    | Description                                                  | Required | Default                        |
-|----------------------------|--------------------------------------------------------------|----------|--------------------------------|
-| **API Keys**               |                                                              |          |                                |
-| `GOOGLE_API_KEY`           | Google Gemini API key for AI generation                     | No*      | -                              |
-| `OPENAI_API_KEY`           | OpenAI API key (used for embeddings when Azure not configured) | No*   | -                              |
-| `OPENROUTER_API_KEY`       | OpenRouter API key for alternative models                   | No       | -                              |
-| **Azure OpenAI**           |                                                              |          |                                |
-| `AZURE_OPENAI_API_KEY`     | Azure OpenAI API key                                        | No       | -                              |
-| `AZURE_OPENAI_ENDPOINT`    | Azure OpenAI endpoint (full deployment URL)                 | No       | -                              |
-| `AZURE_OPENAI_VERSION`     | Azure OpenAI API version                                    | No       | `2024-12-01-preview`           |
-| `AZURE_OPENAI_EMBEDDING_ENDPOINT` | Separate Azure embedding endpoint (optional)        | No       | Uses main endpoint             |
-| `AZURE_OPENAI_EMBEDDING_API_KEY` | Separate Azure embedding API key (optional)          | No       | Uses main API key              |
-| **Other Services**         |                                                              |          |                                |
-| `OLLAMA_HOST`              | Ollama server host                                           | No       | `http://localhost:11434`       |
-| `OPENAI_BASE_URL`          | Custom OpenAI API endpoint                                   | No       | `https://api.openai.com/v1`    |
-| **Server Configuration**   |                                                              |          |                                |
-| `PORT`                     | API server port                                              | No       | `8001`                         |
-| `SERVER_BASE_URL`          | Base URL for the API server                                 | No       | `http://localhost:8001`        |
-| **Authorization (Optional)** |                                                             |          |                                |
-| `DEEPWIKI_AUTH_MODE`       | Enable authorization mode (`true` or `1`)                   | No       | `false`                        |
-| `DEEPWIKI_AUTH_CODE`       | Secret code for wiki generation (when auth enabled)         | No**     | -                              |
-| **Configuration**          |                                                              |          |                                |
-| `DEEPWIKI_CONFIG_DIR`      | Custom configuration directory path                          | No       | `api/config/`                  |
-| **Logging**                |                                                              |          |                                |
-| `LOG_LEVEL`                | Logging verbosity (DEBUG, INFO, WARNING, ERROR, CRITICAL)   | No       | `INFO`                         |
-| `LOG_FILE_PATH`            | Log file path                                                | No       | `api/logs/application.log`     |
+| Variable             | Description                                                  | Required | Note                                                                                                     |
+|----------------------|--------------------------------------------------------------|----------|----------------------------------------------------------------------------------------------------------|
+| `GOOGLE_API_KEY`     | Google Gemini API key for AI generation and embeddings      | No | Required for Google Gemini models and Google AI embeddings                                               
+| `OPENAI_API_KEY`     | OpenAI API key for embeddings and models                     | Conditional | Required if using OpenAI embeddings or models                                                            |
+| `OPENROUTER_API_KEY` | OpenRouter API key for alternative models                    | No | Required only if you want to use OpenRouter models                                                       |
+| `AWS_ACCESS_KEY_ID`  | AWS access key ID for Bedrock                                 | No | Required for Bedrock if not using instance/role-based credentials                                        |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret access key for Bedrock                          | No | Required for Bedrock if not using instance/role-based credentials                                        |
+| `AWS_SESSION_TOKEN`  | AWS session token for Bedrock (STS)                            | No | Required when using temporary credentials                                                                |
+| `AWS_REGION`         | AWS region for Bedrock (default: `us-east-1`)                  | No | Used by Bedrock client                                                                                   |
+| `AWS_ROLE_ARN`       | AWS role ARN to assume for Bedrock                             | No | If set, the Bedrock client will call STS AssumeRole                                                     |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key                    | No | Required only if you want to use Azure OpenAI models                                                       |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint                    | No | Required only if you want to use Azure OpenAI models                                                       |
+| `AZURE_OPENAI_VERSION` | Azure OpenAI version                     | No | Required only if you want to use Azure OpenAI models                                                       |
+| `OLLAMA_HOST`        | Ollama Host (default: http://localhost:11434)                | No | Required only if you want to use external Ollama server                                                  |
+| `DEEPWIKI_EMBEDDER_TYPE` | Embedder type: `openai`, `google`, `ollama`, or `bedrock` (default: `openai`) | No | Controls which embedding provider to use                                                              |
+| `PORT`               | Port for the API server (default: 8001)                      | No | If you host API and frontend on the same machine, make sure change port of `SERVER_BASE_URL` accordingly |
+| `SERVER_BASE_URL`    | Base URL for the API server (default: http://localhost:8001) | No |
+| `DEEPWIKI_AUTH_MODE` | Set to `true` or `1` to enable authorization mode. | No | Defaults to `false`. If enabled, `DEEPWIKI_AUTH_CODE` is required. |
+| `DEEPWIKI_AUTH_CODE` | The secret code required for wiki generation when `DEEPWIKI_AUTH_MODE` is enabled. | No | Only used if `DEEPWIKI_AUTH_MODE` is `true` or `1`. |
 
-> **Notes:**
-> - *At least one API provider (Google, OpenAI, or Azure OpenAI) must be configured
-> - **Required only when `DEEPWIKI_AUTH_MODE` is enabled
-> - 🔵 **Azure OpenAI Auto-Detection**: When Azure OpenAI is properly configured, it becomes the default provider for both text generation and embeddings
+**API Key Requirements:**
+- If using `DEEPWIKI_EMBEDDER_TYPE=openai` (default): `OPENAI_API_KEY` is required
+- If using `DEEPWIKI_EMBEDDER_TYPE=google`: `GOOGLE_API_KEY` is required  
+- If using `DEEPWIKI_EMBEDDER_TYPE=ollama`: No API key required (local processing)
+- If using `DEEPWIKI_EMBEDDER_TYPE=bedrock`: AWS credentials (or role-based credentials) are required
+
+Other API keys are only required when configuring and using models from the corresponding providers.
 
 ## Authorization Mode
 

@@ -8,7 +8,7 @@ from uuid import uuid4
 import adalflow as adal
 
 from api.tools.embedder import get_embedder
-
+from api.prompts import RAG_SYSTEM_PROMPT as system_prompt, RAG_TEMPLATE
 
 # Create our own implementation of the conversation classes
 @dataclass
@@ -140,60 +140,6 @@ class Memory(adal.core.component.DataComponent):
                 logger.error(f"Failed to recover from error: {str(e2)}")
                 return False
 
-system_prompt = r"""
-You are a code assistant which answers user questions on a Github Repo.
-You will receive user query, relevant context, and past conversation history.
-
-LANGUAGE DETECTION AND RESPONSE:
-- Detect the language of the user's query
-- Respond in the SAME language as the user's query
-- IMPORTANT:If a specific language is requested in the prompt, prioritize that language over the query language
-
-FORMAT YOUR RESPONSE USING MARKDOWN:
-- Use proper markdown syntax for all formatting
-- For code blocks, use triple backticks with language specification (```python, ```javascript, etc.)
-- Use ## headings for major sections
-- Use bullet points or numbered lists where appropriate
-- Format tables using markdown table syntax when presenting structured data
-- Use **bold** and *italic* for emphasis
-- When referencing file paths, use `inline code` formatting
-
-IMPORTANT FORMATTING RULES:
-1. DO NOT include ```markdown fences at the beginning or end of your answer
-2. Start your response directly with the content
-3. The content will already be rendered as markdown, so just provide the raw markdown content
-
-Think step by step and ensure your answer is well-structured and visually organized.
-"""
-
-# Template for RAG
-RAG_TEMPLATE = r"""<START_OF_SYS_PROMPT>
-{{system_prompt}}
-{{output_format_str}}
-<END_OF_SYS_PROMPT>
-{# OrderedDict of DialogTurn #}
-{% if conversation_history %}
-<START_OF_CONVERSATION_HISTORY>
-{% for key, dialog_turn in conversation_history.items() %}
-{{key}}.
-User: {{dialog_turn.user_query.query_str}}
-You: {{dialog_turn.assistant_response.response_str}}
-{% endfor %}
-<END_OF_CONVERSATION_HISTORY>
-{% endif %}
-{% if contexts %}
-<START_OF_CONTEXT>
-{% for context in contexts %}
-{{loop.index }}.
-File Path: {{context.meta_data.get('file_path', 'unknown')}}
-Content: {{context.text}}
-{% endfor %}
-<END_OF_CONTEXT>
-{% endif %}
-<START_OF_USER_PROMPT>
-{{input_str}}
-<END_OF_USER_PROMPT>
-"""
 
 from dataclasses import dataclass, field
 
@@ -233,8 +179,12 @@ class RAG(adal.Component):
         self.provider = provider
         self.model = model
 
-        # Determine if we're using Ollama embedder based on configuration
-        self.is_ollama_embedder = is_ollama_embedder()
+        # Import the helper functions
+        from api.config import get_embedder_config, get_embedder_type
+
+        # Determine embedder type based on current configuration
+        self.embedder_type = get_embedder_type()
+        self.is_ollama_embedder = (self.embedder_type == 'ollama')  # Backward compatibility
 
         # Check if Ollama model exists before proceeding
         if self.is_ollama_embedder:
@@ -249,7 +199,7 @@ class RAG(adal.Component):
 
         # Initialize components
         self.memory = Memory()
-        self.embedder = get_embedder()
+        self.embedder = get_embedder(embedder_type=self.embedder_type)
 
         self_weakref = weakref.ref(self)
         # Patch: ensure query embedding is always single string for Ollama
@@ -445,7 +395,7 @@ IMPORTANT FORMATTING RULES:
             type,
             access_token,
             branch=branch,
-            is_ollama_embedder=self.is_ollama_embedder,
+            embedder_type=self.embedder_type,
             excluded_dirs=excluded_dirs,
             excluded_files=excluded_files,
             included_dirs=included_dirs,
