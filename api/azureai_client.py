@@ -61,6 +61,7 @@ from adalflow.core.model_client import ModelClient
 from adalflow.core.types import (
     ModelType,
     EmbedderOutput,
+    Embedding,
     TokenLogProb,
     CompletionUsage,
     GeneratorOutput,
@@ -479,6 +480,33 @@ class AzureAIClient(ModelClient):
         Should be called in ``Embedder``.
         """
         try:
+            log.info(f"Parsing embedding response type: {type(response)}")
+            # Manual parsing to ensure compatibility with OpenAI v1+ response objects
+            if hasattr(response, 'data'):
+                embeddings = []
+                for idx, item in enumerate(response.data):
+                    # Extract the raw embedding vector
+                    if hasattr(item, 'embedding'):
+                        embedding_vector = item.embedding
+                        embedding_index = getattr(item, 'index', idx)
+                    elif isinstance(item, dict) and 'embedding' in item:
+                        embedding_vector = item['embedding']
+                        embedding_index = item.get('index', idx)
+                    elif isinstance(item, list):
+                        # Item itself is the embedding vector (list of floats)
+                        embedding_vector = item
+                        embedding_index = idx
+                    else:
+                        log.warning(f"Unknown embedding item type at index {idx}: {type(item)}")
+                        continue
+                    
+                    # Wrap in Embedding dataclass as expected by adalflow
+                    embeddings.append(Embedding(embedding=embedding_vector, index=embedding_index))
+                
+                log.info(f"Extracted {len(embeddings)} embeddings. First embedding length: {len(embeddings[0].embedding) if embeddings else 0}")
+                return EmbedderOutput(data=embeddings, error=None, raw_response=response)
+            
+            # Fallback to adalflow's parser if it's not a standard object
             return parse_embedding_response(response)
         except Exception as e:
             log.error(f"Error parsing the embedding response: {e}")
@@ -561,7 +589,11 @@ class AzureAIClient(ModelClient):
             log.info(f"api_kwargs logging failed: {str(e)}")
         
         if model_type == ModelType.EMBEDDER:
-            return self.sync_client.embeddings.create(**api_kwargs)
+            try:
+                return self.sync_client.embeddings.create(**api_kwargs)
+            except Exception as e:
+                log.critical(f"CRITICAL: Azure Embedding Failed: {e}")
+                raise e
         elif model_type == ModelType.LLM:
             if "stream" in api_kwargs and api_kwargs.get("stream", False):
                 log.debug("streaming call")
@@ -771,10 +803,13 @@ class AzureToEmbeddings(DataComponent):
                 # Assign normal embedding vectors
                 for embedding in batch_output.data:
                     if doc_idx < len(output):
+                        log.info(f"DEBUG: embedding type: {type(embedding)}")
                         if hasattr(embedding, 'embedding'):
                             output[doc_idx].vector = embedding.embedding
+                        elif isinstance(embedding, list):
+                            output[doc_idx].vector = embedding
                         else:
-                            log.warning(f"Invalid embedding format for document {doc_idx}")
+                            log.warning(f"Invalid embedding format for document {doc_idx}: {type(embedding)}")
                             output[doc_idx].vector = []
                         doc_idx += 1
 

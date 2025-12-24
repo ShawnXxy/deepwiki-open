@@ -195,6 +195,15 @@
         "gpt-4-turbo": {
           "temperature": 0.7,
           "top_p": 0.8
+        },
+        "o1": {
+          "temperature": 1.0
+        },
+        "o3": {
+          "temperature": 1.0
+        },
+        "o4-mini": {
+          "temperature": 1.0
         }
       }
     }

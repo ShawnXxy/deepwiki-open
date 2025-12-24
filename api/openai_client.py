@@ -261,7 +261,15 @@ class OpenAIClient(ModelClient):
 
         Should be called in ``Embedder``.
         """
+        print(f"DEBUG: OpenAIClient.parse_embedding_response called with type: {type(response)}")
         try:
+            log.info(f"Parsing embedding response type: {type(response)}")
+            # Manual parsing to ensure compatibility with OpenAI v1+ response objects
+            if hasattr(response, 'data'):
+                embeddings = [item.embedding for item in response.data]
+                log.info(f"Extracted {len(embeddings)} embeddings. First embedding length: {len(embeddings[0]) if embeddings else 0}")
+                return EmbedderOutput(data=embeddings, error=None, raw_response=response)
+
             return parse_embedding_response(response)
         except Exception as e:
             log.error(f"Error parsing the embedding response: {e}")

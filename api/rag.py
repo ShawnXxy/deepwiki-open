@@ -168,8 +168,8 @@ class RAG(adal.Component):
         # Import the helper functions
         from api.config import get_embedder_config, is_ollama_embedder, is_azure_openai_configured
 
-        # Auto-detect provider if not specified
-        if provider is None:
+        # Auto-detect provider if not specified or empty
+        if not provider:  # handles None and empty string ''
             if is_azure_openai_configured():
                 provider = "azure"
                 logger.info("Auto-detected Azure OpenAI configuration, using Azure provider")
@@ -407,7 +407,8 @@ IMPORTANT FORMATTING RULES:
         self.transformed_docs = self._validate_and_filter_embeddings(self.transformed_docs)
 
         if not self.transformed_docs:
-            raise ValueError("No valid documents with embeddings found. Cannot create retriever.")
+            # Check if we had documents initially but they were filtered out due to empty embeddings
+            raise ValueError("No valid documents with embeddings found. This usually means the embedding process failed. Check the logs for 'CRITICAL: Azure Embedding Failed' or similar errors. Verify your API key and endpoint configuration.")
 
         logger.info(f"Using {len(self.transformed_docs)} documents with valid embeddings for retrieval")
 

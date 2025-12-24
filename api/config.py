@@ -255,6 +255,7 @@ def load_generator_config():
 def load_embedder_config():
     # Determine which embedder config file to load based on Azure OpenAI availability
     use_azure = is_azure_openai_configured()
+    print(f"DEBUG: load_embedder_config called. use_azure={use_azure}")
     
     if use_azure:
         # Try to load Azure-specific embedder config first
@@ -523,8 +524,8 @@ def get_model_config(provider=None, model=None):
     Returns:
         dict: Configuration containing model_client, model and other parameters
     """
-    # Auto-detect provider if not specified
-    if provider is None:
+    # Auto-detect provider if not specified or empty
+    if not provider:  # handles None and empty string ''
         if is_azure_openai_configured():
             provider = "azure"
         else:
@@ -556,10 +557,13 @@ def get_model_config(provider=None, model=None):
     model_params = {}
     if model in provider_config.get("models", {}):
         model_params = provider_config["models"][model]
+        logger.info(f"Found model '{model}' in provider config with params: {model_params}")
     else:
+        logger.warning(f"Model '{model}' not found in provider '{provider}' models. Available models: {list(provider_config.get('models', {}).keys())}")
         default_model = provider_config.get("default_model")
         if default_model and default_model in provider_config.get("models", {}):
             model_params = provider_config["models"][default_model]
+            logger.info(f"Using default model '{default_model}' params: {model_params}")
 
     # Prepare base configuration
     result = {

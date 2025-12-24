@@ -125,12 +125,14 @@ async def handle_websocket_chat(websocket: WebSocket):
                 await websocket.close()
                 return
             else:
-                logger.error(f"ValueError preparing retriever: {str(e)}")
+                import traceback
+                logger.error(f"ValueError preparing retriever: {str(e)}\n{traceback.format_exc()}")
                 await websocket.send_text(f"Error preparing retriever: {str(e)}")
                 await websocket.close()
                 return
         except Exception as e:
-            logger.error(f"Error preparing retriever: {str(e)}")
+            import traceback
+            logger.error(f"Error preparing retriever: {str(e)}\n{traceback.format_exc()}")
             # Check for specific embedding-related errors
             if "All embeddings should be of the same size" in str(e):
                 error_msg = (
@@ -578,12 +580,25 @@ This file contains...
             deployment_name = get_azure_deployment_name(request.model)
             logger.info(f"Using Azure deployment: {deployment_name}")
             
+            # Get config for the DEPLOYMENT name (not the requested model name)
+            # This is important because AZURE_OPENAI_DEPLOYMENT env var may override the model
+            deployment_config = get_model_config(request.provider, deployment_name)["model_kwargs"]
+            logger.info(f"Azure deployment_config: {deployment_config}")
+            
+            # Get temperature from deployment config, default to 1.0 for reasoning models (o1, o3, o4-mini)
+            temperature = deployment_config.get("temperature", 1.0)
+            logger.info(f"Azure temperature from config: {temperature}")
+            
             model_kwargs = {
                 "model": deployment_name,  # Use deployment name
                 "stream": True,
-                "temperature": model_config["temperature"],
-                "top_p": model_config["top_p"]
+                "temperature": temperature,
             }
+            # Only add top_p if it exists in the deployment config (reasoning models don't support it)
+            if "top_p" in deployment_config:
+                model_kwargs["top_p"] = deployment_config["top_p"]
+            
+            logger.info(f"Azure model_kwargs: {model_kwargs}")
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
                 input=prompt,

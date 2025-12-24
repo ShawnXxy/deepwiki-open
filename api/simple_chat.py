@@ -440,9 +440,11 @@ async def chat_completions_stream(request: ChatCompletionRequest):
             model_kwargs = {
                 "model": deployment_name,  # Use deployment name
                 "stream": True,
-                "temperature": model_config["temperature"],
-                "top_p": model_config["top_p"]
+                "temperature": model_config.get("temperature", 1.0),
             }
+            # Only add top_p if it exists in the model config (reasoning models don't support it)
+            if "top_p" in model_config:
+                model_kwargs["top_p"] = model_config["top_p"]
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
                 input=prompt,

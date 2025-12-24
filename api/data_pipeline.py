@@ -69,7 +69,6 @@ def count_tokens(text: str, embedder_type: str = None, is_ollama_embedder: bool 
         # Rough approximation: 4 characters per token
         return len(text) // 4
 
-def download_repo(repo_url: str, local_path: str, repo_type: str = None, access_token: str = None) -> str:
 def download_repo(repo_url: str, local_path: str, type: str = "github", 
                    access_token: str = None, branch: str = None) -> str:
     """
@@ -141,7 +140,7 @@ def download_repo(repo_url: str, local_path: str, type: str = "github",
         logger.info(f"Cloning repository from {repo_url} to {local_path}")
         
         # Build git clone command with branch parameter if specified
-        clone_cmd = ["git", "clone"]
+        clone_cmd = ["git", "clone", "--depth=1", "--single-branch"]
         
         # Add branch parameter if specified, with fallback logic
         if branch and branch.strip():
@@ -154,7 +153,7 @@ def download_repo(repo_url: str, local_path: str, type: str = "github",
         try:
             # We use repo_url in the log to avoid exposing the token in logs
             result = subprocess.run(
-                "--depth=1", "--single-branch", clone_cmd,
+                clone_cmd,
                 check=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -990,6 +989,7 @@ class DatabaseManager:
                 save_repo_dir = repo_url_or_path
 
             save_db_file = os.path.join(root_path, "databases", f"{repo_name}.pkl")
+            logger.info(f"DEBUG: save_db_file path is: {save_db_file}")
             os.makedirs(save_repo_dir, exist_ok=True)
             os.makedirs(os.path.dirname(save_db_file), exist_ok=True)
 
