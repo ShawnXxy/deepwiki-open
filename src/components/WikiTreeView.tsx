@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { FaChevronRight, FaChevronDown } from 'react-icons/fa';
+import logger from '../utils/logger';
 
 // Import interfaces from the page component
 interface WikiPage {
@@ -91,7 +92,7 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
             {/* Render pages in this section */}
             {section.pages.map(pageId => {
               const page = wikiStructure.pages.find(p => p.id === pageId);
-              console.log(`WikiTreeView: Looking for pageId "${pageId}", found:`, page ? page.id : 'NOT FOUND');
+              logger.debug(`WikiTreeView: Looking for pageId "${pageId}"`, { found: page ? page.id : 'NOT FOUND' });
               if (!page) return null;
 
               return (
@@ -132,7 +133,7 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
 
   // If there are no sections defined yet, or if sections/rootSections are empty arrays, fall back to the flat list view
   if (!wikiStructure.sections || wikiStructure.sections.length === 0 || !wikiStructure.rootSections || wikiStructure.rootSections.length === 0) {
-    console.log("WikiTreeView: Falling back to flat list view due to missing or empty sections/rootSections");
+    logger.info("WikiTreeView: Falling back to flat list view due to missing or empty sections/rootSections");
     return (
       <ul className="space-y-2">
         {wikiStructure.pages.map(page => (
@@ -165,17 +166,19 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
   }
 
   // Log information about the sections for debugging
-  console.log("WikiTreeView: Rendering tree view with sections:", wikiStructure.sections);
-  console.log("WikiTreeView: Root sections:", wikiStructure.rootSections);
-  console.log("WikiTreeView: Pages array:", wikiStructure.pages);
-  console.log("WikiTreeView: Pages IDs:", wikiStructure.pages.map(p => p.id));
+  logger.debug("WikiTreeView: Rendering tree view", { 
+    sectionsCount: wikiStructure.sections.length,
+    rootSectionsCount: wikiStructure.rootSections.length,
+    pagesCount: wikiStructure.pages.length,
+    pageIds: wikiStructure.pages.map(p => p.id)
+  });
 
   return (
     <div className="space-y-1">
       {wikiStructure.rootSections.map(sectionId => {
         const section = wikiStructure.sections.find(s => s.id === sectionId);
         if (!section) {
-          console.warn(`WikiTreeView: Could not find section with id ${sectionId}`);
+          logger.warn(`WikiTreeView: Could not find section with id ${sectionId}`);
           return null;
         }
         return renderSection(sectionId);

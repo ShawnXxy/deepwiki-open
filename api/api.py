@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 import asyncio
 
 # Configure logging
-from api.logging_config import setup_logging
+from api.logging_config import setup_logging, log_frontend_message
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -545,6 +545,47 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "service": "deepwiki-api"
     }
+
+
+class FrontendLogRequest(BaseModel):
+    """Model for frontend log messages"""
+    level: str = Field(..., description="Log level: debug, info, warn, error")
+    message: str = Field(..., description="Log message")
+    context: Optional[Dict[str, Any]] = Field(None, description="Optional context data")
+
+
+class FrontendLogBatchRequest(BaseModel):
+    """Model for batch frontend log messages"""
+    logs: List[FrontendLogRequest] = Field(..., description="List of log entries")
+
+
+@app.post("/log")
+async def log_frontend(request: FrontendLogRequest):
+    """
+    Receive and store frontend log messages.
+    Logs are written to frontend-yymmdd.log with daily rotation.
+    """
+    try:
+        log_frontend_message(request.level, request.message, request.context)
+        return {"status": "logged"}
+    except Exception as e:
+        logger.error(f"Failed to log frontend message: {e}")
+        raise HTTPException(status_code=500, detail="Failed to log message")
+
+
+@app.post("/log/batch")
+async def log_frontend_batch(request: FrontendLogBatchRequest):
+    """
+    Receive and store multiple frontend log messages in a batch.
+    More efficient for high-volume logging.
+    """
+    try:
+        for log_entry in request.logs:
+            log_frontend_message(log_entry.level, log_entry.message, log_entry.context)
+        return {"status": "logged", "count": len(request.logs)}
+    except Exception as e:
+        logger.error(f"Failed to log frontend batch: {e}")
+        raise HTTPException(status_code=500, detail="Failed to log messages")
 
 @app.get("/")
 async def root():

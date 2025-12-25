@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import mermaid from 'mermaid';
+import logger from '../utils/logger';
 // We'll use dynamic import for svg-pan-zoom
 
 // Initialize mermaid with defaults - Japanese aesthetic
@@ -313,6 +314,52 @@ const sanitizeMermaidContent = (content: string): string => {
 
   let sanitized = content;
 
+  // Detect if this is a flowchart/graph diagram
+  const isFlowchart = /^\s*(graph|flowchart)\s+(TB|TD|BT|RL|LR)/im.test(sanitized);
+  
+  // Detect if this is a sequence diagram
+  const isSequenceDiagram = /^\s*sequenceDiagram/im.test(sanitized);
+
+  // If it's a flowchart but uses sequence diagram arrows, convert them
+  if (isFlowchart && !isSequenceDiagram) {
+    // Convert sequence diagram arrows to flowchart arrows
+    // ->> becomes --> (solid arrow)
+    // -->> becomes -.-> (dotted arrow)
+    sanitized = sanitized.replace(/(\w+)\s*-->>\s*(\w+)/g, '$1 -.-> $2');
+    sanitized = sanitized.replace(/(\w+)\s*->>\s*(\w+)/g, '$1 --> $2');
+    sanitized = sanitized.replace(/(\w+)\s*->>([^>])/g, '$1 -->$2');
+    sanitized = sanitized.replace(/(\w+)\s*-->>([^>])/g, '$1 -.->$2');
+  }
+
+  // Fix edge labels: -->|label| should have the label text not contain special chars
+  // Also ensure proper spacing around edge labels
+  sanitized = sanitized.replace(/-->\|([^|]+)\|/g, (match, label) => {
+    // Escape problematic characters in labels
+    const cleanLabel = label.replace(/[<>]/g, '').trim();
+    return `-->|${cleanLabel}|`;
+  });
+
+  // Fix node labels with parentheses inside square brackets - these break Mermaid
+  // Match patterns like: NodeId[Text with (parens) inside]
+  // Must be done BEFORE comma handling to avoid double-processing
+  sanitized = sanitized.replace(/(\w+)\[([^\]]*\([^)]*\)[^\]]*)\]/g, (match, nodeId, label) => {
+    // Wrap in quotes and escape parentheses by replacing with unicode or removing
+    const cleanLabel = label.replace(/\(/g, '❨').replace(/\)/g, '❩');
+    return `${nodeId}["${cleanLabel}"]`;
+  });
+
+  // Fix node labels with commas - wrap them in quotes if they contain commas
+  // Match patterns like: NodeId[Text with, comma]
+  sanitized = sanitized.replace(/(\w+)\[([^\]]*,[^\]]*)\]/g, (match, nodeId, label) => {
+    // Check if already quoted
+    if (label.startsWith('"') && label.endsWith('"')) {
+      return match;
+    }
+    // Escape the comma by replacing with semicolon
+    const cleanLabel = label.replace(/,/g, ';');
+    return `${nodeId}["${cleanLabel}"]`;
+  });
+
   // Handle source citations that might break Mermaid syntax
   // Only convert citations with empty URLs to comments, preserve properly formatted ones
   sanitized = sanitized.replace(/Sources:\s*\[([^\]]+)\]\(\)/g, (match, filename) => {
@@ -340,9 +387,16 @@ const sanitizeMermaidContent = (content: string): string => {
   // Be more careful with square brackets - only replace standalone ones not part of valid Mermaid syntax
   sanitized = sanitized.replace(/\[([^\]]*)\]\(\)(?!\s*-->|\s*---|\s*--)/g, '($1)');
 
+  // Fix parentheses in round-bracket node definitions that might be interpreted as subgraphs
+  // Match: NodeId(text with (parens)) - escape inner parens
+  sanitized = sanitized.replace(/(\w+)\(([^)]*\([^)]*\)[^)]*)\)/g, (match, nodeId, label) => {
+    const cleanLabel = label.replace(/\(/g, '❨').replace(/\)/g, '❩');
+    return `${nodeId}(${cleanLabel})`;
+  });
+
   // Log the sanitization for debugging
   if (content !== sanitized) {
-    console.log('Mermaid content sanitized:', {
+    logger.debug('Mermaid content sanitized', {
       original: content.substring(0, 200) + (content.length > 200 ? '...' : ''),
       sanitized: sanitized.substring(0, 200) + (sanitized.length > 200 ? '...' : '')
     });
@@ -389,7 +443,7 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
               zoomScaleSensitivity: 0.3,
             });
           } catch (error) {
-            console.error("Failed to load svg-pan-zoom:", error);
+            logger.error("Failed to load svg-pan-zoom", { error: String(error) });
           }
         }
       };
@@ -433,11 +487,12 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
           mermaid.contentLoaded();
         }, 50);
       } catch (err) {
-        console.error('Mermaid rendering error:', err);
-        console.error('Original chart content:', chart);
-        console.error('Sanitized chart content:', sanitizeMermaidContent(chart));
-
         const errorMessage = err instanceof Error ? err.message : String(err);
+        logger.error('Mermaid rendering error', {
+          error: errorMessage,
+          originalChart: chart.substring(0, 500) + (chart.length > 500 ? '...' : ''),
+          sanitizedChart: sanitizeMermaidContent(chart).substring(0, 500)
+        });
 
         if (isMounted) {
           setError(`Failed to render diagram: ${errorMessage}`);
