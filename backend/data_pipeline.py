@@ -10,12 +10,12 @@ import base64
 import glob
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
-from api.config import configs, DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES
+from backend.config import configs, DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES
 from urllib.parse import urlparse, urlunparse, quote
 import requests
 from requests.exceptions import RequestException
 
-from api.tools.embedder import get_embedder
+from backend.tools.embedder import get_embedder
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -432,7 +432,7 @@ def prepare_data_pipeline(embedder_type: str = None, is_ollama_embedder: bool = 
     Returns:
         adal.Sequential: The data transformation pipeline
     """
-    from api.config import get_embedder_config
+    from backend.config import get_embedder_config
 
     splitter = TextSplitter(**configs["text_splitter"])
     embedder_config = get_embedder_config()

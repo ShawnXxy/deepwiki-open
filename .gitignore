@@ -21,7 +21,7 @@ develop-eggs/
 dist/
 downloads/
 eggs/
-api/logs/
+logs/
 .eggs/
 lib/
 lib64/

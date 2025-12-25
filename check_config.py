@@ -1,7 +1,7 @@
 
 import os
 from dotenv import load_dotenv
-from api.config import is_azure_openai_configured, configs, get_embedder_type, get_embedder_config
+from backend.config import is_azure_openai_configured, configs, get_embedder_type, get_embedder_config
 
 load_dotenv()
 

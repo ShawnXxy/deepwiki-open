@@ -5,8 +5,8 @@ from uuid import uuid4
 
 import adalflow as adal
 
-from api.tools.embedder import get_embedder
-from api.prompts import RAG_SYSTEM_PROMPT as system_prompt, RAG_TEMPLATE
+from backend.tools.embedder import get_embedder
+from backend.prompts import RAG_SYSTEM_PROMPT as system_prompt, RAG_TEMPLATE
 
 
 # Create our own implementation of the conversation classes
@@ -38,8 +38,8 @@ class CustomConversation:
 
 # Import other adalflow components
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
-from api.config import configs
-from api.data_pipeline import DatabaseManager
+from backend.config import configs
+from backend.data_pipeline import DatabaseManager
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -165,7 +165,7 @@ class RAG(adal.Component):
         super().__init__()
 
         # Always use Azure OpenAI as the provider
-        from api.config import is_azure_openai_configured
+        from backend.config import is_azure_openai_configured
 
         self.provider = "azure"
         self.model = model
@@ -201,7 +201,7 @@ IMPORTANT FORMATTING RULES:
 9. For pipe characters (|) in text, write them directly without escaping them"""
 
         # Get model configuration based on provider and model
-        from api.config import get_model_config
+        from backend.config import get_model_config
         generator_config = get_model_config(self.provider, self.model)
 
         # Initialize model client with proper configuration

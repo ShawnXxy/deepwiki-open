@@ -1,6 +1,6 @@
 # DeepWiki-Open (Azure OpenAI Edition)
 
-![DeepWiki Banner](screenshots/Deepwiki.png)
+![DeepWiki Banner](img/screenshots/Deepwiki.png)
 
 **DeepWiki** automatically creates beautiful, interactive wikis for any GitHub, GitLab, BitBucket, or Azure DevOps repository! Just enter a repo name, and DeepWiki will:
 
@@ -49,7 +49,7 @@
 
 ### Step 3: Configure infra.json
 
-Edit `api/config/infra.json` with your Azure details:
+Edit `backend/config/infra.json` with your Azure details:
 
 ```json
 {
@@ -81,7 +81,7 @@ cd deepwiki-open
 
 # Install Python dependencies (using Poetry)
 python -m pip install poetry==2.0.1
-poetry install -C api
+poetry install -C backend
 
 # Install JavaScript dependencies
 npm install
@@ -91,7 +91,7 @@ npm install
 
 ```bash
 # Terminal 1: Start the API server
-python -m api.main
+python -m backend.main
 
 # Terminal 2: Start the frontend
 npm run dev
@@ -109,7 +109,7 @@ npm run dev
 ### Using Docker Compose (Recommended)
 
 ```bash
-# Edit api/config/infra.json with your Azure OpenAI configuration
+# Edit backend/config/infra.json with your Azure OpenAI configuration
 # Then run with Docker Compose
 docker-compose up
 ```
@@ -119,7 +119,7 @@ docker-compose up
 ```bash
 # Mount your customized infra.json into the container
 docker run -p 8001:8001 -p 3000:3000 \
-  -v ./api/config/infra.json:/app/api/config/infra.json \
+  -v ./backend/config/infra.json:/app/backend/config/infra.json \
   -v ~/.adalflow:/root/.adalflow \
   ghcr.io/asyncfuncai/deepwiki-open:latest
 ```
@@ -156,7 +156,7 @@ DeepWiki uses Azure OpenAI to:
 
 ```
 deepwiki/
-├── api/                  # Backend API server
+├── backend/              # Backend API server
 │   ├── main.py           # API entry point
 │   ├── api.py            # FastAPI implementation
 │   ├── rag.py            # Retrieval Augmented Generation
@@ -177,7 +177,7 @@ deepwiki/
 
 ## ⚙️ Configuration
 
-All configuration is centralized in `api/config/infra.json`. No `.env` file needed!
+All configuration is centralized in `backend/config/infra.json`. No `.env` file needed!
 
 ### infra.json Structure
 
@@ -194,15 +194,15 @@ All configuration is centralized in `api/config/infra.json`. No `.env` file need
 
 ### Other Configuration Files
 
-- **`api/config/generator.json`**: Text generation model parameters (temperature)
-- **`api/config/embedder.json`**: Embedding model and text processing settings
+- **`backend/config/generator.json`**: Text generation model parameters (temperature)
+- **`backend/config/embedder.json`**: Embedding model and text processing settings
 
 ## 📊 Logging
 
 DeepWiki uses daily rotating log files:
 
-- **Backend logs**: `api/logs/backend-YYMMDD.log`
-- **Frontend logs**: `api/logs/frontend-YYMMDD.log`
+- **Backend logs**: `logs/backend-YYMMDD.log`
+- **Frontend logs**: `logs/frontend-YYMMDD.log`
 
 Set logging level in your environment:
 
@@ -232,13 +232,13 @@ Toggle "Deep Research" in the Ask interface for thorough analysis.
 
 ## 📱 Screenshots
 
-![DeepWiki Main Interface](screenshots/Interface.png)
+![DeepWiki Main Interface](img/screenshots/Interface.png)
 *The main interface of DeepWiki*
 
-![Private Repository Support](screenshots/privaterepo.png)
+![Private Repository Support](img/screenshots/privaterepo.png)
 *Access private repositories with personal access tokens*
 
-![DeepResearch Feature](screenshots/DeepResearch.png)
+![DeepResearch Feature](img/screenshots/DeepResearch.png)
 *DeepResearch conducts multi-turn investigations*
 
 ## ❓ Troubleshooting
@@ -262,7 +262,7 @@ Toggle "Deep Research" in the Ask interface for thorough analysis.
 
 ### Common Solutions
 
-1. **Check logs**: Look at `api/logs/backend-*.log` for detailed error messages
+1. **Check logs**: Look at `logs/backend-*.log` for detailed error messages
 2. **Restart servers**: Sometimes a simple restart fixes most issues
 3. **Verify Azure setup**: Ensure models are deployed and accessible in Azure Portal
 

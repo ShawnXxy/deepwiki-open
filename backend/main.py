@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-from api.logging_config import setup_logging
+from backend.logging_config import setup_logging
 
 # Configure logging
 setup_logging()
@@ -44,7 +44,7 @@ if is_development:
 import uvicorn
 
 # Import Azure configuration functions
-from api.config import is_azure_openai_configured
+from backend.config import is_azure_openai_configured
 
 # Check for Azure OpenAI configuration
 use_azure_openai = is_azure_openai_configured()
@@ -55,18 +55,18 @@ else:
     logger.error("Azure OpenAI is not configured. Please set the required environment variables.")
     logger.error("Required: AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_VERSION")
 
+# Import the app at module level for uvicorn to find it
+from backend.api import app
+
 if __name__ == "__main__":
     # Get port from environment variable or use default
     port = int(os.environ.get("PORT", 8001))
-
-    # Import the app here to ensure environment variables are set first
-    from api.api import app
 
     logger.info(f"Starting Streaming API on port {port}")
 
     # Run the FastAPI app with uvicorn
     uvicorn.run(
-        "api.api:app",
+        "backend.main:app",
         host="0.0.0.0",
         port=port,
         reload=is_development,
