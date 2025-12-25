@@ -146,3 +146,87 @@ html[data-theme='dark'] .paper-texture {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
 }
+
+/* Mermaid diagram styles - matches Japanese aesthetic palette */
+.mermaid-diagram {
+  /* Light mode node styles */
+  & .node rect, & .node circle, & .node ellipse, & .node polygon, & .node path {
+    fill: var(--card-bg);
+    stroke: var(--accent-secondary);
+    stroke-width: 1px;
+  }
+  & .edgePath .path {
+    stroke: var(--accent-primary);
+    stroke-width: 1.5px;
+  }
+  & .edgeLabel {
+    background-color: transparent;
+    color: var(--foreground);
+  }
+  & .edgeLabel p {
+    background-color: transparent !important;
+  }
+  & .label {
+    color: var(--foreground);
+  }
+  & .cluster rect {
+    fill: var(--card-bg);
+    stroke: var(--accent-secondary);
+    stroke-width: 1px;
+  }
+  /* Sequence diagram */
+  & .actor {
+    fill: var(--card-bg);
+    stroke: var(--accent-secondary);
+    stroke-width: 1px;
+  }
+  & text.actor, & .messageText, & .noteText {
+    fill: var(--foreground);
+    stroke: none;
+  }
+  & .messageLine0, & .messageLine1 {
+    stroke: var(--accent-primary);
+  }
+  /* General text */
+  & text {
+    fill: var(--muted) !important;
+  }
+  /* Clickable elements */
+  & .clickable {
+    transition: all 0.3s ease;
+    cursor: pointer;
+  }
+  & .clickable:hover {
+    transform: scale(1.03);
+    filter: brightness(0.95);
+  }
+}
+
+/* Dark mode mermaid overrides */
+html[data-theme='dark'] .mermaid-diagram {
+  & .node rect, & .node circle, & .node ellipse, & .node polygon, & .node path,
+  & .cluster rect, & .actor {
+    fill: var(--card-bg);
+    stroke: var(--accent-secondary);
+  }
+  & .edgePath .path, & .flowchart-link, & .messageLine0, & .messageLine1 {
+    stroke: var(--accent-primary);
+    stroke-width: 1.5px;
+  }
+  & .edgeLabel, & .label, & text.actor, & .messageText, & .noteText,
+  & #sequenceNumber, & text.sequenceText, & text.loopText, & text.loopText tspan {
+    color: var(--foreground);
+    fill: var(--foreground) !important;
+  }
+  & text {
+    fill: var(--foreground) !important;
+  }
+  /* Text readability enhancement */
+  & .messageText, & text.sequenceText {
+    paint-order: stroke;
+    stroke: var(--background);
+    stroke-width: 2px;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}

@@ -1,16 +1,15 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import mermaid from 'mermaid';
 import logger from '../utils/logger';
-// We'll use dynamic import for svg-pan-zoom
 
-// Initialize mermaid with defaults - Japanese aesthetic
+// Initialize mermaid with minimal config - styles are in globals.css
 mermaid.initialize({
   startOnLoad: true,
   theme: 'neutral',
   securityLevel: 'loose',
   suppressErrorRendering: true,
   logLevel: 'error',
-  maxTextSize: 100000, // Increase text size limit
+  maxTextSize: 100000,
   htmlLabels: true,
   flowchart: {
     htmlLabels: true,
@@ -19,156 +18,48 @@ mermaid.initialize({
     rankSpacing: 60,
     padding: 20,
   },
-  themeCSS: `
-    /* Japanese aesthetic styles for all diagrams */
-    .node rect, .node circle, .node ellipse, .node polygon, .node path {
-      fill: #f8f4e6;
-      stroke: #d7c4bb;
-      stroke-width: 1px;
-    }
-    .edgePath .path {
-      stroke: #9b7cb9;
-      stroke-width: 1.5px;
-    }
-    .edgeLabel {
-      background-color: transparent;
-      color: #333333;
-      p {
-        background-color: transparent !important;
-      }
-    }
-    .label {
-      color: #333333;
-    }
-    .cluster rect {
-      fill: #f8f4e6;
-      stroke: #d7c4bb;
-      stroke-width: 1px;
-    }
-
-    /* Sequence diagram specific styles */
-    .actor {
-      fill: #f8f4e6;
-      stroke: #d7c4bb;
-      stroke-width: 1px;
-    }
-    text.actor {
-      fill: #333333;
-      stroke: none;
-    }
-    .messageText {
-      fill: #333333;
-      stroke: none;
-    }
-    .messageLine0, .messageLine1 {
-      stroke: #9b7cb9;
-    }
-    .noteText {
-      fill: #333333;
-    }
-
-    /* Dark mode overrides - will be applied with data-theme="dark" */
-    [data-theme="dark"] .node rect,
-    [data-theme="dark"] .node circle,
-    [data-theme="dark"] .node ellipse,
-    [data-theme="dark"] .node polygon,
-    [data-theme="dark"] .node path {
-      fill: #222222;
-      stroke: #5d4037;
-    }
-    [data-theme="dark"] .edgePath .path {
-      stroke: #9370db;
-    }
-    [data-theme="dark"] .edgeLabel {
-      background-color: transparent;
-      color: #f0f0f0;
-    }
-    [data-theme="dark"] .label {
-      color: #f0f0f0;
-    }
-    [data-theme="dark"] .cluster rect {
-      fill: #222222;
-      stroke: #5d4037;
-    }
-    [data-theme="dark"] .flowchart-link {
-      stroke: #9370db;
-    }
-
-    /* Dark mode sequence diagram overrides */
-    [data-theme="dark"] .actor {
-      fill: #222222;
-      stroke: #5d4037;
-    }
-    [data-theme="dark"] text.actor {
-      fill: #f0f0f0;
-      stroke: none;
-    }
-    [data-theme="dark"] .messageText {
-      fill: #f0f0f0;
-      stroke: none;
-      font-weight: 500;
-    }
-    [data-theme="dark"] .messageLine0, [data-theme="dark"] .messageLine1 {
-      stroke: #9370db;
-      stroke-width: 1.5px;
-    }
-    [data-theme="dark"] .noteText {
-      fill: #f0f0f0;
-    }
-    /* Additional styles for sequence diagram text */
-    [data-theme="dark"] #sequenceNumber {
-      fill: #f0f0f0;
-    }
-    [data-theme="dark"] text.sequenceText {
-      fill: #f0f0f0;
-      font-weight: 500;
-    }
-    [data-theme="dark"] text.loopText, [data-theme="dark"] text.loopText tspan {
-      fill: #f0f0f0;
-    }
-    /* Add a subtle background to message text for better readability */
-    [data-theme="dark"] .messageText, [data-theme="dark"] text.sequenceText {
-      paint-order: stroke;
-      stroke: #1a1a1a;
-      stroke-width: 2px;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
-    /* Force text elements to be properly colored */
-    text[text-anchor][dominant-baseline],
-    text[text-anchor][alignment-baseline],
-    .nodeLabel,
-    .edgeLabel,
-    .label,
-    text {
-      fill: #777 !important;
-    }
-
-    [data-theme="dark"] text[text-anchor][dominant-baseline],
-    [data-theme="dark"] text[text-anchor][alignment-baseline],
-    [data-theme="dark"] .nodeLabel,
-    [data-theme="dark"] .edgeLabel,
-    [data-theme="dark"] .label,
-    [data-theme="dark"] text {
-      fill: #f0f0f0 !important;
-    }
-
-    /* Add clickable element styles with subtle transitions */
-    .clickable {
-      transition: all 0.3s ease;
-    }
-    .clickable:hover {
-      transform: scale(1.03);
-      cursor: pointer;
-    }
-    .clickable:hover > * {
-      filter: brightness(0.95);
-    }
-  `,
   fontFamily: 'var(--font-geist-sans), var(--font-serif-jp), sans-serif',
   fontSize: 12,
 });
+
+// Reusable icon components
+const ZoomOutIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" 
+       fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+    <line x1="8" y1="11" x2="14" y2="11" />
+  </svg>
+);
+
+const ZoomInIcon = ({ size = 16 }: { size?: number }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24"
+       fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+    <line x1="11" y1="8" x2="11" y2="14" /><line x1="8" y1="11" x2="14" y2="11" />
+  </svg>
+);
+
+const ResetIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+       fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+    <path d="M21 3v5h-5" />
+  </svg>
+);
+
+const CloseIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+       fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+  </svg>
+);
+
+const WarningIcon = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+  </svg>
+);
 
 interface MermaidProps {
   chart: string;
@@ -176,7 +67,7 @@ interface MermaidProps {
   zoomingEnabled?: boolean;
 }
 
-// Full screen modal component for the diagram
+// Full screen modal component for diagram viewing
 const FullScreenModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
@@ -185,117 +76,56 @@ const FullScreenModal: React.FC<{
   const modalRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
 
-  // Close on Escape key
+  // Keyboard and click-outside handlers
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
+    if (!isOpen) return;
+    
+    const handleKeyDown = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(e.target as Node)) onClose();
     };
 
-    if (isOpen) {
-      document.addEventListener('keydown', handleKeyDown);
-    }
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mousedown', handleOutsideClick);
+    setZoom(1); // Reset zoom on open
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isOpen, onClose]);
-
-  // Handle click outside to close
-  useEffect(() => {
-    const handleOutsideClick = (e: MouseEvent) => {
-      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
-        onClose();
-      }
-    };
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleOutsideClick);
-    }
-
-    return () => {
       document.removeEventListener('mousedown', handleOutsideClick);
     };
   }, [isOpen, onClose]);
 
-  // Reset zoom when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      setZoom(1);
-    }
-  }, [isOpen]);
-
   if (!isOpen) return null;
+
+  const buttonClass = "text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 p-2 rounded-md border border-[var(--border-color)] transition-colors";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4">
-      <div
-        ref={modalRef}
-        className="bg-[var(--card-bg)] rounded-lg shadow-custom max-w-5xl max-h-[90vh] w-full overflow-hidden flex flex-col card-japanese"
-      >
-        {/* Modal header with controls */}
+      <div ref={modalRef} className="bg-[var(--card-bg)] rounded-lg shadow-custom max-w-5xl max-h-[90vh] w-full overflow-hidden flex flex-col card-japanese">
+        {/* Header with zoom controls */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)]">
-          <div className="font-medium text-[var(--foreground)] font-serif">図表表示</div>
+          <div className="font-medium text-[var(--foreground)] font-serif">Diagram View</div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setZoom(Math.max(0.5, zoom - 0.1))}
-                className="text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 p-2 rounded-md border border-[var(--border-color)] transition-colors"
-                aria-label="Zoom out"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="11" cy="11" r="8"></circle>
-                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                  <line x1="8" y1="11" x2="14" y2="11"></line>
-                </svg>
+              <button onClick={() => setZoom(Math.max(0.5, zoom - 0.1))} className={buttonClass} aria-label="Zoom out">
+                <ZoomOutIcon />
               </button>
               <span className="text-sm text-[var(--muted)]">{Math.round(zoom * 100)}%</span>
-              <button
-                onClick={() => setZoom(Math.min(2, zoom + 0.1))}
-                className="text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 p-2 rounded-md border border-[var(--border-color)] transition-colors"
-                aria-label="Zoom in"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="11" cy="11" r="8"></circle>
-                  <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                  <line x1="11" y1="8" x2="11" y2="14"></line>
-                  <line x1="8" y1="11" x2="14" y2="11"></line>
-                </svg>
+              <button onClick={() => setZoom(Math.min(2, zoom + 0.1))} className={buttonClass} aria-label="Zoom in">
+                <ZoomInIcon />
               </button>
-              <button
-                onClick={() => setZoom(1)}
-                className="text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 p-2 rounded-md border border-[var(--border-color)] transition-colors"
-                aria-label="Reset zoom"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path>
-                  <path d="M21 3v5h-5"></path>
-                </svg>
+              <button onClick={() => setZoom(1)} className={buttonClass} aria-label="Reset zoom">
+                <ResetIcon />
               </button>
             </div>
-            <button
-              onClick={onClose}
-              className="text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 p-2 rounded-md border border-[var(--border-color)] transition-colors"
-              aria-label="Close"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
+            <button onClick={onClose} className={buttonClass} aria-label="Close">
+              <CloseIcon />
             </button>
           </div>
         </div>
-
-        {/* Modal content with zoom */}
+        {/* Content with zoom transform */}
         <div className="overflow-auto p-6 flex-1 flex items-center justify-center bg-[var(--background)]/50">
-          <div
-            style={{
-              transform: `scale(${zoom})`,
-              transformOrigin: 'center center',
-              transition: 'transform 0.3s ease-out'
-            }}
-          >
+          <div style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', transition: 'transform 0.3s ease-out' }}>
             {children}
           </div>
         </div>
@@ -305,7 +135,7 @@ const FullScreenModal: React.FC<{
 };
 
 /**
- * Sanitizes Mermaid diagram content to remove problematic patterns that cause parsing errors
+ * Sanitizes Mermaid diagram content to fix common parsing issues
  * @param content - Raw Mermaid diagram content  
  * @returns Sanitized content safe for Mermaid rendering
  */
@@ -313,92 +143,58 @@ const sanitizeMermaidContent = (content: string): string => {
   if (!content) return content;
 
   let sanitized = content;
-
-  // Detect if this is a flowchart/graph diagram
   const isFlowchart = /^\s*(graph|flowchart)\s+(TB|TD|BT|RL|LR)/im.test(sanitized);
-  
-  // Detect if this is a sequence diagram
   const isSequenceDiagram = /^\s*sequenceDiagram/im.test(sanitized);
 
-  // If it's a flowchart but uses sequence diagram arrows, convert them
+  // Convert sequence arrows to flowchart arrows when misused
   if (isFlowchart && !isSequenceDiagram) {
-    // Convert sequence diagram arrows to flowchart arrows
-    // ->> becomes --> (solid arrow)
-    // -->> becomes -.-> (dotted arrow)
-    sanitized = sanitized.replace(/(\w+)\s*-->>\s*(\w+)/g, '$1 -.-> $2');
-    sanitized = sanitized.replace(/(\w+)\s*->>\s*(\w+)/g, '$1 --> $2');
-    sanitized = sanitized.replace(/(\w+)\s*->>([^>])/g, '$1 -->$2');
-    sanitized = sanitized.replace(/(\w+)\s*-->>([^>])/g, '$1 -.->$2');
+    sanitized = sanitized
+      .replace(/(\w+)\s*-->>\s*(\w+)/g, '$1 -.-> $2')
+      .replace(/(\w+)\s*->>\s*(\w+)/g, '$1 --> $2')
+      .replace(/(\w+)\s*->>([^>])/g, '$1 -->$2')
+      .replace(/(\w+)\s*-->>([^>])/g, '$1 -.->$2');
   }
 
-  // Fix edge labels: -->|label| should have the label text not contain special chars
-  // Also ensure proper spacing around edge labels
-  sanitized = sanitized.replace(/-->\|([^|]+)\|/g, (match, label) => {
-    // Escape problematic characters in labels
-    const cleanLabel = label.replace(/[<>]/g, '').trim();
-    return `-->|${cleanLabel}|`;
-  });
+  // Fix edge labels - remove special chars
+  sanitized = sanitized.replace(/-->\|([^|]+)\|/g, (_, label) => 
+    `-->|${label.replace(/[<>]/g, '').trim()}|`
+  );
 
-  // Fix node labels with parentheses inside square brackets - these break Mermaid
-  // Match patterns like: NodeId[Text with (parens) inside]
-  // Must be done BEFORE comma handling to avoid double-processing
-  sanitized = sanitized.replace(/(\w+)\[([^\]]*\([^)]*\)[^\]]*)\]/g, (match, nodeId, label) => {
-    // Wrap in quotes and escape parentheses by replacing with unicode or removing
-    const cleanLabel = label.replace(/\(/g, '❨').replace(/\)/g, '❩');
-    return `${nodeId}["${cleanLabel}"]`;
-  });
+  // Fix parentheses in square bracket labels
+  sanitized = sanitized.replace(/(\w+)\[([^\]]*\([^)]*\)[^\]]*)\]/g, (_, nodeId, label) => 
+    `${nodeId}["${label.replace(/\(/g, '❨').replace(/\)/g, '❩')}"]`
+  );
 
-  // Fix node labels with commas - wrap them in quotes if they contain commas
-  // Match patterns like: NodeId[Text with, comma]
+  // Fix commas in node labels
   sanitized = sanitized.replace(/(\w+)\[([^\]]*,[^\]]*)\]/g, (match, nodeId, label) => {
-    // Check if already quoted
-    if (label.startsWith('"') && label.endsWith('"')) {
-      return match;
-    }
-    // Escape the comma by replacing with semicolon
-    const cleanLabel = label.replace(/,/g, ';');
-    return `${nodeId}["${cleanLabel}"]`;
+    if (label.startsWith('"') && label.endsWith('"')) return match;
+    return `${nodeId}["${label.replace(/,/g, ';')}"]`;
   });
 
-  // Handle source citations that might break Mermaid syntax
-  // Only convert citations with empty URLs to comments, preserve properly formatted ones
-  sanitized = sanitized.replace(/Sources:\s*\[([^\]]+)\]\(\)/g, (match, filename) => {
-    // Convert citations with empty URLs to safer format for Mermaid
-    return `%% Source: ${filename}`;
-  });
-
-  // If citations already have URLs, convert them to comments with URLs preserved
+  // Convert source citations to comments
+  sanitized = sanitized.replace(/Sources:\s*\[([^\]]+)\]\(\)/g, '%% Source: $1');
   sanitized = sanitized.replace(/Sources:\s*(\[([^\]]+)\]\([^)]+\)(?:,\s*)?)+/g, (match) => {
-    // Extract all citations and convert to comments
-    const citationPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
-    const comments: string[] = [];
-    let citationMatch;
-    
-    while ((citationMatch = citationPattern.exec(match)) !== null) {
-      const filename = citationMatch[1];
-      const url = citationMatch[2];
-      comments.push(`%% Source: ${filename} - ${url}`);
+    const citations: string[] = [];
+    let m;
+    const pattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+    while ((m = pattern.exec(match)) !== null) {
+      citations.push(`%% Source: ${m[1]} - ${m[2]}`);
     }
-    
-    return comments.join('\n');
+    return citations.join('\n');
   });
 
-  // Remove or escape other problematic patterns only if they're not part of valid Mermaid syntax
-  // Be more careful with square brackets - only replace standalone ones not part of valid Mermaid syntax
+  // Fix standalone brackets with empty URLs
   sanitized = sanitized.replace(/\[([^\]]*)\]\(\)(?!\s*-->|\s*---|\s*--)/g, '($1)');
 
-  // Fix parentheses in round-bracket node definitions that might be interpreted as subgraphs
-  // Match: NodeId(text with (parens)) - escape inner parens
-  sanitized = sanitized.replace(/(\w+)\(([^)]*\([^)]*\)[^)]*)\)/g, (match, nodeId, label) => {
-    const cleanLabel = label.replace(/\(/g, '❨').replace(/\)/g, '❩');
-    return `${nodeId}(${cleanLabel})`;
-  });
+  // Fix nested parentheses in round-bracket nodes
+  sanitized = sanitized.replace(/(\w+)\(([^)]*\([^)]*\)[^)]*)\)/g, (_, nodeId, label) => 
+    `${nodeId}(${label.replace(/\(/g, '❨').replace(/\)/g, '❩')})`
+  );
 
-  // Log the sanitization for debugging
   if (content !== sanitized) {
     logger.debug('Mermaid content sanitized', {
-      original: content.substring(0, 200) + (content.length > 200 ? '...' : ''),
-      sanitized: sanitized.substring(0, 200) + (sanitized.length > 200 ? '...' : '')
+      original: content.substring(0, 200),
+      sanitized: sanitized.substring(0, 200)
     });
   }
 
@@ -412,52 +208,42 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
   const mermaidRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-${Math.random().toString(36).substring(2, 9)}`);
-  const isDarkModeRef = useRef(
-    typeof window !== 'undefined' &&
-    window.matchMedia &&
-    window.matchMedia('(prefers-color-scheme: dark)').matches
-  );
+  const isDarkMode = typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches;
 
-  // Initialize pan-zoom functionality when SVG is rendered
+  // Initialize pan-zoom for zoomable diagrams
   useEffect(() => {
-    if (svg && zoomingEnabled && containerRef.current) {
-      const initializePanZoom = async () => {
-        const svgElement = containerRef.current?.querySelector("svg");
-        if (svgElement) {
-          // Remove any max-width constraints
-          svgElement.style.maxWidth = "none";
-          svgElement.style.width = "100%";
-          svgElement.style.height = "100%";
+    if (!svg || !zoomingEnabled || !containerRef.current) return;
 
-          try {
-            // Dynamically import svg-pan-zoom only when needed in the browser
-            const svgPanZoom = (await import("svg-pan-zoom")).default;
+    const initPanZoom = async () => {
+      const svgEl = containerRef.current?.querySelector('svg');
+      if (!svgEl) return;
 
-            svgPanZoom(svgElement, {
-              zoomEnabled: true,
-              controlIconsEnabled: true,
-              fit: true,
-              center: true,
-              minZoom: 0.1,
-              maxZoom: 10,
-              zoomScaleSensitivity: 0.3,
-            });
-          } catch (error) {
-            logger.error("Failed to load svg-pan-zoom", { error: String(error) });
-          }
-        }
-      };
+      svgEl.style.maxWidth = 'none';
+      svgEl.style.width = '100%';
+      svgEl.style.height = '100%';
 
-      // Wait for the SVG to be rendered
-      setTimeout(() => {
-        void initializePanZoom();
-      }, 100);
-    }
+      try {
+        const svgPanZoom = (await import('svg-pan-zoom')).default;
+        svgPanZoom(svgEl, {
+          zoomEnabled: true,
+          controlIconsEnabled: true,
+          fit: true,
+          center: true,
+          minZoom: 0.1,
+          maxZoom: 10,
+          zoomScaleSensitivity: 0.3,
+        });
+      } catch (err) {
+        logger.error('Failed to load svg-pan-zoom', { error: String(err) });
+      }
+    };
+
+    setTimeout(initPanZoom, 100);
   }, [svg, zoomingEnabled]);
 
+  // Render chart when content changes
   useEffect(() => {
     if (!chart) return;
-
     let isMounted = true;
 
     const renderChart = async () => {
@@ -467,47 +253,39 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
         setError(null);
         setSvg('');
 
-        // Sanitize the chart content before rendering to prevent parsing errors
         const sanitizedChart = sanitizeMermaidContent(chart);
-
-        // Render the sanitized chart
-        const { svg: renderedSvg } = await mermaid.render(idRef.current, sanitizedChart);
+        const { svg: rendered } = await mermaid.render(idRef.current, sanitizedChart);
 
         if (!isMounted) return;
 
-        let processedSvg = renderedSvg;
-        if (isDarkModeRef.current) {
-          processedSvg = processedSvg.replace('<svg ', '<svg data-theme="dark" ');
+        // Add dark mode attribute
+        let processed = rendered;
+        if (isDarkMode) {
+          processed = processed.replace('<svg ', '<svg data-theme="dark" ');
         }
 
-        setSvg(processedSvg);
-
-        // Call mermaid.contentLoaded to ensure proper initialization
-        setTimeout(() => {
-          mermaid.contentLoaded();
-        }, 50);
+        setSvg(processed);
+        setTimeout(() => mermaid.contentLoaded(), 50);
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
+        const errorMsg = err instanceof Error ? err.message : String(err);
         logger.error('Mermaid rendering error', {
-          error: errorMessage,
-          originalChart: chart.substring(0, 500) + (chart.length > 500 ? '...' : ''),
-          sanitizedChart: sanitizeMermaidContent(chart).substring(0, 500)
+          error: errorMsg,
+          chart: chart.substring(0, 500)
         });
 
         if (isMounted) {
-          setError(`Failed to render diagram: ${errorMessage}`);
-
+          setError(`Failed to render diagram: ${errorMsg}`);
           if (mermaidRef.current) {
-            const sanitizedChart = sanitizeMermaidContent(chart);
+            const sanitized = sanitizeMermaidContent(chart);
             mermaidRef.current.innerHTML = `
               <div class="text-red-500 dark:text-red-400 text-xs mb-1">Syntax error in diagram</div>
               <details class="text-xs mb-2">
-                <summary class="cursor-pointer text-gray-600 dark:text-gray-400">Show original content</summary>
+                <summary class="cursor-pointer text-gray-600 dark:text-gray-400">Show original</summary>
                 <pre class="text-xs overflow-auto p-2 bg-gray-100 dark:bg-gray-800 rounded mt-1">${chart}</pre>
               </details>
               <details class="text-xs">
-                <summary class="cursor-pointer text-gray-600 dark:text-gray-400">Show sanitized content</summary>
-                <pre class="text-xs overflow-auto p-2 bg-gray-100 dark:bg-gray-800 rounded mt-1">${sanitizedChart}</pre>
+                <summary class="cursor-pointer text-gray-600 dark:text-gray-400">Show sanitized</summary>
+                <pre class="text-xs overflow-auto p-2 bg-gray-100 dark:bg-gray-800 rounded mt-1">${sanitized}</pre>
               </details>
             `;
           }
@@ -516,86 +294,67 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
     };
 
     renderChart();
+    return () => { isMounted = false; };
+  }, [chart, isDarkMode]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [chart]);
+  const handleDiagramClick = useCallback(() => {
+    if (!error && svg) setIsFullscreen(true);
+  }, [error, svg]);
 
-  const handleDiagramClick = () => {
-    if (!error && svg) {
-      setIsFullscreen(true);
-    }
-  };
-
+  // Error state
   if (error) {
     return (
       <div className={`border border-[var(--highlight)]/30 rounded-md p-4 bg-[var(--highlight)]/5 ${className}`}>
         <div className="flex items-center mb-3">
           <div className="text-[var(--highlight)] text-xs font-medium flex items-center">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
-            図表レンダリングエラー
+            <WarningIcon />
+            Diagram Rendering Error
           </div>
         </div>
-        <div ref={mermaidRef} className="text-xs overflow-auto"></div>
+        <div ref={mermaidRef} className="text-xs overflow-auto" />
         <div className="mt-3 text-xs text-[var(--muted)] font-serif">
-          図表に構文エラーがあり、レンダリングできません。
+          The diagram contains syntax errors and cannot be rendered.
         </div>
       </div>
     );
   }
 
+  // Loading state
   if (!svg) {
     return (
       <div className={`flex justify-center items-center p-4 ${className}`}>
         <div className="flex items-center space-x-2">
-          <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse"></div>
-          <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-75"></div>
-          <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-150"></div>
-          <span className="text-[var(--muted)] text-xs ml-2 font-serif">図表を描画中...</span>
+          <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse" />
+          <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-75" />
+          <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-150" />
+          <span className="text-[var(--muted)] text-xs ml-2 font-serif">Rendering diagram...</span>
         </div>
       </div>
     );
   }
 
+  // Rendered diagram
   return (
     <>
-      <div
-        ref={containerRef}
-        className={`w-full max-w-full ${zoomingEnabled ? "h-[600px] p-4" : ""}`}
-      >
-        <div
-          className={`relative group ${zoomingEnabled ? "h-full rounded-lg border-2 border-black" : ""}`}
-        >
+      <div ref={containerRef} className={`w-full max-w-full ${zoomingEnabled ? 'h-[600px] p-4' : ''}`}>
+        <div className={`relative group ${zoomingEnabled ? 'h-full rounded-lg border-2 border-black' : ''}`}>
           <div
-            className={`flex justify-center overflow-auto text-center my-2 cursor-pointer hover:shadow-md transition-shadow duration-200 rounded-md ${className} ${zoomingEnabled ? "h-full" : ""}`}
+            className={`mermaid-diagram flex justify-center overflow-auto text-center my-2 cursor-pointer hover:shadow-md transition-shadow duration-200 rounded-md ${className} ${zoomingEnabled ? 'h-full' : ''}`}
             dangerouslySetInnerHTML={{ __html: svg }}
             onClick={zoomingEnabled ? undefined : handleDiagramClick}
-            title={zoomingEnabled ? undefined : "Click to view fullscreen"}
+            title={zoomingEnabled ? undefined : 'Click to view fullscreen'}
           />
-
           {!zoomingEnabled && (
             <div className="absolute top-2 right-2 bg-gray-700/70 dark:bg-gray-900/70 text-white p-1.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center gap-1.5 text-xs shadow-md pointer-events-none">
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="8"></circle>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                <line x1="11" y1="8" x2="11" y2="14"></line>
-                <line x1="8" y1="11" x2="14" y2="11"></line>
-              </svg>
+              <ZoomInIcon size={12} />
               <span>Click to zoom</span>
             </div>
           )}
         </div>
       </div>
-
       {!zoomingEnabled && (
-        <FullScreenModal
-          isOpen={isFullscreen}
-          onClose={() => setIsFullscreen(false)}
-        >
-          <div dangerouslySetInnerHTML={{ __html: svg }} />
+        <FullScreenModal isOpen={isFullscreen} onClose={() => setIsFullscreen(false)}>
+          <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: svg }} />
         </FullScreenModal>
       )}
     </>
