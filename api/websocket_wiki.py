@@ -361,16 +361,18 @@ async def handle_websocket_chat(websocket: WebSocket):
 
         logger.info(f"Using Azure OpenAI with model: {request.model}")
 
-        # Initialize Azure AI client
-        model = AzureAIClient()
-
         # Get deployment name for Azure
         deployment_name = get_azure_deployment_name(request.model)
         logger.info(f"Using Azure deployment: {deployment_name}")
 
-        # Get config for the deployment name
-        deployment_config = get_model_config("azure", deployment_name)["model_kwargs"]
+        # Get config for the deployment name (includes initialize_kwargs)
+        model_config = get_model_config("azure", deployment_name)
+        deployment_config = model_config["model_kwargs"]
         logger.info(f"Azure deployment_config: {deployment_config}")
+
+        # Initialize Azure AI client with proper configuration
+        initialize_kwargs = model_config.get("initialize_kwargs", {})
+        model = AzureAIClient(**initialize_kwargs)
 
         # Get temperature from deployment config
         temperature = deployment_config.get("temperature", 1.0)

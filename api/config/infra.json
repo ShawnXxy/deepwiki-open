@@ -1,0 +1,18 @@
+{
+  "managed_identity": {
+    "name": "mid-deepwiki-ea",
+    "client_id": "6e58add9-816c-4307-b9bd-bb7ce616d486"
+  },
+  "azure_openai": {
+    "endpoint": "https://aoai-orcas-je.openai.azure.com",
+    "api_version": "2024-12-01-preview",
+    "deployment": "o4-mini",
+    "temperature": 1.0
+  },
+  "azure_openai_embedding": {
+    "endpoint": "https://aoai-orcas-je.openai.azure.com",
+    "api_version": "2024-12-01-preview",
+    "deployment": "text-embedding-3-large",
+    "dimensions": 3072
+  }
+}
