@@ -13,7 +13,7 @@ yarn-error.log
 .next
 out
 
-# Python cache files (but keep api/ directory)
+# Python cache files (but keep backend/ directory)
 __pycache__/
 *.py[cod]
 *$py.class
@@ -34,9 +34,9 @@ var/
 *.egg-info/
 .installed.cfg
 *.egg
-# Keep api/ directory but exclude cache
-api/__pycache__/
-api/*.pyc
+# Keep backend/ directory but exclude cache
+backend/__pycache__/
+backend/*.pyc
 
 # Environment variables
 # .env is now allowed to be included in the build
@@ -55,6 +55,6 @@ docker-compose.yml
 *.pem
 README.md
 LICENSE
-screenshots/
+img/screenshots/
 *.md
-!api/README.md
+!backend/README.md

@@ -12,11 +12,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from api.config import get_model_config, configs, get_azure_deployment_name
-from api.data_pipeline import count_tokens, get_file_content
-from api.azureai_client import AzureAIClient
-from api.rag import RAG
-from api.prompts import (
+from backend.config import get_model_config, configs, get_azure_deployment_name
+from backend.data_pipeline import count_tokens, get_file_content
+from backend.azureai_client import AzureAIClient
+from backend.rag import RAG
+from backend.prompts import (
     DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
     DEEP_RESEARCH_FINAL_ITERATION_PROMPT,
     DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT,
@@ -24,7 +24,7 @@ from api.prompts import (
 )
 
 # Configure logging
-from api.logging_config import setup_logging
+from backend.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)

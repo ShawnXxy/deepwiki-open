@@ -11,17 +11,17 @@ from adalflow.core.types import ModelType
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from api.config import (
+from backend.config import (
     get_model_config,
     configs,
     get_azure_deployment_name,
 )
-from api.data_pipeline import count_tokens, get_file_content
-from api.azureai_client import AzureAIClient
-from api.rag import RAG
+from backend.data_pipeline import count_tokens, get_file_content
+from backend.azureai_client import AzureAIClient
+from backend.rag import RAG
 
 # Configure logging
-from api.logging_config import setup_logging
+from backend.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)

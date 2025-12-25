@@ -30,8 +30,8 @@ def setup_logging(format: str = None, log_prefix: str = "backend"):
 
     Log files are named as {prefix}-yymmdd.log and rotate daily at midnight.
     """
-    # Determine log directory
-    base_dir = Path(__file__).parent
+    # Determine log directory at project root
+    base_dir = Path(__file__).parent.parent  # Go up from backend to project root
     log_dir = base_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     
@@ -103,8 +103,8 @@ def get_frontend_logger():
         _frontend_logger.setLevel(logging.DEBUG)
         _frontend_logger.propagate = False  # Don't propagate to root logger
         
-        # Setup file handler for frontend logs
-        base_dir = Path(__file__).parent
+        # Setup file handler for frontend logs at project root
+        base_dir = Path(__file__).parent.parent  # Go up from backend to project root
         log_dir = base_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         

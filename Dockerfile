@@ -16,16 +16,16 @@ COPY --from=node_deps /app/node_modules ./node_modules
 # Copy only necessary files for Next.js build
 COPY package.json package-lock.json next.config.ts tsconfig.json tailwind.config.js postcss.config.mjs ./
 COPY src/ ./src/
-COPY public/ ./public/
+COPY img/public/ ./public/
 # Increase Node.js memory limit for build and disable telemetry
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN NODE_ENV=production npm run build
 
 FROM python:3.11-slim AS py_deps
-WORKDIR /api
-COPY api/pyproject.toml .
-COPY api/poetry.lock .
+WORKDIR /backend
+COPY backend/pyproject.toml .
+COPY backend/poetry.lock .
 RUN python -m pip install poetry==2.0.1 --no-cache-dir && \
     poetry config virtualenvs.create true --local && \
     poetry config virtualenvs.in-project true --local && \
@@ -68,8 +68,8 @@ RUN if [ -n "${CUSTOM_CERT_DIR}" ]; then \
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Copy Python dependencies
-COPY --from=py_deps /api/.venv /opt/venv
-COPY api/ ./api/
+COPY --from=py_deps /backend/.venv /opt/venv
+COPY backend/ ./backend/
 
 # Copy Node app
 COPY --from=node_builder /app/public ./public
@@ -119,7 +119,7 @@ else\n\
 fi\n\
 \n\
 # Start the API server in the background with the configured port\n\
-python -m api.main --port ${PORT:-8001} &\n\
+python -m backend.main --port ${PORT:-8001} &\n\
 PORT=3000 HOSTNAME=0.0.0.0 node server.js &\n\
 wait -n\n\
 exit $?' > /app/start.sh && chmod +x /app/start.sh
@@ -148,7 +148,7 @@ ENV SERVER_BASE_URL=http://localhost:${PORT:-8001}
 #   OPENAI_BASE_URL - Custom OpenAI API endpoint
 # Configuration:
 #   LOG_LEVEL - Logging level (default: INFO)
-#   LOG_FILE_PATH - Log file path (default: api/logs/application.log)
+#   LOG_FILE_PATH - Log file path (default: logs/application.log)
 #   DEEPWIKI_CONFIG_DIR - Custom config directory path
 
 # Create empty .env file (will be overridden if one exists at runtime)
