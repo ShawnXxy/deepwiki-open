@@ -143,7 +143,7 @@ class ModelConfig(BaseModel):
 class AuthorizationConfig(BaseModel):
     code: str = Field(..., description="Authorization code")
 
-from api.config import configs, WIKI_AUTH_MODE, WIKI_AUTH_CODE
+from api.config import configs, WIKI_AUTH_MODE, WIKI_AUTH_CODE, get_azure_openai_config
 
 @app.get("/lang/config")
 async def get_lang_config():
@@ -168,43 +168,31 @@ async def get_model_config():
     """
     Get available model providers and their models.
 
-    This endpoint returns the configuration of available model providers and their
-    respective models that can be used throughout the application.
+    This endpoint returns the configuration of Azure OpenAI provider
+    with deployment info from infra.json.
 
     Returns:
-        ModelConfig: A configuration object containing providers and their models
+        ModelConfig: A configuration object containing Azure provider and model
     """
     try:
         logger.info("Fetching model configurations")
 
-        # Create providers from the config file
-        providers = []
-        default_provider = configs.get("default_provider", "azure")
+        # Get deployment name from infra.json
+        azure_config = get_azure_openai_config()
+        deployment = azure_config.get("deployment", "o4-mini")
 
-        # Add provider configuration based on config.py
-        for provider_id, provider_config in configs["providers"].items():
-            models = []
-            # Add models from config
-            for model_id in provider_config["models"].keys():
-                # Get a more user-friendly display name if possible
-                models.append(Model(id=model_id, name=model_id))
-
-            # Add provider with its models
-            providers.append(
+        # Return Azure-only configuration
+        return ModelConfig(
+            providers=[
                 Provider(
-                    id=provider_id,
-                    name=f"{provider_id.capitalize()}",
-                    supportsCustomModel=provider_config.get("supportsCustomModel", False),
-                    models=models
+                    id="azure",
+                    name="Azure OpenAI",
+                    supportsCustomModel=False,
+                    models=[Model(id=deployment, name=deployment)]
                 )
-            )
-
-        # Create and return the full configuration
-        config = ModelConfig(
-            providers=providers,
-            defaultProvider=default_provider
+            ],
+            defaultProvider="azure"
         )
-        return config
 
     except Exception as e:
         logger.error(f"Error creating model configuration: {str(e)}")
@@ -214,11 +202,8 @@ async def get_model_config():
                 Provider(
                     id="azure",
                     name="Azure OpenAI",
-                    supportsCustomModel=True,
-                    models=[
-                        Model(id="gpt-4.1", name="gpt-4.1"),
-                        Model(id="gpt-4o", name="gpt-4o"),
-                    ]
+                    supportsCustomModel=False,
+                    models=[Model(id="o4-mini", name="o4-mini")]
                 )
             ],
             defaultProvider="azure"

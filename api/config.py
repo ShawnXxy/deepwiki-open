@@ -1,6 +1,7 @@
 """
 Configuration module for DeepWiki.
 This module handles loading and managing configuration for Azure OpenAI services.
+All configuration is read from infra.json - no .env file needed.
 """
 
 import os
@@ -8,114 +9,149 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import List, Union, Dict, Any
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
+from typing import List, Union, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
 # Import Azure AI client
 from api.azureai_client import AzureAIClient
 
-# Azure OpenAI environment variables
-AZURE_OPENAI_API_KEY = os.environ.get('AZURE_OPENAI_API_KEY')
-AZURE_OPENAI_ENDPOINT = os.environ.get('AZURE_OPENAI_ENDPOINT')
-AZURE_OPENAI_VERSION = os.environ.get('AZURE_OPENAI_VERSION')
-AZURE_OPENAI_DEPLOYMENT = os.environ.get('AZURE_OPENAI_DEPLOYMENT')
-AZURE_OPENAI_EMBEDDING_ENDPOINT = os.environ.get('AZURE_OPENAI_EMBEDDING_ENDPOINT')
-AZURE_OPENAI_EMBEDDING_API_KEY = os.environ.get('AZURE_OPENAI_EMBEDDING_API_KEY')
-AZURE_OPENAI_EMBEDDING_VERSION = os.environ.get('AZURE_OPENAI_EMBEDDING_VERSION')
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.environ.get('AZURE_OPENAI_EMBEDDING_DEPLOYMENT')
+# Infrastructure configuration (loaded later via load_json_config)
+_infra_config: Optional[Dict[str, Any]] = None
 
-# Set Azure OpenAI environment variables
-if AZURE_OPENAI_API_KEY:
-    os.environ["AZURE_OPENAI_API_KEY"] = AZURE_OPENAI_API_KEY
-if AZURE_OPENAI_ENDPOINT:
-    os.environ["AZURE_OPENAI_ENDPOINT"] = AZURE_OPENAI_ENDPOINT
-if AZURE_OPENAI_VERSION:
-    os.environ["AZURE_OPENAI_VERSION"] = AZURE_OPENAI_VERSION
-if AZURE_OPENAI_EMBEDDING_ENDPOINT:
-    os.environ["AZURE_OPENAI_EMBEDDING_ENDPOINT"] = AZURE_OPENAI_EMBEDDING_ENDPOINT
-if AZURE_OPENAI_EMBEDDING_API_KEY:
-    os.environ["AZURE_OPENAI_EMBEDDING_API_KEY"] = AZURE_OPENAI_EMBEDDING_API_KEY
-if AZURE_OPENAI_EMBEDDING_VERSION:
-    os.environ["AZURE_OPENAI_EMBEDDING_VERSION"] = AZURE_OPENAI_EMBEDDING_VERSION
+
+def get_infra_config() -> Dict[str, Any]:
+    """
+    Get the infrastructure configuration from infra.json.
+    Loads the config on first access and caches it.
+    
+    Returns:
+        Dict containing infrastructure configuration
+    """
+    global _infra_config
+    if _infra_config is None:
+        _infra_config = load_json_config("infra.json")
+    return _infra_config
+
+
+def get_managed_identity_client_id() -> Optional[str]:
+    """
+    Get the managed identity client ID from infra.json.
+    
+    Returns:
+        The client ID string or None if not configured
+    """
+    infra = get_infra_config()
+    return infra.get("managed_identity", {}).get("client_id")
+
+
+def get_azure_openai_config() -> Dict[str, str]:
+    """
+    Get Azure OpenAI configuration for text generation from infra.json.
+    
+    Returns:
+        Dict containing endpoint, api_version, deployment
+    """
+    infra = get_infra_config()
+    azure_config = infra.get("azure_openai", {})
+    return {
+        "endpoint": azure_config.get("endpoint", ""),
+        "api_version": azure_config.get("api_version", "2024-12-01-preview"),
+        "deployment": azure_config.get("deployment", "")
+    }
+
+
+def get_azure_openai_embedding_config_from_infra() -> Dict[str, str]:
+    """
+    Get Azure OpenAI embedding configuration from infra.json.
+    
+    Returns:
+        Dict containing endpoint, api_version, deployment
+    """
+    infra = get_infra_config()
+    embedding_config = infra.get("azure_openai_embedding", {})
+    # Fall back to main azure_openai config if embedding-specific not set
+    azure_config = infra.get("azure_openai", {})
+    return {
+        "endpoint": embedding_config.get("endpoint") or azure_config.get("endpoint", ""),
+        "api_version": embedding_config.get("api_version") or azure_config.get("api_version", "2024-12-01-preview"),
+        "deployment": embedding_config.get("deployment", "text-embedding-3-large")
+    }
 
 
 def is_azure_openai_configured() -> bool:
     """
-    Check if Azure OpenAI is configured by checking for required environment variables
-    and Azure endpoint pattern (.openai.azure.com).
+    Check if Azure OpenAI is configured in infra.json.
     
     Returns:
         bool: True if Azure OpenAI is properly configured
     """
+    azure_config = get_azure_openai_config()
+    
     # Check for basic Azure OpenAI configuration
     has_basic_config = bool(
-        AZURE_OPENAI_API_KEY and 
-        AZURE_OPENAI_ENDPOINT and 
-        AZURE_OPENAI_VERSION
-    )
-    
-    # Check for embedding configuration (can use same endpoint or separate)
-    has_embedding_config = bool(
-        (AZURE_OPENAI_EMBEDDING_ENDPOINT or AZURE_OPENAI_ENDPOINT) and
-        (AZURE_OPENAI_EMBEDDING_API_KEY or AZURE_OPENAI_API_KEY) and
-        (AZURE_OPENAI_EMBEDDING_VERSION or AZURE_OPENAI_VERSION)
+        azure_config.get("endpoint") and 
+        azure_config.get("api_version")
     )
     
     # Check for Azure endpoint pattern
-    endpoint_to_check = AZURE_OPENAI_ENDPOINT or AZURE_OPENAI_EMBEDDING_ENDPOINT
-    has_azure_pattern = bool(endpoint_to_check and ".openai.azure.com" in endpoint_to_check)
+    endpoint = azure_config.get("endpoint", "")
+    has_azure_pattern = ".openai.azure.com" in endpoint
     
-    return has_basic_config and has_embedding_config and has_azure_pattern
+    # Check for MSI client ID in infra.json
+    has_msi_config = bool(get_managed_identity_client_id())
+    
+    return has_basic_config and has_azure_pattern and has_msi_config
 
 
-def get_azure_openai_text_config() -> Dict[str, str]:
+def get_azure_openai_text_config() -> Dict[str, Any]:
     """
-    Get Azure OpenAI configuration for text generation.
+    Get Azure OpenAI configuration for text generation from infra.json.
+    Uses MSI authentication.
     
     Returns:
-        Dict containing api_key, azure_endpoint, api_version
+        Dict containing azure_endpoint, api_version, and managed_identity_client_id
     """
+    azure_config = get_azure_openai_config()
     return {
-        "api_key": AZURE_OPENAI_API_KEY,
-        "azure_endpoint": AZURE_OPENAI_ENDPOINT,
-        "api_version": AZURE_OPENAI_VERSION or "2024-12-01-preview"
+        "azure_endpoint": azure_config.get("endpoint"),
+        "api_version": azure_config.get("api_version", "2024-12-01-preview"),
+        "managed_identity_client_id": get_managed_identity_client_id()
     }
 
 
-def get_azure_deployment_name(model_name: str) -> str:
+def get_azure_deployment_name(model_name: str = None) -> str:
     """
-    Get the Azure OpenAI deployment name for a given model name.
+    Get the Azure OpenAI deployment name.
     
-    The deployment name is taken directly from the model_name parameter,
-    which should come from the config file or user selection.
+    If model_name is provided, returns it directly.
+    Otherwise, returns the deployment from infra.json.
     
     Args:
-        model_name: The model name from config (e.g., 'gpt-4.1', 'o4-mini')
+        model_name: Optional model name override
     
     Returns:
         The deployment name to use for Azure OpenAI API calls
     """
-    # Use the model name from config/request as the deployment name
-    return model_name
+    if model_name:
+        return model_name
+    azure_config = get_azure_openai_config()
+    return azure_config.get("deployment", "")
 
 
-def get_azure_openai_embedding_config() -> Dict[str, str]:
+def get_azure_openai_embedding_config() -> Dict[str, Any]:
     """
-    Get Azure OpenAI configuration for embeddings.
-    Falls back to text generation config if embedding-specific config is not available.
+    Get Azure OpenAI configuration for embeddings from infra.json.
+    Uses MSI authentication.
     
     Returns:
-        Dict containing api_key, azure_endpoint, api_version
+        Dict containing azure_endpoint, api_version, and managed_identity_client_id
     """
+    embedding_config = get_azure_openai_embedding_config_from_infra()
     return {
-        "api_key": AZURE_OPENAI_EMBEDDING_API_KEY or AZURE_OPENAI_API_KEY,
-        "azure_endpoint": AZURE_OPENAI_EMBEDDING_ENDPOINT or AZURE_OPENAI_ENDPOINT,
-        "api_version": AZURE_OPENAI_EMBEDDING_VERSION or AZURE_OPENAI_VERSION or "2024-12-01-preview"
+        "azure_endpoint": embedding_config.get("endpoint"),
+        "api_version": embedding_config.get("api_version", "2024-12-01-preview"),
+        "managed_identity_client_id": get_managed_identity_client_id()
     }
 
 
@@ -189,10 +225,21 @@ def load_json_config(filename):
 
 
 def load_generator_config():
-    """Load generator model configuration for Azure OpenAI."""
+    """Load generator model configuration for Azure OpenAI.
+    Injects model and temperature from infra.json."""
     generator_config = load_json_config("generator.json")
+    
+    # Inject model and temperature from infra.json
+    azure_config = get_azure_openai_config()
+    if "generator" in generator_config:
+        if "model_kwargs" not in generator_config["generator"]:
+            generator_config["generator"]["model_kwargs"] = {}
+        # Set model and temperature from infra.json
+        generator_config["generator"]["model_kwargs"]["model"] = azure_config.get("deployment", "")
+        if "temperature" in azure_config:
+            generator_config["generator"]["model_kwargs"]["temperature"] = azure_config["temperature"]
 
-    # Add client class for Azure provider
+    # Add client class for Azure provider (legacy support)
     if "providers" in generator_config:
         for provider_id, provider_config in generator_config["providers"].items():
             if provider_id == "azure":
@@ -204,22 +251,34 @@ def load_generator_config():
 
 
 def load_embedder_config():
-    """Load embedder configuration for Azure OpenAI."""
-    # Load Azure-specific embedder config
-    azure_config_path = Path(__file__).parent / "config" / "embedder.azure.json"
-    if azure_config_path.exists():
-        logger.info("Loading Azure-specific embedder configuration")
-        embedder_config = load_json_config("embedder.azure.json")
-    else:
-        logger.info("Loading default embedder configuration")
-        embedder_config = load_json_config("embedder.json")
-
-    # Process client classes for Azure embedder
+    """Load embedder configuration for Azure OpenAI.
+    Injects model, dimensions, and initialize_kwargs from infra.json."""
+    embedder_config = load_json_config("embedder.json")
+    
+    # Inject model and dimensions from infra.json
+    embedding_config = get_azure_openai_embedding_config_from_infra()
+    
+    # Get initialize_kwargs for Azure OpenAI client
+    initialize_kwargs = get_azure_openai_embedding_config()
+    
+    # Process embedder configurations
     for key in ["embedder", "embedder_azure"]:
-        if key in embedder_config and "client_class" in embedder_config[key]:
-            class_name = embedder_config[key]["client_class"]
-            if class_name in CLIENT_CLASSES:
-                embedder_config[key]["model_client"] = CLIENT_CLASSES[class_name]
+        if key in embedder_config:
+            if "model_kwargs" not in embedder_config[key]:
+                embedder_config[key]["model_kwargs"] = {}
+            # Set model and dimensions from infra.json
+            embedder_config[key]["model_kwargs"]["model"] = embedding_config.get("deployment", "text-embedding-3-large")
+            if "dimensions" in embedding_config:
+                embedder_config[key]["model_kwargs"]["dimensions"] = embedding_config["dimensions"]
+            
+            # Add initialize_kwargs for Azure OpenAI client
+            embedder_config[key]["initialize_kwargs"] = initialize_kwargs
+            
+            # Process client classes
+            if "client_class" in embedder_config[key]:
+                class_name = embedder_config[key]["client_class"]
+                if class_name in CLIENT_CLASSES:
+                    embedder_config[key]["model_client"] = CLIENT_CLASSES[class_name]
 
     return embedder_config
 
@@ -351,9 +410,9 @@ if not is_azure_openai_configured():
 configs["default_provider"] = "azure"
 logger.info("Using Azure OpenAI as default provider")
 
-# Update provider configuration
+# Store generator config
 if generator_config:
-    configs["providers"] = generator_config.get("providers", {})
+    configs["generator"] = generator_config.get("generator", {})
 
 # Update embedder configuration for Azure
 if embedder_config:
@@ -365,12 +424,13 @@ if embedder_config:
     else:
         # Create default Azure OpenAI embedder configuration
         azure_config = get_azure_openai_embedding_config()
+        embedding_infra = get_azure_openai_embedding_config_from_infra()
         configs["embedder"] = {
             "client_class": "AzureAIClient",
             "model_client": AzureAIClient,
             "batch_size": 10,
             "model_kwargs": {
-                "model": (AZURE_OPENAI_EMBEDDING_DEPLOYMENT or "text-embedding-3-large"),
+                "model": embedding_infra.get("deployment", "text-embedding-3-large"),
                 "dimensions": 3072,
                 "encoding_format": "float"
             },
@@ -400,49 +460,29 @@ def get_model_config(provider=None, model=None):
 
     Parameters:
         provider (str): Model provider (ignored, always uses 'azure')
-        model (str): Model name, or None to use default model
+        model (str): Model name, or None to use default from infra.json
 
     Returns:
         dict: Configuration containing model_client, model and other parameters
     """
-    # Always use Azure provider
-    provider = "azure"
+    # Get Azure config from infra.json
+    azure_config = get_azure_openai_config()
     
-    if "providers" not in configs:
-        raise ValueError("Provider configuration not loaded")
-
-    provider_config = configs["providers"].get(provider)
-    if not provider_config:
-        raise ValueError("Azure provider configuration not found")
-
-    model_client = provider_config.get("model_client")
-    if not model_client:
-        raise ValueError("Model client not specified for Azure provider")
-
-    # If model not provided, use default model
+    # Get model from infra.json if not provided
     if not model:
-        model = "gpt-4.1"
-
-    # Get model parameters (if present)
-    model_params = {}
-    if model in provider_config.get("models", {}):
-        model_params = provider_config["models"][model]
-        logger.info(f"Found model '{model}' in Azure config with params: {model_params}")
-    else:
-        logger.warning(
-            f"Model '{model}' not found in Azure models. "
-            f"Available models: {list(provider_config.get('models', {}).keys())}"
-        )
-        default_model = provider_config.get("default_model")
-        if default_model and default_model in provider_config.get("models", {}):
-            model_params = provider_config["models"][default_model]
-            logger.info(f"Using default model '{default_model}' params: {model_params}")
+        model = azure_config.get("deployment", "o4-mini")
+    
+    # Get temperature from infra.json
+    temperature = azure_config.get("temperature", 1.0)
 
     # Prepare Azure configuration
     result = {
-        "model_client": model_client,
+        "model_client": AzureAIClient,
         "initialize_kwargs": get_azure_openai_text_config(),
-        "model_kwargs": {"model": model, **model_params}
+        "model_kwargs": {
+            "model": model,
+            "temperature": temperature
+        }
     }
 
     return result

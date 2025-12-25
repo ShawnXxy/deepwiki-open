@@ -334,23 +334,18 @@ class AzureAIClient(ModelClient):
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
         api_version: Optional[str] = None,
         azure_endpoint: Optional[str] = None,
-        credential: Optional[DefaultAzureCredential] = None,
+        managed_identity_client_id: Optional[str] = None,
         chat_completion_parser: Callable[[Completion], Any] = None,
         input_type: Literal["text", "messages"] = "text",
     ):
-        r"""It is recommended to set the API_KEY into the  environment variable instead of passing it as an argument.
-
-
-        Initializes the Azure OpenAI client with either API key or AAD token authentication.
+        r"""Initializes the Azure OpenAI client with Managed Identity (MSI) authentication.
 
         Args:
-            api_key: Azure OpenAI API key.
             api_version: Azure OpenAI API version.
             azure_endpoint: Azure OpenAI endpoint.
-            credential: Azure AD credential for token-based authentication.
+            managed_identity_client_id: The client ID of the managed identity to use.
             chat_completion_parser: Function to parse chat completions.
             input_type: Input format, either "text" or "messages".
 
@@ -359,10 +354,9 @@ class AzureAIClient(ModelClient):
 
         # added api_type azure for azure Ai
         self.api_type = "azure"
-        self._api_key = api_key
         self._apiversion = api_version
         self._azure_endpoint = azure_endpoint
-        self._credential = credential
+        self._managed_identity_client_id = managed_identity_client_id
         self.sync_client = self.init_sync_client()
         self.async_client = None  # only initialize if the async call is called
         self.chat_completion_parser = (
@@ -370,63 +364,55 @@ class AzureAIClient(ModelClient):
         )
         self._input_type = input_type
 
+    def _get_credential(self) -> DefaultAzureCredential:
+        """Get the Azure credential with the configured managed identity client ID."""
+        client_id = self._managed_identity_client_id
+        if client_id:
+            log.info(f"Using managed identity with client_id: {client_id}")
+            return DefaultAzureCredential(managed_identity_client_id=client_id)
+        else:
+            log.info("Using DefaultAzureCredential without specific client_id")
+            return DefaultAzureCredential()
+
     def init_sync_client(self):
-        api_key = self._api_key or os.getenv("AZURE_OPENAI_API_KEY")
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
-        # credential = self._credential or DefaultAzureCredential
+        
         if not azure_endpoint:
             raise ValueError("Environment variable AZURE_OPENAI_ENDPOINT must be set")
         if not api_version:
             raise ValueError("Environment variable AZURE_OPENAI_VERSION must be set")
 
-        if api_key:
-            return AzureOpenAI(
-                api_key=api_key, azure_endpoint=azure_endpoint, api_version=api_version
-            )
-        elif self._credential:
-            # credential = DefaultAzureCredential()
-            token_provider = get_bearer_token_provider(
-                DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
-            )
-            return AzureOpenAI(
-                azure_ad_token_provider=token_provider,
-                azure_endpoint=azure_endpoint,
-                api_version=api_version,
-            )
-        else:
-            raise ValueError(
-                "Environment variable AZURE_OPENAI_API_KEY must be set or credential must be provided"
-            )
+        # Use MSI authentication
+        credential = self._get_credential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        return AzureOpenAI(
+            azure_ad_token_provider=token_provider,
+            azure_endpoint=azure_endpoint,
+            api_version=api_version,
+        )
 
     def init_async_client(self):
-        api_key = self._api_key or os.getenv("AZURE_OPENAI_API_KEY")
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
-        # credential = self._credential or DefaultAzureCredential()
+        
         if not azure_endpoint:
             raise ValueError("Environment variable AZURE_OPENAI_ENDPOINT must be set")
         if not api_version:
             raise ValueError("Environment variable AZURE_OPENAI_VERSION must be set")
 
-        if api_key:
-            return AsyncAzureOpenAI(
-                api_key=api_key, azure_endpoint=azure_endpoint, api_version=api_version
-            )
-        elif self._credential:
-            # credential = DefaultAzureCredential()
-            token_provider = get_bearer_token_provider(
-                DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default"
-            )
-            return AsyncAzureOpenAI(
-                azure_ad_token_provider=token_provider,
-                azure_endpoint=azure_endpoint,
-                api_version=api_version,
-            )
-        else:
-            raise ValueError(
-                "Environment variable AZURE_OPENAI_API_KEY must be set or credential must be provided"
-            )
+        # Use MSI authentication
+        credential = self._get_credential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        return AsyncAzureOpenAI(
+            azure_ad_token_provider=token_provider,
+            azure_endpoint=azure_endpoint,
+            api_version=api_version,
+        )
 
     # def _parse_chat_completion(self, completion: ChatCompletion) -> "GeneratorOutput":
     #     # TODO: raw output it is better to save the whole completion as a source of truth instead of just the message

@@ -170,13 +170,10 @@ poetry.lock
   if (isLoading) {
     return (
       <div className="flex flex-col gap-2">
-        <div className="text-sm text-[var(--muted)]">Loading model configurations...</div>
+        <div className="text-sm text-[var(--muted)]">Loading configurations...</div>
       </div>
     );
   }
-
-  // Get Azure provider config (always Azure)
-  const azureProvider = modelConfig?.providers.find((p: Provider) => p.id === 'azure');
 
   return (
     <div className="flex flex-col gap-3">
@@ -185,99 +182,9 @@ poetry.lock
           <div className="text-sm text-red-500 mb-2">{error}</div>
         )}
 
-        {/* Provider Info (Azure OpenAI - read only) */}
-        <div>
-          <label className="block text-xs font-medium text-[var(--foreground)] mb-1.5">
-            {t.form?.modelProvider || 'Model Provider'}
-          </label>
-          <div className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-[var(--background)]/50 text-[var(--foreground)] border border-[var(--border-color)]">
-            Azure OpenAI
-          </div>
-        </div>
-
-        {/* Model Selection */}
-        <div>
-          <label 
-            htmlFor={isCustomModel ? "custom-model-input" : "model-dropdown"} 
-            className="block text-xs font-medium text-[var(--foreground)] mb-1.5"
-          >
-            {t.form?.modelSelection || 'Model Selection'}
-          </label>
-
-          {isCustomModel ? (
-            <input
-              id="custom-model-input"
-              type="text"
-              value={customModel}
-              onChange={(e) => {
-                setCustomModel(e.target.value);
-                setModel(e.target.value);
-              }}
-              placeholder={t.form?.customModelPlaceholder || 'Enter custom model/deployment name'}
-              className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
-            />
-          ) : (
-            <select
-              id="model-dropdown"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
-              disabled={isLoading || !azureProvider?.models?.length}
-            >
-              {azureProvider?.models.map((modelOption) => (
-                <option key={modelOption.id} value={modelOption.id}>
-                  {modelOption.name}
-                </option>
-              )) || <option value="">{t.form?.selectModel || 'Select Model'}</option>}
-            </select>
-          )}
-        </div>
-
-        {/* Custom model toggle */}
-        {azureProvider?.supportsCustomModel && (
-          <div className="mb-2">
-            <div className="flex items-center pb-1">
-              <div
-                className="relative flex items-center cursor-pointer"
-                onClick={() => {
-                  const newValue = !isCustomModel;
-                  setIsCustomModel(newValue);
-                  if (newValue) {
-                    setCustomModel(model);
-                  }
-                }}
-              >
-                <input
-                  id="use-custom-model"
-                  type="checkbox"
-                  checked={isCustomModel}
-                  onChange={() => {}}
-                  className="sr-only"
-                />
-                <div className={`w-10 h-5 rounded-full transition-colors ${isCustomModel ? 'bg-[var(--accent-primary)]' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
-                <div className={`absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white transition-transform transform ${isCustomModel ? 'translate-x-5' : ''}`}></div>
-              </div>
-              <label
-                htmlFor="use-custom-model"
-                className="ml-2 text-sm font-medium text-[var(--muted)] cursor-pointer"
-                onClick={(e) => {
-                  e.preventDefault();
-                  const newValue = !isCustomModel;
-                  setIsCustomModel(newValue);
-                  if (newValue) {
-                    setCustomModel(model);
-                  }
-                }}
-              >
-                {t.form?.useCustomModel || 'Use custom deployment'}
-              </label>
-            </div>
-          </div>
-        )}
-
         {/* File Filters Section */}
         {showFileFilters && (
-          <div className="mt-4">
+          <div>
             <button
               type="button"
               onClick={() => setIsFilterSectionOpen(!isFilterSectionOpen)}

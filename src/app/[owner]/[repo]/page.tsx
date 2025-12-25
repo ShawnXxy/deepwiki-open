@@ -396,38 +396,42 @@ export default function RepoWikiPage() {
         // Create the prompt content - simplified to avoid message dialogs
  const promptContent =
 `You are an expert technical writer and software architect.
-Your task is to generate a comprehensive and accurate technical wiki page in Markdown format about a specific feature, system, or module within a given software project.
+Your task is to generate a comprehensive and accurate technical wiki page in Markdown format about "${page.title}" within the given software project.
 
 You will be given:
-1. The "[WIKI_PAGE_TOPIC]" for the page you need to create.
-2. A list of "[RELEVANT_SOURCE_FILES]" from the project that you MUST use as the sole basis for the content. You have access to the full content of these files. You MUST use AT LEAST 5 relevant source files for comprehensive coverage - if fewer are provided, search for additional related files in the codebase.
+1. The wiki page topic: "${page.title}"
+2. A list of relevant source files from the project that you should use as the basis for the content.
+
+CRITICAL INSTRUCTIONS:
+- ALWAYS generate the wiki content based on the provided files, even if there are only 1-2 files.
+- NEVER refuse to generate content or ask for more files.
+- NEVER say "I'm sorry" or "I can't" - just generate the best wiki page you can with the available information.
+- Work with whatever source files are provided.
 
 CRITICAL STARTING INSTRUCTION:
-The very first thing on the page MUST be a \`<details>\` block listing ALL the \`[RELEVANT_SOURCE_FILES]\` you used to generate the content. There MUST be AT LEAST 5 source files listed - if fewer were provided, you MUST find additional related files to include.
+The very first thing on the page MUST be a \`<details>\` block listing ALL the relevant source files you used to generate the content.
 Format it exactly like this:
 <details>
 <summary>Relevant source files</summary>
 
-Remember, do not provide any acknowledgements, disclaimers, apologies, or any other preface before the \`<details>\` block. JUST START with the \`<details>\` block.
 The following files were used as context for generating this wiki page:
 
 ${filePaths.map(path => `- [${path}](${generateFileUrl(path, effectiveRepoInfo, detectCurrentBranch(effectiveRepoInfo, 'master'))})`).join('\n')}
-<!-- Add additional relevant files if fewer than 5 were provided -->
 </details>
 
 Immediately after the \`<details>\` block, the main title of the page should be a H1 Markdown heading: \`# ${page.title}\`.
 
-Based ONLY on the content of the \`[RELEVANT_SOURCE_FILES]\`:
+Based on the content of the relevant source files:
 
-1.  **Introduction:** Start with a concise introduction (1-2 paragraphs) explaining the purpose, scope, and high-level overview of "${page.title}" within the context of the overall project. If relevant, and if information is available in the provided files, link to other potential wiki pages using the format \`[Link Text](#page-anchor-or-id)\`.
+1.  **Introduction:** Start with a concise introduction (1-2 paragraphs) explaining the purpose, scope, and high-level overview of "${page.title}" within the context of the overall project.
 
 2.  **Detailed Sections:** Break down "${page.title}" into logical sections using H2 (\`##\`) and H3 (\`###\`) Markdown headings. For each section:
     *   Explain the architecture, components, data flow, or logic relevant to the section's focus, as evidenced in the source files.
     *   Identify key functions, classes, data structures, API endpoints, or configuration elements pertinent to that section.
 
 3.  **Mermaid Diagrams:**
-    *   EXTENSIVELY use Mermaid diagrams (e.g., \`flowchart TD\`, \`sequenceDiagram\`, \`classDiagram\`, \`erDiagram\`, \`graph TD\`) to visually represent architectures, flows, relationships, and schemas found in the source files.
-    *   Ensure diagrams are accurate and directly derived from information in the \`[RELEVANT_SOURCE_FILES]\`.
+    *   Use Mermaid diagrams (e.g., \`flowchart TD\`, \`sequenceDiagram\`, \`classDiagram\`, \`erDiagram\`, \`graph TD\`) to visually represent architectures, flows, relationships, and schemas found in the source files.
+    *   Ensure diagrams are accurate and directly derived from the source files.
     *   Provide a brief explanation before or after each diagram to give context.
     *   CRITICAL: All diagrams MUST follow strict vertical orientation:
        - Use "graph TD" (top-down) directive for flow diagrams
@@ -468,22 +472,20 @@ Based ONLY on the content of the \`[RELEVANT_SOURCE_FILES]\`:
         *   Configuration options, their types, and default values.
         *   Data model fields, types, constraints, and descriptions.
 
-5.  **Code Snippets (ENTIRELY OPTIONAL):**
-    *   Include short, relevant code snippets (e.g., Python, Java, JavaScript, SQL, JSON, YAML) directly from the \`[RELEVANT_SOURCE_FILES]\` to illustrate key implementation details, data structures, or configurations.
+5.  **Code Snippets (OPTIONAL):**
+    *   Include short, relevant code snippets (e.g., Python, Java, JavaScript, SQL, JSON, YAML) directly from the relevant source files to illustrate key implementation details, data structures, or configurations.
     *   Ensure snippets are well-formatted within Markdown code blocks with appropriate language identifiers.
 
-6.  **Source Citations (EXTREMELY IMPORTANT):**
-    *   For EVERY piece of significant information, explanation, diagram, table entry, or code snippet, you MUST cite the specific source file(s) and relevant line numbers from which the information was derived.
+6.  **Source Citations:**
+    *   When possible, cite the specific source file(s) from which the information was derived.
     *   Place citations at the end of the paragraph, under the diagram/table, or after the code snippet.
-    *   Use the exact format: \`Sources: [filename.ext:start_line-end_line]()\` for a range, or \`Sources: [filename.ext:line_number]()\` for a single line. Multiple files can be cited: \`Sources: [file1.ext:1-10](), [file2.ext:5](), [dir/file3.ext]()\` (if the whole file is relevant and line numbers are not applicable or too broad).
-    *   If an entire section is overwhelmingly based on one or two files, you can cite them under the section heading in addition to more specific citations within the section.
-    *   IMPORTANT: You MUST cite AT LEAST 5 different source files throughout the wiki page to ensure comprehensive coverage.
+    *   Use the format: \`Sources: [filename.ext]()\` or \`Sources: [filename.ext:line_number]()\`.
 
-7.  **Technical Accuracy:** All information must be derived SOLELY from the \`[RELEVANT_SOURCE_FILES]\`. Do not infer, invent, or use external knowledge about similar systems or common practices unless it's directly supported by the provided code. If information is not present in the provided files, do not include it or explicitly state its absence if crucial to the topic.
+7.  **Technical Accuracy:** Base all information on the provided source files. If information is limited, focus on what IS available rather than what's missing.
 
-8.  **Clarity and Conciseness:** Use clear, professional, and concise technical language suitable for other developers working on or learning about the project. Avoid unnecessary jargon, but use correct technical terms where appropriate.
+8.  **Clarity and Conciseness:** Use clear, professional, and concise technical language suitable for other developers working on or learning about the project.
 
-9.  **Conclusion/Summary:** End with a brief summary paragraph if appropriate for "${page.title}", reiterating the key aspects covered and their significance within the project.
+9.  **Conclusion/Summary:** End with a brief summary paragraph if appropriate for "${page.title}".
 
 IMPORTANT: Generate the content in ${language === 'en' ? 'English' :
             language === 'ja' ? 'Japanese (日本語)' :
@@ -497,10 +499,11 @@ IMPORTANT: Generate the content in ${language === 'en' ? 'English' :
             language === "ru" ? "Русский (Russian)" :
             'English'} language.
 
-Remember:
-- Ground every claim in the provided source files.
-- Prioritize accuracy and direct representation of the code's functionality and structure.
-- Structure the document logically for easy understanding by other developers.
+CRITICAL REMINDERS:
+- ALWAYS generate content - never refuse or ask for more files.
+- Work with whatever source files are provided, even if just one file.
+- Never apologize or say you cannot generate the content.
+- Focus on the information available, not what might be missing.
 `;
 
         // Prepare request body
