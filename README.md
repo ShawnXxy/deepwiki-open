@@ -76,12 +76,16 @@ Edit `backend/config/infra.json` with your Azure details:
 
 ```bash
 # Clone the repository
-git clone https://github.com/AsyncFuncAI/deepwiki-open.git
-cd deepwiki-open
 
-# Install Python dependencies (using Poetry)
-python -m pip install poetry==2.0.1
-poetry install -C backend
+# Optional: create virutal environment and activate it
+python -m venv .venv
+.venv\scripts\activate   
+
+# Install Poetry (if not already installed)
+pip install poetry
+
+# Install Python dependencies
+poetry install
 
 # Install JavaScript dependencies
 npm install
@@ -156,23 +160,33 @@ DeepWiki uses Azure OpenAI to:
 
 ```
 deepwiki/
+├── pyproject.toml        # Python dependencies (Poetry)
+├── poetry.lock           # Poetry lock file
+├── package.json          # Node.js dependencies
+├── docker-compose.yml    # Docker configuration
+│
 ├── backend/              # Backend API server
 │   ├── main.py           # API entry point
 │   ├── api.py            # FastAPI implementation
 │   ├── rag.py            # Retrieval Augmented Generation
 │   ├── data_pipeline.py  # Data processing utilities
 │   ├── azureai_client.py # Azure OpenAI client
-│   ├── config/           # Configuration files
-│   │   ├── generator.json    # Model configuration
-│   │   ├── embedder.json     # Embedding configuration
-│   │   └── infra.json        # Infrastructure & MSI configuration
-│   └── pyproject.toml    # Python dependencies (Poetry)
+│   └── config/           # Configuration files
+│       ├── generator.json    # Model configuration
+│       ├── embedder.json     # Embedding configuration
+│       └── infra.json        # Infrastructure & MSI configuration
 │
 ├── src/                  # Frontend Next.js app
 │   ├── app/              # Next.js app directory
 │   └── components/       # React components
 │
-└── docker-compose.yml    # Docker configuration
+├── img/                  # Images and screenshots
+│   ├── public/           # Next.js public assets
+│   └── screenshots/      # Documentation screenshots
+│
+└── logs/                 # Application logs
+    ├── backend-*.log     # Backend logs (daily rotation)
+    └── frontend-*.log    # Frontend logs (daily rotation)
 ```
 
 ## ⚙️ Configuration
@@ -240,31 +254,6 @@ Toggle "Deep Research" in the Ask interface for thorough analysis.
 
 ![DeepResearch Feature](img/screenshots/DeepResearch.png)
 *DeepResearch conducts multi-turn investigations*
-
-## ❓ Troubleshooting
-
-### Azure OpenAI Issues
-
-- **"Azure OpenAI API error"**: Verify your credentials (API key, endpoint, deployment name, version)
-- **"Model not found"**: Ensure your deployment names match in `.env` and Azure Portal
-- **"Rate limit exceeded"**: Check your Azure OpenAI quota and limits
-
-### Connection Problems
-
-- **"Cannot connect to API server"**: Ensure the API server is running on port 8001
-- **"CORS error"**: Try running both frontend and backend on the same machine
-
-### Generation Issues
-
-- **"Error generating wiki"**: For very large repositories, try a smaller one first
-- **"Could not fetch repository structure"**: For private repos, ensure valid access token
-- **"Diagram rendering error"**: The app will automatically try to fix broken diagrams
-
-### Common Solutions
-
-1. **Check logs**: Look at `logs/backend-*.log` for detailed error messages
-2. **Restart servers**: Sometimes a simple restart fixes most issues
-3. **Verify Azure setup**: Ensure models are deployed and accessible in Azure Portal
 
 ## 🤝 Contributing
 
