@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "DeepWiki-Open",
+    "appName": "Orcas Code Wiki for MS DaPCN Internal",
     "tagline": "AI 驅動的文件",
     "generateWiki": "產生 Wiki",
     "processing": "處理中...",
@@ -18,7 +18,7 @@
     "preparingDownload": "請稍候，我們正在準備您的下載..."
   },
   "home": {
-    "welcome": "歡迎使用 DeepWiki",
+    "welcome": "歡迎使用 Orcas Code Wiki",
     "welcomeTagline": "為程式碼儲存庫提供 AI 驅動的文件",
     "description": "只需一次點擊，即可從 GitHub、GitLab 或 Bitbucket 儲存庫產生全面的文件。",
     "quickStart": "快速開始",

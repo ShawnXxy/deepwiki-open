@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "DeepWiki-Open",
+    "appName": "Orcas Code Wiki for MS DaPCN Internal",
     "tagline": "Tài liệu hỗ trợ bởi AI",
     "generateWiki": "Tạo Wiki",
     "processing": "Đang xử lý...",
@@ -18,7 +18,7 @@
     "preparingDownload": "Đang tải! Vui lòng chờ..."
   },
   "home": {
-    "welcome": "Chào mừng đến với DeepWiki-Open",
+    "welcome": "Chào mừng đến với Orcas Code Wiki",
     "welcomeTagline": "Tài liệu hỗ trợ bởi AI cho các repository của bạn",
     "description": "Tạo tài liệu từ các repository GitHub, GitLab, hoặc Bitbucket chỉ với vài cú nhấp chuột.",
     "quickStart": "Bắt đầu nhanh",

@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "DeepWiki-Open",
+    "appName": "Orcas Code Wiki for MS DaPCN Internal",
     "tagline": "Documentação com IA",
     "generateWiki": "Gerar Wiki",
     "processing": "Processando...",
@@ -18,7 +18,7 @@
     "preparingDownload": "Aguarde enquanto preparamos seu download..."
   },
   "home": {
-    "welcome": "Bem-vindo ao DeepWiki-Open",
+    "welcome": "Bem-vindo ao Orcas Code Wiki",
     "welcomeTagline": "Documentação com IA para seus repositórios de código",
     "description": "Gere documentação completa a partir de repositórios GitHub, GitLab ou Bitbucket com apenas alguns cliques.",
     "quickStart": "Início Rápido",
