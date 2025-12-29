@@ -10,6 +10,7 @@ import ConfigurationModal from '@/components/ConfigurationModal';
 import ProcessedProjects from '@/components/ProcessedProjects';
 import { extractUrlPath, extractUrlDomain } from '@/utils/urlDecoder';
 import { useProcessedProjects } from '@/hooks/useProcessedProjects';
+import logger from '@/utils/logger';
 
 import { useLanguage } from '@/contexts/LanguageContext';
 
@@ -102,7 +103,7 @@ export default function Home() {
         }
       }
     } catch (error) {
-      console.error('Error loading config from localStorage:', error);
+      logger.error('Error loading config from localStorage', { error: String(error) });
     }
   };
 
@@ -166,7 +167,7 @@ export default function Home() {
         const data = await response.json();
         setAuthRequired(data.auth_required);
       } catch (err) {
-        console.error("Failed to fetch auth status:", err);
+        logger.error('Failed to fetch auth status', { error: String(err) });
         // Assuming auth is required if fetch fails to avoid blocking UI for safety
         setAuthRequired(true);
       } finally {
@@ -216,26 +217,48 @@ export default function Home() {
       
       try {
         const url = new URL(input);
+        const pathParts = url.pathname.split('/').filter(Boolean);
+        const gitIndex = pathParts.indexOf('_git');
+        
+        logger.debug('Parsing Azure DevOps URL', { 
+          input, 
+          hostname: url.hostname, 
+          pathname: url.pathname,
+          pathParts, 
+          gitIndex,
+          pathPartsLength: pathParts.length
+        });
         
         if (url.hostname === 'dev.azure.com') {
-          // Format: dev.azure.com/{organization}/{project}/_git/{repository}
-          const pathParts = url.pathname.split('/').filter(Boolean);
-          if (pathParts.length >= 4 && pathParts[2] === '_git') {
+          // Format variations:
+          // 1. dev.azure.com/{organization}/{project}/_git/{repository} (gitIndex = 2)
+          // 2. dev.azure.com/{organization}/_git/{repository} (gitIndex = 1, project = org or repo)
+          if (gitIndex >= 1 && pathParts.length > gitIndex + 1) {
             owner = pathParts[0]; // organization
-            repo = pathParts[3];  // repository
-            fullPath = `${pathParts[0]}/${pathParts[1]}/_git/${pathParts[3]}`;
+            repo = pathParts[gitIndex + 1];  // repository (after _git)
+            // project is right before _git, or same as org if gitIndex is 1
+            const project = gitIndex >= 2 ? pathParts[gitIndex - 1] : pathParts[0];
+            fullPath = `${owner}/${project}/_git/${repo}`;
+            logger.debug('dev.azure.com parsed', { owner, project, repo });
+          } else {
+            logger.error('dev.azure.com URL parsing failed', { gitIndex, pathPartsLength: pathParts.length, condition: `gitIndex >= 1 && pathParts.length > gitIndex + 1` });
           }
         } else if (url.hostname.includes('visualstudio.com')) {
           // Format: {organization}.visualstudio.com/{project}/_git/{repository}
-          const pathParts = url.pathname.split('/').filter(Boolean);
-          if (pathParts.length >= 3 && pathParts[1] === '_git') {
+          if (gitIndex >= 1 && pathParts.length > gitIndex + 1) {
             owner = url.hostname.split('.')[0]; // organization from subdomain
-            repo = pathParts[2]; // repository
-            fullPath = `${owner}/${pathParts[0]}/_git/${pathParts[2]}`;
+            const project = pathParts[gitIndex - 1]; // project is right before _git
+            repo = pathParts[gitIndex + 1]; // repository
+            fullPath = `${owner}/${project}/_git/${repo}`;
+            logger.debug('visualstudio.com parsed', { owner, project, repo });
+          } else {
+            logger.error('visualstudio.com URL parsing failed', { gitIndex, pathPartsLength: pathParts.length });
           }
         }
+        
+        logger.debug('Parsed Azure DevOps result', { owner, repo, fullPath, willReturnNull: !owner || !repo });
       } catch (error) {
-        console.error('Error parsing Azure DevOps URL:', error);
+        logger.error('Error parsing Azure DevOps URL', { error: String(error) });
         return null;
       }
     }
@@ -264,7 +287,7 @@ export default function Home() {
         }
       } else {
         // Unsupported URL formats
-        console.error('Unsupported URL format:', input);
+        logger.error('Unsupported URL format', { input });
         return null;
       }
     }
@@ -295,7 +318,7 @@ export default function Home() {
     const parsedRepo = parseRepositoryInput(repositoryInput);
 
     if (!parsedRepo) {
-      setError('Invalid repository format. Use "owner/repo", GitHub/GitLab/BitBucket URL, or a local folder path like "/path/to/folder" or "C:\\path\\to\\folder".');
+      setError('Invalid repository format. Please use an Azure DevOps URL like "https://dev.azure.com/org/project/_git/repo".');
       return;
     }
 
@@ -335,14 +358,14 @@ export default function Home() {
     const validation = await validateAuthCode();
     if(!validation) {
       setError(`Failed to validate the authorization code`);
-      console.error(`Failed to validate the authorization code`);
+      logger.error('Failed to validate the authorization code');
       setIsConfigModalOpen(false);
       return;
     }
 
     // Prevent multiple submissions
     if (isSubmitting) {
-      console.log('Form submission already in progress, ignoring duplicate click');
+      logger.debug('Form submission already in progress, ignoring duplicate click');
       return;
     }
 
@@ -368,7 +391,7 @@ export default function Home() {
         localStorage.setItem(REPO_CONFIG_CACHE_KEY, JSON.stringify(existingConfigs));
       }
     } catch (error) {
-      console.error('Error saving config to localStorage:', error);
+      logger.error('Error saving config to localStorage', { error: String(error) });
     }
 
     setIsSubmitting(true);
@@ -377,7 +400,7 @@ export default function Home() {
     const parsedRepo = parseRepositoryInput(repositoryInput);
 
     if (!parsedRepo) {
-      setError('Invalid repository format. Use "owner/repo", GitHub/GitLab/BitBucket URL, or a local folder path like "/path/to/folder" or "C:\\path\\to\\folder".');
+      setError('Invalid repository format. Please use an Azure DevOps URL like "https://dev.azure.com/org/project/_git/repo".');
       setIsSubmitting(false);
       return;
     }
@@ -389,8 +412,8 @@ export default function Home() {
     if (accessToken) {
       params.append('token', accessToken);
     }
-    // Always include the type parameter
-    params.append('type', (type == 'local' ? type : selectedPlatform) || 'github');
+    // Always include the type parameter - use detected type from URL parsing
+    params.append('type', type || 'azuredevops');
     // Add local path if it exists
     if (localPath) {
       params.append('local_path', encodeURIComponent(localPath));

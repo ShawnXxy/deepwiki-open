@@ -15,6 +15,14 @@ interface LogEntry {
   context?: Record<string, unknown>;
 }
 
+// Console method mapping
+const CONSOLE_METHODS: Record<LogLevel, 'debug' | 'log' | 'warn' | 'error'> = {
+  debug: 'debug',
+  info: 'log',
+  warn: 'warn',
+  error: 'error'
+};
+
 // Buffer for batching logs
 const logBuffer: LogEntry[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -25,10 +33,11 @@ const MAX_BUFFER_SIZE = 50;
 let backendLoggingAvailable = true;
 
 /**
- * Get the API base URL for logging
+ * Log entry to browser console
  */
-function getApiUrl(): string {
-  return getServerBaseUrl();
+function logToConsole(entry: LogEntry): void {
+  const method = CONSOLE_METHODS[entry.level];
+  console[method](`[${entry.level.toUpperCase()}]`, entry.message, entry.context || '');
 }
 
 /**
@@ -41,22 +50,13 @@ async function flushLogs(): Promise<void> {
   logBuffer.length = 0;
   
   if (!backendLoggingAvailable) {
-    // Fall back to console
-    logsToSend.forEach(entry => {
-      const consoleMethod = entry.level === 'warn' ? 'warn' : 
-                           entry.level === 'error' ? 'error' : 
-                           entry.level === 'debug' ? 'debug' : 'log';
-      console[consoleMethod](`[${entry.level.toUpperCase()}]`, entry.message, entry.context || '');
-    });
-    return;
+    return; // Already logged to console in addLog
   }
   
   try {
-    const response = await fetch(`${getApiUrl()}/log/batch`, {
+    const response = await fetch(`${getServerBaseUrl()}/log/batch`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ logs: logsToSend }),
     });
     
@@ -64,16 +64,8 @@ async function flushLogs(): Promise<void> {
       throw new Error(`HTTP ${response.status}`);
     }
   } catch {
-    // Backend logging failed, fall back to console
-    console.warn('[Logger] Backend logging unavailable, falling back to console');
+    console.warn('[Logger] Backend logging unavailable, falling back to console only');
     backendLoggingAvailable = false;
-    
-    logsToSend.forEach(entry => {
-      const consoleMethod = entry.level === 'warn' ? 'warn' : 
-                           entry.level === 'error' ? 'error' : 
-                           entry.level === 'debug' ? 'debug' : 'log';
-      console[consoleMethod](`[${entry.level.toUpperCase()}]`, entry.message, entry.context || '');
-    });
   }
 }
 
@@ -90,12 +82,18 @@ function scheduleFlush(): void {
 }
 
 /**
- * Add a log entry to the buffer
+ * Add a log entry - outputs to console immediately and buffers for backend
  */
 function addLog(level: LogLevel, message: string, context?: Record<string, unknown>): void {
-  logBuffer.push({ level, message, context });
+  const entry: LogEntry = { level, message, context };
   
-  // Immediately flush if buffer is full
+  // Always log to browser console for immediate visibility
+  logToConsole(entry);
+  
+  // Buffer for backend logging
+  logBuffer.push(entry);
+  
+  // Flush if buffer is full, otherwise schedule
   if (logBuffer.length >= MAX_BUFFER_SIZE) {
     if (flushTimer) {
       clearTimeout(flushTimer);
@@ -111,37 +109,12 @@ function addLog(level: LogLevel, message: string, context?: Record<string, unkno
  * Logger object with level-specific methods
  */
 const logger = {
-  /**
-   * Log a debug message
-   */
-  debug(message: string, context?: Record<string, unknown>): void {
-    addLog('debug', message, context);
-  },
+  debug: (message: string, context?: Record<string, unknown>) => addLog('debug', message, context),
+  info: (message: string, context?: Record<string, unknown>) => addLog('info', message, context),
+  warn: (message: string, context?: Record<string, unknown>) => addLog('warn', message, context),
+  error: (message: string, context?: Record<string, unknown>) => addLog('error', message, context),
 
-  /**
-   * Log an info message
-   */
-  info(message: string, context?: Record<string, unknown>): void {
-    addLog('info', message, context);
-  },
-
-  /**
-   * Log a warning message
-   */
-  warn(message: string, context?: Record<string, unknown>): void {
-    addLog('warn', message, context);
-  },
-
-  /**
-   * Log an error message
-   */
-  error(message: string, context?: Record<string, unknown>): void {
-    addLog('error', message, context);
-  },
-
-  /**
-   * Force flush all buffered logs immediately
-   */
+  /** Force flush all buffered logs immediately */
   async flush(): Promise<void> {
     if (flushTimer) {
       clearTimeout(flushTimer);
@@ -150,32 +123,21 @@ const logger = {
     await flushLogs();
   },
 
-  /**
-   * Check if backend logging is available
-   */
-  isBackendAvailable(): boolean {
-    return backendLoggingAvailable;
-  },
+  /** Check if backend logging is available */
+  isBackendAvailable: () => backendLoggingAvailable,
 
-  /**
-   * Reset backend availability (e.g., after reconnection)
-   */
-  resetBackendAvailability(): void {
-    backendLoggingAvailable = true;
-  }
+  /** Reset backend availability (e.g., after reconnection) */
+  resetBackendAvailability: () => { backendLoggingAvailable = true; }
 };
 
-// Flush logs before page unload
+// Flush logs before page unload using sendBeacon for reliable delivery
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
-    // Synchronous flush attempt
     if (logBuffer.length > 0) {
-      const logsToSend = [...logBuffer];
-      // Use sendBeacon for reliable delivery on page unload
       try {
         navigator.sendBeacon(
-          `${getApiUrl()}/log/batch`,
-          JSON.stringify({ logs: logsToSend })
+          `${getServerBaseUrl()}/log/batch`,
+          JSON.stringify({ logs: [...logBuffer] })
         );
       } catch {
         // Ignore errors during unload

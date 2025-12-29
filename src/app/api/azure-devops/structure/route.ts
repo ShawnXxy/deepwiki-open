@@ -30,27 +30,35 @@ export async function POST(request: NextRequest) {
 
     try {
       const url = new URL(repo_url);
+      const pathParts = url.pathname.split('/').filter(Boolean);
+      const gitIndex = pathParts.indexOf('_git');
+      
+      console.log('[AzureDevOps API] Parsing URL:', { repo_url, hostname: url.hostname, pathParts, gitIndex });
       
       if (url.hostname === 'dev.azure.com') {
-        // Format: dev.azure.com/{organization}/{project}/_git/{repository}
-        const pathParts = url.pathname.split('/').filter(Boolean);
-        if (pathParts.length >= 4 && pathParts[2] === '_git') {
+        // Format variations:
+        // 1. dev.azure.com/{organization}/{project}/_git/{repository} (gitIndex = 2)
+        // 2. dev.azure.com/{organization}/_git/{repository} (gitIndex = 1)
+        if (gitIndex >= 1 && pathParts.length > gitIndex + 1) {
           organization = pathParts[0];
-          project = pathParts[1];
-          repository = pathParts[3];
+          repository = pathParts[gitIndex + 1];
+          // project is right before _git, or same as org if gitIndex is 1
+          project = gitIndex >= 2 ? pathParts[gitIndex - 1] : pathParts[0];
+          console.log('[AzureDevOps API] dev.azure.com parsed:', { organization, project, repository });
         }
       } else if (url.hostname.includes('visualstudio.com')) {
         // Format: {organization}.visualstudio.com/{project}/_git/{repository}
-        const pathParts = url.pathname.split('/').filter(Boolean);
-        if (pathParts.length >= 3 && pathParts[1] === '_git') {
+        if (gitIndex >= 1 && pathParts.length > gitIndex + 1) {
           organization = url.hostname.split('.')[0];
-          project = pathParts[0];
-          repository = pathParts[2];
+          repository = pathParts[gitIndex + 1];
+          project = pathParts[gitIndex - 1];
+          console.log('[AzureDevOps API] visualstudio.com parsed:', { organization, project, repository });
         }
       } else {
         throw new Error('Invalid Azure DevOps URL format');
       }
-    } catch {
+    } catch (parseError) {
+      console.error('[AzureDevOps API] URL parsing error:', parseError);
       return NextResponse.json(
         { error: 'Invalid Azure DevOps URL format' },
         { status: 400 }
