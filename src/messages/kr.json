@@ -1,6 +1,6 @@
 {
     "common": {
-      "appName": "DeepWiki-Open",
+      "appName": "Orcas CodeWiki",
       "tagline": "AI 기반 문서화",
       "generateWiki": "위키 생성",
       "processing": "처리 중...",
@@ -18,7 +18,7 @@
       "preparingDownload": "다운로드를 준비 중입니다. 잠시만 기다려 주세요..."
     },
     "home": {
-      "welcome": "DeepWiki-Open에 오신 것을 환영합니다",
+      "welcome": "Orcas CodeWiki에 오신 것을 환영합니다",
       "welcomeTagline": "코드 저장소를 위한 AI 기반 문서화",
       "description": "GitHub, GitLab 또는 Bitbucket 저장소에서 클릭 한 번으로 종합 문서를 생성하세요.",
       "quickStart": "빠른 시작",
@@ -84,7 +84,7 @@
       "authorizationRequired": "Wiki 생성에는 인증코드가 필요합니다"
     },
     "footer": {
-      "copyright": "DeepWiki - 코드 저장소를 위한 AI 기반 문서화"
+      "copyright": "Orcas CodeWiki - ADO의 DaPCN 저장소를 위한 AI 기반 문서화"
     },
     "ask": {
       "placeholder": "이 저장소에 대해 질문해 보세요...",

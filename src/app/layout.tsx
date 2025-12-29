@@ -25,8 +25,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Deepwiki Open Source | Sheing Ng",
-  description: "Created by Sheing Ng",
+  title: "Orcas CodeWiki",
+  description: "AI-powered documentation for your code repositories",
 };
 
 export default function RootLayout({

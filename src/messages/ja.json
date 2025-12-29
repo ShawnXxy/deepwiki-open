@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "DeepWiki-Open",
+    "appName": "Orcas CodeWiki",
     "tagline": "AI駆動のドキュメンテーション",
     "generateWiki": "Wikiを生成",
     "processing": "処理中...",
@@ -18,7 +18,7 @@
     "preparingDownload": "ダウンロードの準備中です..."
   },
   "home": {
-    "welcome": "DeepWikiへようこそ",
+    "welcome": "Orcas CodeWikiへようこそ",
     "welcomeTagline": "コードリポジトリのためのAI駆動ドキュメンテーション",
     "description": "GitHub、GitLab、またはBitbucketリポジトリから包括的なドキュメントを数クリックで生成します。",
     "quickStart": "クイックスタート",
@@ -84,7 +84,7 @@
     "authorizationRequired": "Wiki生成には認証コードが必要です"
   },
   "footer": {
-    "copyright": "DeepWiki - コードリポジトリのためのAI駆動ドキュメンテーション"
+    "copyright": "Orcas CodeWiki - ADO上のDaPCNリポジトリ向けAI駆動ドキュメンテーション"
   },
   "ask": {
     "placeholder": "このリポジトリについて質問する...",

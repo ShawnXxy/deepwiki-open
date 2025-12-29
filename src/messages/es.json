@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "DeepWiki-Open",
+    "appName": "Orcas CodeWiki",
     "tagline": "Documentación impulsada por IA",
     "generateWiki": "Generar Wiki",
     "processing": "Procesando...",
@@ -18,7 +18,7 @@
     "preparingDownload": "Por favor espere mientras preparamos su descarga..."
   },
   "home": {
-    "welcome": "Bienvenido a DeepWiki",
+    "welcome": "Bienvenido a Orcas CodeWiki",
     "welcomeTagline": "Documentación impulsada por IA para repositorios de código",
     "description": "Genera documentación completa de repositorios GitHub, GitLab o Bitbucket con solo unos clics.",
     "quickStart": "Inicio Rápido",
@@ -84,7 +84,7 @@
     "authorizationRequired": "Generar Wiki requiere código de autorización"
   },
   "footer": {
-    "copyright": "DeepWiki - Documentación impulsada por IA para repositorios de código"
+    "copyright": "Orcas CodeWiki - Documentación impulsada por IA para repositorios DaPCN en ADO"
   },
   "ask": {
     "placeholder": "Haz una pregunta sobre este repositorio...",

@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "DeepWiki-Open",
+    "appName": "Orcas CodeWiki",
     "tagline": "Tài liệu hỗ trợ bởi AI",
     "generateWiki": "Tạo Wiki",
     "processing": "Đang xử lý...",
@@ -18,7 +18,7 @@
     "preparingDownload": "Đang tải! Vui lòng chờ..."
   },
   "home": {
-    "welcome": "Chào mừng đến với DeepWiki-Open",
+    "welcome": "Chào mừng đến với Orcas CodeWiki",
     "welcomeTagline": "Tài liệu hỗ trợ bởi AI cho các repository của bạn",
     "description": "Tạo tài liệu từ các repository GitHub, GitLab, hoặc Bitbucket chỉ với vài cú nhấp chuột.",
     "quickStart": "Bắt đầu nhanh",
@@ -84,7 +84,7 @@
     "authorizationRequired": "Mã xác thực cần thiết để tạo Wiki"
   },
   "footer": {
-    "copyright": "DeepWiki - Tài liệu hỗ trợ bởi AI cho repository"
+    "copyright": "Orcas CodeWiki - Tài liệu hỗ trợ bởi AI cho repository DaPCN trên ADO"
   },
   "ask": {
     "placeholder": "Đặt một câu hỏi về repository này...",

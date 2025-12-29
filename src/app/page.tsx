@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { FaWikipediaW, FaGithub, FaCoffee, FaTwitter } from 'react-icons/fa';
+import { FaWikipediaW } from 'react-icons/fa';
 import ThemeToggle from '@/components/theme-toggle';
 import Mermaid from '../components/Mermaid';
 import ConfigurationModal from '@/components/ConfigurationModal';
@@ -650,21 +650,7 @@ export default function Home() {
           className="flex flex-col sm:flex-row justify-between items-center gap-4 bg-[var(--card-bg)] rounded-lg p-4 border border-[var(--border-color)] shadow-custom">
           <p className="text-[var(--muted)] text-sm font-serif">{t('footer.copyright')}</p>
 
-          <div className="flex items-center gap-6">
-            <div className="flex items-center space-x-5">
-              <a href="https://github.com/AsyncFuncAI/deepwiki-open" target="_blank" rel="noopener noreferrer"
-                className="text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors">
-                <FaGithub className="text-xl" />
-              </a>
-              <a href="https://buymeacoffee.com/sheing" target="_blank" rel="noopener noreferrer"
-                className="text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors">
-                <FaCoffee className="text-xl" />
-              </a>
-              <a href="https://x.com/sashimikun_void" target="_blank" rel="noopener noreferrer"
-                className="text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors">
-                <FaTwitter className="text-xl" />
-              </a>
-            </div>
+          <div className="flex items-center">
             <ThemeToggle />
           </div>
         </div>
