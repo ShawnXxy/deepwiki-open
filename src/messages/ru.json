@@ -1,6 +1,6 @@
 {
   "common": {
-    "appName": "DeepWiki-Open",
+    "appName": "Orcas CodeWiki",
     "tagline": "Документация с поддержкой ИИ",
     "generateWiki": "Создать Wiki",
     "processing": "Обработка...",
@@ -18,7 +18,7 @@
     "preparingDownload": "Пожалуйста, подождите, идет подготовка загрузки..."
   },
   "home": {
-    "welcome": "Добро пожаловать в DeepWiki-Open",
+    "welcome": "Добро пожаловать в Orcas CodeWiki",
     "welcomeTagline": "Документация с поддержкой ИИ для ваших репозиториев кода",
     "description": "Создавайте подробную документацию из репозиториев GitHub, GitLab или Bitbucket всего за несколько кликов.",
     "quickStart": "Быстрый старт",
@@ -93,7 +93,7 @@
     "authorizationRequired": "Для генерации Wiki требуется авторизация."
   },
   "footer": {
-    "copyright": "DeepWiki — документация с поддержкой ИИ для репозиториев кода"
+    "copyright": "Orcas CodeWiki — документация с поддержкой ИИ для репозиториев DaPCN на ADO"
   },
   "ask": {
     "placeholder": "Задайте вопрос об этом репозитории...",
