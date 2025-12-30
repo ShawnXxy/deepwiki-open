@@ -19,5 +19,10 @@
     "enabled": true,
     "account_name": "amldwstorage",
     "container_name": "deepwiki-data"
+  },
+  "azure_application_insights": {
+    "enabled": true,
+    "name": "amldwappinsights",
+    "connection_string": "InstrumentationKey=5aa146ef-02ec-407e-87fb-19bf529e0eef;IngestionEndpoint=https://eastasia-0.in.applicationinsights.azure.com/;LiveEndpoint=https://eastasia.livediagnostics.monitor.azure.com/;ApplicationId=5b213001-0909-459b-a223-716a194a09bb"
   }
 }

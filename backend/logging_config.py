@@ -5,7 +5,11 @@ import time
 from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
+
+# Application Insights / OpenTelemetry imports (lazy loaded)
+_azure_monitor_configured = False
+_logger_provider = None
 
 
 class IgnoreLogChangeDetectedFilter(logging.Filter):
@@ -139,13 +143,200 @@ class ComponentLabelFilter(logging.Filter):
         return True
 
 
+def _get_app_insights_config() -> Optional[dict]:
+    """
+    Get Application Insights configuration from infra.json.
+    
+    Returns:
+        dict with 'enabled', 'name', 'connection_string' or None if not configured
+    """
+    try:
+        config_path = Path(__file__).parent / "config" / "infra.json"
+        if not config_path.exists():
+            return None
+        
+        import json
+        with open(config_path) as f:
+            infra = json.load(f)
+        
+        return infra.get("azure_application_insights")
+    except Exception:
+        return None
+
+
+def _get_managed_identity_client_id() -> Optional[str]:
+    """Get managed identity client ID from infra.json."""
+    try:
+        config_path = Path(__file__).parent / "config" / "infra.json"
+        if not config_path.exists():
+            return None
+        
+        import json
+        with open(config_path) as f:
+            infra = json.load(f)
+        
+        return infra.get("managed_identity", {}).get("client_id")
+    except Exception:
+        return None
+
+
+def setup_application_insights(
+    connection_string: str = None,
+    service_name: str = "deepwiki"
+) -> bool:
+    """
+    Configure Azure Application Insights for centralized logging.
+    
+    Uses OpenTelemetry with Azure Monitor exporter to send logs to 
+    Application Insights. Supports Managed Identity authentication.
+    
+    Args:
+        connection_string: Application Insights connection string.
+                          If None, reads from infra.json or environment.
+        service_name: Service name for telemetry identification.
+    
+    Returns:
+        bool: True if successfully configured, False otherwise.
+    """
+    global _azure_monitor_configured, _logger_provider
+    
+    if _azure_monitor_configured:
+        return True
+    
+    # Get connection string from config or environment
+    if not connection_string:
+        app_insights_config = _get_app_insights_config()
+        if app_insights_config:
+            if not app_insights_config.get("enabled", False):
+                logging.getLogger(__name__).debug(
+                    "Application Insights disabled in config"
+                )
+                return False
+            connection_string = app_insights_config.get("connection_string")
+        
+        # Fall back to environment variable
+        if not connection_string:
+            connection_string = os.environ.get(
+                "APPLICATIONINSIGHTS_CONNECTION_STRING"
+            )
+    
+    if not connection_string:
+        logging.getLogger(__name__).warning(
+            "Application Insights connection string not configured. "
+            "Set 'azure_application_insights.connection_string' in infra.json "
+            "or APPLICATIONINSIGHTS_CONNECTION_STRING environment variable."
+        )
+        return False
+    
+    try:
+        from opentelemetry._logs import set_logger_provider
+        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+        from opentelemetry.sdk.resources import Resource
+        from azure.monitor.opentelemetry.exporter import AzureMonitorLogExporter
+        from azure.identity import (
+            DefaultAzureCredential,
+            ManagedIdentityCredential,
+            AzureCliCredential,
+            ChainedTokenCredential
+        )
+        
+        # Create resource with service name
+        resource = Resource.create({
+            "service.name": service_name,
+            "service.namespace": "deepwiki"
+        })
+        
+        # Setup logger provider
+        _logger_provider = LoggerProvider(resource=resource)
+        set_logger_provider(_logger_provider)
+        
+        # Create credential chain:
+        # 1. Try Managed Identity (works in Azure)
+        # 2. Fall back to Azure CLI (works locally with 'az login')
+        # 3. Fall back to Default (environment, workload identity, etc.)
+        client_id = _get_managed_identity_client_id()
+        
+        credentials = []
+        if client_id:
+            credentials.append(ManagedIdentityCredential(client_id=client_id))
+        credentials.append(AzureCliCredential())
+        credentials.append(DefaultAzureCredential(
+            exclude_managed_identity_credential=True,
+            exclude_cli_credential=True
+        ))
+        
+        credential = ChainedTokenCredential(*credentials)
+        logging.getLogger(__name__).debug(
+            f"Using ChainedTokenCredential (MSI client_id: {client_id or 'not configured'})"
+        )
+        
+        # Create exporter with credential
+        exporter = AzureMonitorLogExporter(
+            connection_string=connection_string,
+            credential=credential
+        )
+        
+        # Add batch processor for efficient log export
+        _logger_provider.add_log_record_processor(
+            BatchLogRecordProcessor(exporter)
+        )
+        
+        # Create handler and attach to root logger
+        otel_handler = LoggingHandler(logger_provider=_logger_provider)
+        otel_handler.setLevel(logging.DEBUG)
+        
+        # Add to root logger so all logs go to App Insights
+        root_logger = logging.getLogger()
+        root_logger.addHandler(otel_handler)
+        
+        _azure_monitor_configured = True
+        logging.getLogger(__name__).info(
+            f"Application Insights configured for service: {service_name}"
+        )
+        return True
+        
+    except ImportError as e:
+        logging.getLogger(__name__).warning(
+            f"Application Insights packages not installed: {e}. "
+            "Run: pip install azure-monitor-opentelemetry"
+        )
+        return False
+    except Exception as e:
+        logging.getLogger(__name__).error(
+            f"Failed to configure Application Insights: {e}"
+        )
+        return False
+
+
+def flush_application_insights():
+    """Force flush all pending logs to Application Insights."""
+    global _logger_provider
+    if _logger_provider:
+        try:
+            _logger_provider.force_flush()
+        except Exception as e:
+            logging.getLogger(__name__).debug(
+                f"Error flushing Application Insights: {e}"
+            )
+
+
+def is_application_insights_enabled() -> bool:
+    """Check if Application Insights is configured and enabled."""
+    return _azure_monitor_configured
+
+
 def get_log_filename(prefix: str = "backend") -> str:
     """Generate log filename with date pattern: prefix-yymmdd.log"""
     date_str = datetime.now().strftime("%y%m%d")
     return f"{prefix}-{date_str}.log"
 
 
-def setup_logging(format: str = None, log_prefix: str = "backend"):
+def setup_logging(
+    format: str = None,
+    log_prefix: str = "backend",
+    enable_app_insights: bool = True
+):
     """
     Configure logging for the application with daily log rotation.
     
@@ -154,10 +345,12 @@ def setup_logging(format: str = None, log_prefix: str = "backend"):
     - Use deduplication to avoid repeating identical messages
     - Use rate limiting for extremely frequent messages
     - Label all messages with [BE] for backend identification
+    - Optionally send logs to Azure Application Insights
 
     Args:
         format: Custom log format string
         log_prefix: Prefix for log file name (default: "backend")
+        enable_app_insights: Whether to enable Application Insights (default: True)
 
     Environment variables:
         LOG_LEVEL: Minimum log level to capture (default: DEBUG for all details)
@@ -257,6 +450,14 @@ def setup_logging(format: str = None, log_prefix: str = "backend"):
         f"Logging configured: level={log_level_str}, "
         f"file={log_file_path}, dedup_window={dedup_window}s"
     )
+    
+    # Optionally enable Application Insights
+    if enable_app_insights:
+        app_insights_enabled = setup_application_insights(
+            service_name=log_prefix
+        )
+        if app_insights_enabled:
+            logger.info("Application Insights enabled for centralized logging")
     
     return log_file_path
 
