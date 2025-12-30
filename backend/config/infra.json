@@ -14,5 +14,10 @@
     "api_version": "2024-12-01-preview",
     "deployment": "text-embedding-3-large",
     "dimensions": 3072
+  },
+  "azure_blob_storage": {
+    "enabled": true,
+    "account_name": "amldwstorage",
+    "container_name": "deepwiki-data"
   }
 }

@@ -11,6 +11,7 @@ import asyncio
 
 # Configure logging
 from backend.logging_config import setup_logging, log_frontend_message
+from backend.blob_storage import get_blob_storage_client, is_blob_storage_configured
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -396,15 +397,59 @@ app.add_websocket_route("/ws/chat", handle_websocket_chat)
 # --- Wiki Cache Helper Functions ---
 
 WIKI_CACHE_DIR = os.path.join(get_adalflow_default_root_path(), "wikicache")
+WIKI_CACHE_BLOB_PREFIX = "wikicache"  # Blob path prefix
 os.makedirs(WIKI_CACHE_DIR, exist_ok=True)
 
+def get_wiki_cache_filename(owner: str, repo: str, repo_type: str, language: str) -> str:
+    """Generates the filename for a given wiki cache."""
+    return f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json"
+
 def get_wiki_cache_path(owner: str, repo: str, repo_type: str, language: str) -> str:
-    """Generates the file path for a given wiki cache."""
-    filename = f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json"
+    """Generates the local file path for a given wiki cache."""
+    filename = get_wiki_cache_filename(owner, repo, repo_type, language)
     return os.path.join(WIKI_CACHE_DIR, filename)
 
+def get_wiki_cache_blob_path(owner: str, repo: str, repo_type: str, language: str) -> str:
+    """Generates the blob path for a given wiki cache."""
+    filename = get_wiki_cache_filename(owner, repo, repo_type, language)
+    return f"{WIKI_CACHE_BLOB_PREFIX}/{filename}"
+
 async def read_wiki_cache(owner: str, repo: str, repo_type: str, language: str) -> Optional[WikiCacheData]:
-    """Reads wiki cache data from the file system."""
+    """
+    Reads wiki cache data from storage.
+    
+    When Azure Blob Storage is configured:
+        - Uses blob storage exclusively
+        - Raises ConnectionError on failure (no fallback)
+    When Azure Blob Storage is NOT configured:
+        - Uses local storage
+    """
+    # Try Azure Blob Storage when configured
+    if is_blob_storage_configured():
+        blob_path = get_wiki_cache_blob_path(owner, repo, repo_type, language)
+        try:
+            blob_client = get_blob_storage_client()
+            if not blob_client:
+                error_msg = "Azure Blob Storage is configured but failed to create client. Check MSI configuration."
+                logger.error(error_msg)
+                raise ConnectionError(error_msg)
+            
+            if blob_client.exists(blob_path):
+                logger.info(f"Reading wiki cache from Azure Blob Storage: {blob_path}")
+                content = blob_client.download_text(blob_path)
+                if content:
+                    data = json.loads(content)
+                    return WikiCacheData(**data)
+            logger.info(f"Wiki cache not found in blob storage: {blob_path}")
+            return None
+        except ConnectionError:
+            raise
+        except Exception as e:
+            error_msg = f"Failed to read wiki cache from Azure Blob Storage: {e}"
+            logger.error(error_msg)
+            raise ConnectionError(error_msg) from e
+    
+    # Local storage mode (blob not configured)
     cache_path = get_wiki_cache_path(owner, repo, repo_type, language)
     if os.path.exists(cache_path):
         try:
@@ -417,26 +462,61 @@ async def read_wiki_cache(owner: str, repo: str, repo_type: str, language: str) 
     return None
 
 async def save_wiki_cache(data: WikiCacheRequest) -> bool:
-    """Saves wiki cache data to the file system."""
-    cache_path = get_wiki_cache_path(data.repo.owner, data.repo.repo, data.repo.type, data.language)
-    logger.info(f"Attempting to save wiki cache. Path: {cache_path}")
+    """
+    Saves wiki cache data to storage.
+    
+    When Azure Blob Storage is configured:
+        - Uses blob storage exclusively
+        - Raises ConnectionError on failure (no fallback)
+    When Azure Blob Storage is NOT configured:
+        - Uses local storage
+    """
+    payload = WikiCacheData(
+        wiki_structure=data.wiki_structure,
+        generated_pages=data.generated_pages,
+        repo=data.repo,
+        provider=data.provider,
+        model=data.model
+    )
+    
+    # Log size of data to be cached
     try:
-        payload = WikiCacheData(
-            wiki_structure=data.wiki_structure,
-            generated_pages=data.generated_pages,
-            repo=data.repo,
-            provider=data.provider,
-            model=data.model
-        )
-        # Log size of data to be cached for debugging (avoid logging full content if large)
+        payload_json = payload.model_dump_json()
+        payload_size = len(payload_json.encode('utf-8'))
+        logger.info(f"Payload prepared for caching. Size: {payload_size} bytes.")
+    except Exception as ser_e:
+        logger.warning(f"Could not serialize payload for size logging: {ser_e}")
+    
+    # Try Azure Blob Storage when configured
+    if is_blob_storage_configured():
+        blob_path = get_wiki_cache_blob_path(data.repo.owner, data.repo.repo, data.repo.type, data.language)
         try:
-            payload_json = payload.model_dump_json()
-            payload_size = len(payload_json.encode('utf-8'))
-            logger.info(f"Payload prepared for caching. Size: {payload_size} bytes.")
-        except Exception as ser_e:
-            logger.warning(f"Could not serialize payload for size logging: {ser_e}")
-
-
+            blob_client = get_blob_storage_client()
+            if not blob_client:
+                error_msg = "Azure Blob Storage is configured but failed to create client. Check MSI configuration."
+                logger.error(error_msg)
+                raise ConnectionError(error_msg)
+            
+            logger.info(f"Saving wiki cache to Azure Blob Storage: {blob_path}")
+            content = json.dumps(payload.model_dump(), indent=2)
+            if blob_client.upload_text(blob_path, content):
+                logger.info(f"Wiki cache successfully saved to blob: {blob_path}")
+                return True
+            else:
+                error_msg = f"Failed to save wiki cache to Azure Blob Storage: {blob_path}"
+                logger.error(error_msg)
+                raise ConnectionError(error_msg)
+        except ConnectionError:
+            raise
+        except Exception as e:
+            error_msg = f"Failed to save wiki cache to Azure Blob Storage: {e}"
+            logger.error(error_msg)
+            raise ConnectionError(error_msg) from e
+    
+    # Local storage mode (blob not configured)
+    cache_path = get_wiki_cache_path(data.repo.owner, data.repo.repo, data.repo.type, data.language)
+    logger.info(f"Attempting to save wiki cache locally. Path: {cache_path}")
+    try:
         logger.info(f"Writing cache file to: {cache_path}")
         with open(cache_path, 'w', encoding='utf-8') as f:
             json.dump(payload.model_dump(), f, indent=2)
@@ -503,7 +583,8 @@ async def delete_wiki_cache(
     authorization_code: Optional[str] = Query(None, description="Authorization code")
 ):
     """
-    Deletes a specific wiki cache from the file system.
+    Deletes a specific wiki cache.
+    Uses Azure Blob Storage when configured, raises error on failure.
     """
     # Language validation
     supported_langs = configs["lang_config"]["supported_languages"]
@@ -516,19 +597,53 @@ async def delete_wiki_cache(
             raise HTTPException(status_code=401, detail="Authorization code is invalid")
 
     logger.info(f"Attempting to delete wiki cache for {owner}/{repo} ({repo_type}), lang: {language}")
-    cache_path = get_wiki_cache_path(owner, repo, repo_type, language)
 
-    if os.path.exists(cache_path):
-        try:
-            os.remove(cache_path)
-            logger.info(f"Successfully deleted wiki cache: {cache_path}")
-            return {"message": f"Wiki cache for {owner}/{repo} ({language}) deleted successfully"}
-        except Exception as e:
-            logger.error(f"Error deleting wiki cache {cache_path}: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to delete wiki cache: {str(e)}")
-    else:
-        logger.warning(f"Wiki cache not found, cannot delete: {cache_path}")
-        raise HTTPException(status_code=404, detail="Wiki cache not found")
+    try:
+        # Try Azure Blob Storage when configured
+        if is_blob_storage_configured():
+            blob_path = get_wiki_cache_blob_path(owner, repo, repo_type, language)
+            try:
+                blob_client = get_blob_storage_client()
+                if not blob_client:
+                    error_msg = "Azure Blob Storage is configured but failed to create client. Check MSI configuration."
+                    logger.error(error_msg)
+                    raise ConnectionError(error_msg)
+                
+                if blob_client.exists(blob_path):
+                    if blob_client.delete(blob_path):
+                        logger.info(f"Successfully deleted wiki cache from blob: {blob_path}")
+                        return {"message": f"Wiki cache for {owner}/{repo} ({language}) deleted successfully"}
+                    else:
+                        error_msg = f"Failed to delete wiki cache from blob: {blob_path}"
+                        logger.error(error_msg)
+                        raise ConnectionError(error_msg)
+                else:
+                    logger.warning(f"Wiki cache not found in blob storage: {blob_path}")
+                    raise HTTPException(status_code=404, detail="Wiki cache not found")
+            except ConnectionError:
+                raise
+            except HTTPException:
+                raise
+            except Exception as e:
+                error_msg = f"Failed to delete wiki cache from Azure Blob Storage: {e}"
+                logger.error(error_msg)
+                raise ConnectionError(error_msg) from e
+        
+        # Local storage mode (blob not configured)
+        cache_path = get_wiki_cache_path(owner, repo, repo_type, language)
+        if os.path.exists(cache_path):
+            try:
+                os.remove(cache_path)
+                logger.info(f"Successfully deleted wiki cache: {cache_path}")
+                return {"message": f"Wiki cache for {owner}/{repo} ({language}) deleted successfully"}
+            except Exception as e:
+                logger.error(f"Error deleting wiki cache {cache_path}: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to delete wiki cache: {str(e)}")
+        else:
+            logger.warning(f"Wiki cache not found, cannot delete: {cache_path}")
+            raise HTTPException(status_code=404, detail="Wiki cache not found")
+    except ConnectionError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 @app.get("/health")
 async def health_check():
@@ -611,58 +726,97 @@ async def root():
 @app.get("/api/processed_projects", response_model=List[ProcessedProjectEntry])
 async def get_processed_projects():
     """
-    Lists all processed projects found in the wiki cache directory.
+    Lists all processed projects found in the wiki cache.
+    Uses Azure Blob Storage when configured, raises error on failure.
     Projects are identified by files named like: deepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json
     """
     project_entries: List[ProcessedProjectEntry] = []
-    # WIKI_CACHE_DIR is already defined globally in the file
+
+    def parse_cache_filename(filename: str, last_modified_ms: int) -> Optional[ProcessedProjectEntry]:
+        """Parse a cache filename into a ProcessedProjectEntry."""
+        # Extract just the filename if it includes a path prefix
+        base_filename = os.path.basename(filename)
+        if not (base_filename.startswith("deepwiki_cache_") and base_filename.endswith(".json")):
+            return None
+        
+        parts = base_filename.replace("deepwiki_cache_", "").replace(".json", "").split('_')
+        # Expecting repo_type_owner_repo_language
+        # Example: deepwiki_cache_github_AsyncFuncAI_deepwiki-open_en.json
+        if len(parts) >= 4:
+            repo_type = parts[0]
+            owner = parts[1]
+            language = parts[-1]
+            repo = "_".join(parts[2:-1])
+            return ProcessedProjectEntry(
+                id=base_filename,
+                owner=owner,
+                repo=repo,
+                name=f"{owner}/{repo}",
+                repo_type=repo_type,
+                submittedAt=last_modified_ms,
+                language=language
+            )
+        return None
 
     try:
+        # Try Azure Blob Storage when configured
+        if is_blob_storage_configured():
+            try:
+                blob_client = get_blob_storage_client()
+                if not blob_client:
+                    error_msg = "Azure Blob Storage is configured but failed to create client. Check MSI configuration."
+                    logger.error(error_msg)
+                    raise ConnectionError(error_msg)
+                
+                logger.info(f"Scanning for project cache files in Azure Blob Storage: {WIKI_CACHE_BLOB_PREFIX}/")
+                blobs = blob_client.list_blobs_with_metadata(prefix=f"{WIKI_CACHE_BLOB_PREFIX}/")
+                
+                for blob_info in blobs:
+                    entry = parse_cache_filename(blob_info["name"], blob_info["last_modified"])
+                    if entry:
+                        project_entries.append(entry)
+                    else:
+                        logger.warning(f"Could not parse project details from blob: {blob_info['name']}")
+                
+                project_entries.sort(key=lambda p: p.submittedAt, reverse=True)
+                logger.info(f"Found {len(project_entries)} processed project entries from Azure Blob Storage.")
+                return project_entries
+            except ConnectionError:
+                raise
+            except Exception as e:
+                error_msg = f"Failed to list processed projects from Azure Blob Storage: {e}"
+                logger.error(error_msg, exc_info=True)
+                raise ConnectionError(error_msg) from e
+        
+        # Local storage mode (blob not configured)
         if not os.path.exists(WIKI_CACHE_DIR):
             logger.info(f"Cache directory {WIKI_CACHE_DIR} not found. Returning empty list.")
             return []
 
-        logger.info(f"Scanning for project cache files in: {WIKI_CACHE_DIR}")
-        filenames = await asyncio.to_thread(os.listdir, WIKI_CACHE_DIR) # Use asyncio.to_thread for os.listdir
+        logger.info(f"Scanning for project cache files locally in: {WIKI_CACHE_DIR}")
+        filenames = await asyncio.to_thread(os.listdir, WIKI_CACHE_DIR)
 
         for filename in filenames:
             if filename.startswith("deepwiki_cache_") and filename.endswith(".json"):
                 file_path = os.path.join(WIKI_CACHE_DIR, filename)
                 try:
-                    stats = await asyncio.to_thread(os.stat, file_path) # Use asyncio.to_thread for os.stat
-                    parts = filename.replace("deepwiki_cache_", "").replace(".json", "").split('_')
-
-                    # Expecting repo_type_owner_repo_language
-                    # Example: deepwiki_cache_github_AsyncFuncAI_deepwiki-open_en.json
-                    # parts = [github, AsyncFuncAI, deepwiki-open, en]
-                    if len(parts) >= 4:
-                        repo_type = parts[0]
-                        owner = parts[1]
-                        language = parts[-1] # language is the last part
-                        repo = "_".join(parts[2:-1]) # repo can contain underscores
-
-                        project_entries.append(
-                            ProcessedProjectEntry(
-                                id=filename,
-                                owner=owner,
-                                repo=repo,
-                                name=f"{owner}/{repo}",
-                                repo_type=repo_type,
-                                submittedAt=int(stats.st_mtime * 1000), # Convert to milliseconds
-                                language=language
-                            )
-                        )
+                    stats = await asyncio.to_thread(os.stat, file_path)
+                    last_modified_ms = int(stats.st_mtime * 1000)
+                    entry = parse_cache_filename(filename, last_modified_ms)
+                    if entry:
+                        project_entries.append(entry)
                     else:
                         logger.warning(f"Could not parse project details from filename: {filename}")
                 except Exception as e:
                     logger.error(f"Error processing file {file_path}: {e}")
-                    continue # Skip this file on error
+                    continue
 
-        # Sort by most recent first
         project_entries.sort(key=lambda p: p.submittedAt, reverse=True)
         logger.info(f"Found {len(project_entries)} processed project entries.")
         return project_entries
 
+    except ConnectionError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        logger.error(f"Error listing processed projects from {WIKI_CACHE_DIR}: {e}", exc_info=True)
+        logger.error(f"Error listing processed projects: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list processed projects from server cache.")
