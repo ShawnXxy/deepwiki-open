@@ -964,46 +964,42 @@ class DatabaseManager:
                 save_repo_dir = os.path.join(root_path, "repos", repo_name)
                 blob_repo_path = f"repos/{repo_name}/"  # Blob prefix for repo files
 
-                # Check if repo exists in blob storage first (when configured)
-                repo_from_blob = False
+                # Storage mode: blob OR local (no syncing between them)
                 if is_blob_storage_configured():
+                    # BLOB MODE: Check blob first, clone and upload to blob if not found
+                    logger.info(f"Using Azure Blob Storage mode")
                     try:
                         blob_client = get_blob_storage_client()
                         if blob_client and blob_client.directory_exists(blob_repo_path):
                             logger.info(f"Repository found in Azure Blob Storage: {blob_repo_path}")
-                            # Download from blob to local if not exists locally
+                            # Download from blob to local working directory
                             if not (os.path.exists(save_repo_dir) and os.listdir(save_repo_dir)):
                                 logger.info(f"Downloading repository from blob to {save_repo_dir}")
-                                if blob_client.download_directory(blob_repo_path, save_repo_dir):
-                                    repo_from_blob = True
-                                    logger.info(f"Repository downloaded from blob storage successfully")
-                                else:
-                                    logger.warning(f"Failed to download repository from blob, will clone fresh")
+                                if not blob_client.download_directory(blob_repo_path, save_repo_dir):
+                                    raise ConnectionError(f"Failed to download repository from blob storage")
+                                logger.info(f"Repository downloaded from blob storage successfully")
                             else:
-                                repo_from_blob = True
-                                logger.info(f"Repository exists locally, skipping blob download")
+                                logger.info(f"Repository already in local working directory")
+                        else:
+                            # Not in blob - clone fresh and upload to blob
+                            logger.info(f"Repository not found in blob storage, cloning fresh")
+                            download_repo(repo_url_or_path, save_repo_dir, repo_type, 
+                                        access_token, branch)
+                            logger.info(f"Uploading cloned repository to blob storage: {blob_repo_path}")
+                            if not blob_client.upload_directory(save_repo_dir, blob_repo_path):
+                                logger.warning(f"Failed to upload repository to blob storage")
+                    except ConnectionError:
+                        raise
                     except Exception as e:
-                        logger.warning(f"Error checking blob storage for repo: {e}, will try local/clone")
-
-                # Check if the repository directory already exists and is not empty
-                if not repo_from_blob and not (os.path.exists(save_repo_dir) and os.listdir(save_repo_dir)):
-                    # Only download if the repository doesn't exist or is empty
-                    download_repo(repo_url_or_path, save_repo_dir, repo_type, 
-                                access_token, branch)
-                    
-                    # Upload to blob storage after cloning (when configured)
-                    if is_blob_storage_configured():
-                        try:
-                            blob_client = get_blob_storage_client()
-                            if blob_client:
-                                logger.info(f"Uploading cloned repository to blob storage: {blob_repo_path}")
-                                blob_client.upload_directory(save_repo_dir, blob_repo_path)
-                        except Exception as e:
-                            logger.warning(f"Failed to upload repository to blob storage: {e}")
+                        raise ConnectionError(f"Failed to access Azure Blob Storage: {e}") from e
                 else:
-                    if not repo_from_blob:
-                        logger.info(f"Repository already exists at {save_repo_dir}. "
-                                  f"Using existing repository.")
+                    # LOCAL MODE: Check local only
+                    logger.info(f"Using local storage mode")
+                    if not (os.path.exists(save_repo_dir) and os.listdir(save_repo_dir)):
+                        download_repo(repo_url_or_path, save_repo_dir, repo_type, 
+                                    access_token, branch)
+                    else:
+                        logger.info(f"Repository already exists at {save_repo_dir}")
             else:  # local path
                 repo_name = os.path.basename(repo_url_or_path)
                 save_repo_dir = repo_url_or_path
@@ -1016,9 +1012,9 @@ class DatabaseManager:
             save_db_file = os.path.join(root_path, db_relative_path)
             blob_db_path = db_relative_path  # Same relative path for blob
             
-            logger.info(f"Database relative path: {db_relative_path}")
-            logger.info(f"Local database path: {save_db_file}")
-            logger.info(f"Blob database path: {blob_db_path}")
+            logger.debug(f"Database relative path: {db_relative_path}")
+            logger.debug(f"Local database path: {save_db_file}")
+            logger.debug(f"Blob database path: {blob_db_path}")
             
             os.makedirs(save_repo_dir, exist_ok=True)
             os.makedirs(os.path.dirname(save_db_file), exist_ok=True)
@@ -1031,7 +1027,7 @@ class DatabaseManager:
                 "repo_name": repo_name,  # Store for reference
             }
             self.repo_url_or_path = repo_url_or_path
-            logger.info(f"Repo paths: {self.repo_paths}")
+            logger.debug(f"Repo paths: {self.repo_paths}")
 
         except Exception as e:
             logger.error(f"Failed to create repository structure: {e}")

@@ -184,7 +184,7 @@ async def get_model_config():
         ModelConfig: A configuration object containing Azure provider and model
     """
     try:
-        logger.info("Fetching model configurations")
+        logger.debug("Fetching model configurations")
 
         # Get deployment name from infra.json
         azure_config = get_azure_openai_config()
@@ -768,7 +768,7 @@ async def get_processed_projects():
                     logger.error(error_msg)
                     raise ConnectionError(error_msg)
                 
-                logger.info(f"Scanning for project cache files in Azure Blob Storage: {WIKI_CACHE_BLOB_PREFIX}/")
+                logger.debug(f"Scanning for project cache files in Azure Blob Storage: {WIKI_CACHE_BLOB_PREFIX}/")
                 blobs = blob_client.list_blobs_with_metadata(prefix=f"{WIKI_CACHE_BLOB_PREFIX}/")
                 
                 for blob_info in blobs:
@@ -779,7 +779,7 @@ async def get_processed_projects():
                         logger.warning(f"Could not parse project details from blob: {blob_info['name']}")
                 
                 project_entries.sort(key=lambda p: p.submittedAt, reverse=True)
-                logger.info(f"Found {len(project_entries)} processed project entries from Azure Blob Storage.")
+                logger.debug(f"Found {len(project_entries)} processed project entries from Azure Blob Storage.")
                 return project_entries
             except ConnectionError:
                 raise

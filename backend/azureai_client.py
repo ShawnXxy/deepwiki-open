@@ -466,7 +466,7 @@ class AzureAIClient(ModelClient):
         Should be called in ``Embedder``.
         """
         try:
-            log.info(f"Parsing embedding response type: {type(response)}")
+            log.debug(f"Parsing embedding response type: {type(response)}")
             # Manual parsing to ensure compatibility with OpenAI v1+ response objects
             if hasattr(response, 'data'):
                 embeddings = []
@@ -489,7 +489,7 @@ class AzureAIClient(ModelClient):
                     # Wrap in Embedding dataclass as expected by adalflow
                     embeddings.append(Embedding(embedding=embedding_vector, index=embedding_index))
                 
-                log.info(f"Extracted {len(embeddings)} embeddings. First embedding length: {len(embeddings[0].embedding) if embeddings else 0}")
+                log.debug(f"Extracted {len(embeddings)} embeddings. First embedding length: {len(embeddings[0].embedding) if embeddings else 0}")
                 return EmbedderOutput(data=embeddings, error=None, raw_response=response)
             
             # Fallback to adalflow's parser if it's not a standard object
@@ -570,9 +570,9 @@ class AzureAIClient(ModelClient):
                             safe_kwargs[k] = v
                 else:
                     safe_kwargs[k] = v
-            log.info(f"api_kwargs: {safe_kwargs}")
+            log.debug(f"api_kwargs: {safe_kwargs}")
         except Exception as e:
-            log.info(f"api_kwargs logging failed: {str(e)}")
+            log.debug(f"api_kwargs logging failed: {str(e)}")
         
         if model_type == ModelType.EMBEDDER:
             try:

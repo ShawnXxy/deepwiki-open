@@ -41,12 +41,12 @@ class AzureBlobStorageClient:
         
         # Create credential with MSI
         if managed_identity_client_id:
-            logger.info(f"Using Managed Identity with client_id: {managed_identity_client_id[:8]}...")
+            logger.debug(f"Using Managed Identity with client_id: {managed_identity_client_id[:8]}...")
             self.credential = DefaultAzureCredential(
                 managed_identity_client_id=managed_identity_client_id
             )
         else:
-            logger.info("Using DefaultAzureCredential without explicit client_id")
+            logger.debug("Using DefaultAzureCredential without explicit client_id")
             self.credential = DefaultAzureCredential()
         
         # Create blob service client
@@ -58,7 +58,7 @@ class AzureBlobStorageClient:
         # Ensure container exists
         self._ensure_container_exists()
         
-        logger.info(f"Azure Blob Storage client initialized for account: {account_name}, container: {container_name}")
+        logger.debug(f"Azure Blob Storage client initialized for account: {account_name}, container: {container_name}")
 
     def _ensure_container_exists(self) -> None:
         """Create the container if it doesn't exist."""
@@ -93,7 +93,7 @@ class AzureBlobStorageClient:
             blob_client = self.get_container_client().get_blob_client(blob_name)
             blob_client.upload_blob(data, overwrite=True)
             
-            logger.info(f"Saved pickle to blob: {blob_name} ({len(data)} bytes)")
+            logger.debug(f"Saved pickle to blob: {blob_name} ({len(data)} bytes)")
             return True
         except Exception as e:
             logger.error(f"Failed to save pickle to blob {blob_name}: {e}")
@@ -120,7 +120,7 @@ class AzureBlobStorageClient:
             data = blob_client.download_blob().readall()
             obj = pickle.loads(data)
             
-            logger.info(f"Loaded pickle from blob: {blob_name} ({len(data)} bytes)")
+            logger.debug(f"Loaded pickle from blob: {blob_name} ({len(data)} bytes)")
             return obj
         except Exception as e:
             logger.error(f"Failed to load pickle from blob {blob_name}: {e}")
@@ -157,7 +157,7 @@ class AzureBlobStorageClient:
             blob_client = self.get_container_client().get_blob_client(blob_name)
             if blob_client.exists():
                 blob_client.delete_blob()
-                logger.info(f"Deleted blob: {blob_name}")
+                logger.debug(f"Deleted blob: {blob_name}")
             return True
         except Exception as e:
             logger.error(f"Failed to delete blob {blob_name}: {e}")
@@ -177,7 +177,7 @@ class AzureBlobStorageClient:
         try:
             blob_client = self.get_container_client().get_blob_client(blob_name)
             blob_client.upload_blob(content.encode('utf-8'), overwrite=True)
-            logger.info(f"Uploaded text to blob: {blob_name} ({len(content)} chars)")
+            logger.debug(f"Uploaded text to blob: {blob_name} ({len(content)} chars)")
             return True
         except Exception as e:
             logger.error(f"Failed to upload text to blob {blob_name}: {e}")
@@ -202,7 +202,7 @@ class AzureBlobStorageClient:
             
             data = blob_client.download_blob().readall()
             content = data.decode('utf-8')
-            logger.info(f"Downloaded text from blob: {blob_name} ({len(content)} chars)")
+            logger.debug(f"Downloaded text from blob: {blob_name} ({len(content)} chars)")
             return content
         except Exception as e:
             logger.error(f"Failed to download text from blob {blob_name}: {e}")
