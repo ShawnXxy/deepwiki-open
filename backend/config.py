@@ -210,7 +210,7 @@ def load_json_config(filename):
         else:
             config_path = Path(__file__).parent / "config" / filename
 
-        logger.info(f"Loading configuration from {config_path}")
+        logger.debug(f"Loading configuration from {config_path}")
 
         if not config_path.exists():
             logger.warning(f"Configuration file {config_path} does not exist")

@@ -78,6 +78,26 @@ def setup_logging(format: str = None, log_prefix: str = "backend"):
     # Apply logging configuration
     logging.basicConfig(level=log_level, handlers=[file_handler, console_handler], force=True)
 
+    # Suppress verbose third-party loggers
+    noisy_loggers = [
+        "azure.core.pipeline.policies.http_logging_policy",  # Azure HTTP request/response details
+        "azure.identity",  # Azure credential acquisition
+        "azure.identity._credentials",
+        "azure.identity._credentials.environment",
+        "azure.identity._credentials.managed_identity",
+        "azure.identity._credentials.chained",
+        "adalflow.tracing.mlflow_integration",  # MLflow not available warnings
+        "faiss.loader",  # FAISS loading attempts
+        "faiss",  # GPU Faiss warnings
+        "watchfiles.main",  # File change detection
+        "httpx",  # HTTP client request logs
+    ]
+    for logger_name in noisy_loggers:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+    
+    # Set Azure loggers to ERROR to hide most noise
+    logging.getLogger("azure").setLevel(logging.ERROR)
+
     # Log configuration info
     logger = logging.getLogger(__name__)
     logger.debug(
