@@ -21,6 +21,11 @@ interface ModelConfig {
   defaultProvider: string;
 }
 
+interface FiltersConfig {
+  excluded_dirs: string[];
+  excluded_files: string[];
+}
+
 interface ModelSelectorProps {
   provider: string;
   setProvider: (value: string) => void;
@@ -73,9 +78,30 @@ export default function UserSelector({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // State for file filters from backend
+  const [filtersConfig, setFiltersConfig] = useState<FiltersConfig | null>(null);
+
   // State for viewing default values
   const [showDefaultDirs, setShowDefaultDirs] = useState(false);
   const [showDefaultFiles, setShowDefaultFiles] = useState(false);
+
+  // Fetch file filters configuration from the backend
+  useEffect(() => {
+    const fetchFiltersConfig = async () => {
+      try {
+        const response = await fetch('/api/filters/config');
+        if (response.ok) {
+          const data = await response.json();
+          setFiltersConfig(data);
+        } else {
+          console.warn('Failed to fetch file filters config, all files will be embedded');
+        }
+      } catch (err) {
+        console.warn('Failed to fetch file filters configuration, all files will be embedded:', err);
+      }
+    };
+    fetchFiltersConfig();
+  }, []);
 
   // Fetch model configurations from the backend
   useEffect(() => {
@@ -108,23 +134,21 @@ export default function UserSelector({
       } catch (err) {
         console.error('Failed to fetch model configurations:', err);
         setError('Failed to load model configurations. Using default options.');
-        // Set fallback Azure configuration
+        // Set fallback Azure configuration (should match infra.json)
         setModelConfig({
           defaultProvider: 'azure',
           providers: [{
             id: 'azure',
             name: 'Azure OpenAI',
-            supportsCustomModel: true,
+            supportsCustomModel: false,
             models: [
-              { id: 'gpt-4.1', name: 'gpt-4.1' },
-              { id: 'gpt-4o', name: 'gpt-4o' },
-              { id: 'gpt-4', name: 'gpt-4' }
+              { id: 'o4-mini', name: 'o4-mini' }
             ]
           }]
         });
         if (!provider) {
           setProvider('azure');
-          setModel('gpt-4.1');
+          setModel('o4-mini');
         }
       } finally {
         setIsLoading(false);
@@ -134,37 +158,11 @@ export default function UserSelector({
     fetchModelConfig();
   }, [provider, setModel, setProvider]);
 
-  // Default excluded directories
-  const defaultExcludedDirs =
-`./.venv/
-./venv/
-./env/
-./node_modules/
-./.git/
-./__pycache__/
-./dist/
-./build/
-./docs/
-./.idea/
-./.vscode/
-./logs/
-./tmp/`;
+  // Default excluded directories (from backend, empty if not loaded)
+  const defaultExcludedDirs = filtersConfig?.excluded_dirs?.join('\n') || '';
 
-  // Default excluded files
-  const defaultExcludedFiles =
-`package-lock.json
-yarn.lock
-poetry.lock
-*.lock
-.DS_Store
-.env
-.gitignore
-*.min.js
-*.min.css
-*.map
-*.pyc
-*.exe
-*.dll`;
+  // Default excluded files (from backend, empty if not loaded)
+  const defaultExcludedFiles = filtersConfig?.excluded_files?.join('\n') || '';
 
   // Display loading state
   if (isLoading) {

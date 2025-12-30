@@ -164,6 +164,17 @@ export default function ConfigurationModal({
               </div>
             </div>
 
+            {/* Access token section - auto-detects platform from URL */}
+            <TokenInput
+              repositoryUrl={repositoryInput}
+              selectedPlatform={selectedPlatform}
+              setSelectedPlatform={setSelectedPlatform}
+              accessToken={accessToken}
+              setAccessToken={setAccessToken}
+              showTokenSection={showTokenSection}
+              onToggleTokenSection={() => setShowTokenSection(!showTokenSection)}
+            />
+
             {/* Language selection */}
             <div className="mb-4">
               <label htmlFor="language-select" className="block text-sm font-medium text-[var(--foreground)] mb-2">
@@ -259,17 +270,6 @@ export default function ConfigurationModal({
                 setIncludedFiles={setIncludedFiles}
               />
             </div>
-
-            {/* Access token section using TokenInput component */}
-            <TokenInput
-              selectedPlatform={selectedPlatform}
-              setSelectedPlatform={setSelectedPlatform}
-              accessToken={accessToken}
-              setAccessToken={setAccessToken}
-              showTokenSection={showTokenSection}
-              onToggleTokenSection={() => setShowTokenSection(!showTokenSection)}
-              allowPlatformChange={true}
-            />
 
             {/* Authorization Code Input */}
             {isAuthLoading && (

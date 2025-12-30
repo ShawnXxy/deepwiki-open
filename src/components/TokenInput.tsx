@@ -1,11 +1,14 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
+type Platform = 'github' | 'gitlab' | 'bitbucket' | 'azuredevops';
+
 interface TokenInputProps {
-  selectedPlatform: 'github' | 'gitlab' | 'bitbucket' | 'azuredevops';
-  setSelectedPlatform: (value: 'github' | 'gitlab' | 'bitbucket' | 'azuredevops') => void;
+  repositoryUrl?: string;
+  selectedPlatform: Platform;
+  setSelectedPlatform: (value: Platform) => void;
   accessToken: string;
   setAccessToken: (value: string) => void;
   showTokenSection?: boolean;
@@ -13,23 +16,60 @@ interface TokenInputProps {
   allowPlatformChange?: boolean;
 }
 
+/**
+ * Auto-detect platform from repository URL
+ */
+function detectPlatform(url: string): Platform | null {
+  if (!url) return null;
+  const lowerUrl = url.toLowerCase();
+  
+  if (lowerUrl.includes('dev.azure.com') || lowerUrl.includes('visualstudio.com')) {
+    return 'azuredevops';
+  }
+  if (lowerUrl.includes('github.com')) {
+    return 'github';
+  }
+  if (lowerUrl.includes('gitlab.com') || lowerUrl.includes('gitlab.')) {
+    return 'gitlab';
+  }
+  if (lowerUrl.includes('bitbucket.org') || lowerUrl.includes('bitbucket.')) {
+    return 'bitbucket';
+  }
+  return null;
+}
+
 export default function TokenInput({
+  repositoryUrl = '',
   selectedPlatform,
   setSelectedPlatform,
   accessToken,
   setAccessToken,
   showTokenSection = true,
   onToggleTokenSection,
-  allowPlatformChange = true
 }: TokenInputProps) {
   const { messages: t } = useLanguage();
+
+  // Auto-detect platform from URL
+  const detectedPlatform = useMemo(() => detectPlatform(repositoryUrl), [repositoryUrl]);
+  const isAzureDevOps = detectedPlatform === 'azuredevops';
+  
+  // Update platform when URL changes
+  useEffect(() => {
+    if (detectedPlatform) {
+      setSelectedPlatform(detectedPlatform);
+    }
+  }, [detectedPlatform, setSelectedPlatform]);
 
   const platformName = selectedPlatform === 'azuredevops' ? 'Azure DevOps' : 
                      selectedPlatform.charAt(0).toUpperCase() + selectedPlatform.slice(1);
 
+  // For Azure DevOps, always show PAT (private repos need authentication)
+  const shouldShowContent = isAzureDevOps || showTokenSection;
+
   return (
     <div className="mb-4">
-      {onToggleTokenSection && (
+      {/* Only show toggle button for non-ADO platforms */}
+      {onToggleTokenSection && !isAzureDevOps && (
         <button
           type="button"
           onClick={onToggleTokenSection}
@@ -39,68 +79,28 @@ export default function TokenInput({
         </button>
       )}
 
-      {showTokenSection && (
+      {shouldShowContent && (
         <div className="mt-2 p-4 bg-[var(--background)]/50 rounded-md border border-[var(--border-color)]">
-          {allowPlatformChange && (
-            <div className="mb-3">
-              <label className="block text-xs font-medium text-[var(--foreground)] mb-2">
-                {t.form?.selectPlatform || 'Select Platform'}
-              </label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedPlatform('github')}
-                  className={`flex items-center justify-center gap-2 px-3 py-2 rounded-md border transition-all ${selectedPlatform === 'github'
-                    ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)] text-[var(--accent-primary)] shadow-sm'
-                    : 'border-[var(--border-color)] text-[var(--foreground)] hover:bg-[var(--background)]'
-                    }`}
-                >
-                  <span className="text-sm">GitHub</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedPlatform('gitlab')}
-                  className={`flex items-center justify-center gap-2 px-3 py-2 rounded-md border transition-all ${selectedPlatform === 'gitlab'
-                    ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)] text-[var(--accent-primary)] shadow-sm'
-                    : 'border-[var(--border-color)] text-[var(--foreground)] hover:bg-[var(--background)]'
-                    }`}
-                >
-                  <span className="text-sm">GitLab</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedPlatform('bitbucket')}
-                  className={`flex items-center justify-center gap-2 px-3 py-2 rounded-md border transition-all ${selectedPlatform === 'bitbucket'
-                    ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)] text-[var(--accent-primary)] shadow-sm'
-                    : 'border-[var(--border-color)] text-[var(--foreground)] hover:bg-[var(--background)]'
-                    }`}
-                >
-                  <span className="text-sm">Bitbucket</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedPlatform('azuredevops')}
-                  className={`flex items-center justify-center gap-2 px-3 py-2 rounded-md border transition-all ${selectedPlatform === 'azuredevops'
-                    ? 'bg-[var(--accent-primary)]/10 border-[var(--accent-primary)] text-[var(--accent-primary)] shadow-sm'
-                    : 'border-[var(--border-color)] text-[var(--foreground)] hover:bg-[var(--background)]'
-                    }`}
-                >
-                  <span className="text-sm">Azure DevOps</span>
-                </button>
-              </div>
+          {/* Platform auto-detected indicator */}
+          {detectedPlatform && (
+            <div className="mb-3 flex items-center text-xs text-[var(--muted)]">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Platform detected: <span className="font-medium ml-1">{platformName}</span>
             </div>
           )}
 
           <div>
             <label htmlFor="access-token" className="block text-xs font-medium text-[var(--foreground)] mb-2">
-              {(t.form?.personalAccessToken || 'Personal Access Token').replace('{platform}', platformName)}
+              {(t.form?.personalAccessToken || '{platform} Personal Access Token').replace('{platform}', platformName)}
             </label>
             <input
               id="access-token"
               type="password"
               value={accessToken}
               onChange={(e) => setAccessToken(e.target.value)}
-              placeholder={(t.form?.tokenPlaceholder || 'Enter your access token').replace('{platform}', platformName)}
+              placeholder={(t.form?.tokenPlaceholder || 'Enter your {platform} access token').replace('{platform}', platformName)}
               className="input-japanese block w-full px-3 py-2 rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)] text-sm"
             />
             <div className="flex items-center mt-2 text-xs text-[var(--muted)]">
@@ -109,10 +109,7 @@ export default function TokenInput({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              {selectedPlatform === 'azuredevops' 
-                ? 'Personal Access Token (PAT) is required for Azure DevOps repositories. Your token is stored locally and never sent to our servers.'
-                : t.form?.tokenSecurityNote || 'Your token is stored locally and never sent to our servers.'
-              }
+              {t.form?.tokenSecurityNote || 'Required for private repositories. Your token is stored locally and never sent to our servers.'}
             </div>
           </div>
         </div>

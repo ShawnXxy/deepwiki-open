@@ -11,7 +11,8 @@
       "./.git/", 
       "./.svn/", 
       "./.hg/", 
-      "./.bzr/"
+      "./.bzr/",
+      "./.github/"
     ],
     "excluded_files": [
       "yarn.lock", 
