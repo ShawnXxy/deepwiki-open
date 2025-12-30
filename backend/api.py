@@ -143,11 +143,19 @@ class ModelConfig(BaseModel):
 class AuthorizationConfig(BaseModel):
     code: str = Field(..., description="Authorization code")
 
-from backend.config import configs, WIKI_AUTH_MODE, WIKI_AUTH_CODE, get_azure_openai_config
+from backend.config import configs, WIKI_AUTH_MODE, WIKI_AUTH_CODE, get_azure_openai_config, get_file_filters_config
 
 @app.get("/lang/config")
 async def get_lang_config():
     return configs["lang_config"]
+
+@app.get("/filters/config")
+async def get_filters_config():
+    """
+    Get default file filters configuration from repo.json.
+    Returns excluded directories and files lists.
+    """
+    return get_file_filters_config()
 
 @app.get("/auth/status")
 async def get_auth_status():

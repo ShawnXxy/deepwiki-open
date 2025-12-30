@@ -122,21 +122,22 @@ def get_azure_openai_text_config() -> Dict[str, Any]:
 
 def get_azure_deployment_name(model_name: str = None) -> str:
     """
-    Get the Azure OpenAI deployment name.
+    Get the Azure OpenAI deployment name from infra.json.
     
-    If model_name is provided, returns it directly.
-    Otherwise, returns the deployment from infra.json.
+    Always returns the deployment from infra.json, ignoring any passed model_name.
+    This ensures consistent use of the configured deployment.
     
     Args:
-        model_name: Optional model name override
+        model_name: Ignored - always uses infra.json deployment
     
     Returns:
-        The deployment name to use for Azure OpenAI API calls
+        The deployment name from infra.json for Azure OpenAI API calls
     """
-    if model_name:
-        return model_name
     azure_config = get_azure_openai_config()
-    return azure_config.get("deployment", "")
+    deployment = azure_config.get("deployment", "o4-mini")
+    if model_name and model_name != deployment:
+        logger.info(f"Ignoring requested model '{model_name}', using infra.json deployment: {deployment}")
+    return deployment
 
 
 def get_azure_openai_embedding_config() -> Dict[str, Any]:
@@ -318,6 +319,22 @@ def load_repo_config():
     return load_json_config("repo.json")
 
 
+def get_file_filters_config() -> Dict[str, List[str]]:
+    """
+    Get file filters configuration from repo.json.
+    
+    Returns:
+        Dict containing excluded_dirs and excluded_files lists
+    """
+    repo_config = load_repo_config()
+    file_filters = repo_config.get("file_filters", {}) if repo_config else {}
+    
+    return {
+        "excluded_dirs": file_filters.get("excluded_dirs", DEFAULT_EXCLUDED_DIRS),
+        "excluded_files": file_filters.get("excluded_files", DEFAULT_EXCLUDED_FILES)
+    }
+
+
 def load_lang_config():
     """Load language configuration."""
     default_config = {
@@ -460,7 +477,7 @@ def get_model_config(provider=None, model=None):
 
     Parameters:
         provider (str): Model provider (ignored, always uses 'azure')
-        model (str): Model name, or None to use default from infra.json
+        model (str): Model name (ignored, always uses deployment from infra.json)
 
     Returns:
         dict: Configuration containing model_client, model and other parameters
@@ -468,19 +485,20 @@ def get_model_config(provider=None, model=None):
     # Get Azure config from infra.json
     azure_config = get_azure_openai_config()
     
-    # Get model from infra.json if not provided
-    if not model:
-        model = azure_config.get("deployment", "o4-mini")
+    # Always use model from infra.json - ignore passed model parameter
+    deployment = azure_config.get("deployment", "o4-mini")
     
     # Get temperature from infra.json
     temperature = azure_config.get("temperature", 1.0)
+
+    logger.info(f"Using Azure OpenAI deployment from infra.json: {deployment}")
 
     # Prepare Azure configuration
     result = {
         "model_client": AzureAIClient,
         "initialize_kwargs": get_azure_openai_text_config(),
         "model_kwargs": {
-            "model": model,
+            "model": deployment,
             "temperature": temperature
         }
     }
