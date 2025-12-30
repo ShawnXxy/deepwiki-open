@@ -11,6 +11,7 @@ import glob
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
 from backend.config import configs, DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES
+from backend.blob_storage import get_blob_storage_client, is_blob_storage_configured
 from urllib.parse import urlparse, urlunparse, quote
 import requests
 from requests.exceptions import RequestException
@@ -451,16 +452,21 @@ def prepare_data_pipeline(embedder_type: str = None, is_ollama_embedder: bool = 
     return data_transformer
 
 def transform_documents_and_save_to_db(
-    documents: List[Document], db_path: str, embedder_type: str = None, is_ollama_embedder: bool = None
+    documents: List[Document], db_path: str, embedder_type: str = None, is_ollama_embedder: bool = None,
+    blob_path: str = None
 ) -> LocalDB:
     """
-    Transforms a list of documents and saves them to a local database.
+    Transforms a list of documents and saves them to storage (Azure Blob or local).
 
     Args:
         documents (list): A list of `Document` objects.
-        db_path (str): The path to the local database file.
+        db_path (str): The path to the local database file (used as fallback or for local storage).
         embedder_type (str, optional): Kept for backward compatibility, ignored.
         is_ollama_embedder (bool, optional): DEPRECATED. Kept for backward compatibility.
+        blob_path (str, optional): Path in blob storage (e.g., "databases/owner_repo.pkl")
+    
+    Returns:
+        LocalDB: The transformed database
     """
     # Get the data transformer
     data_transformer = prepare_data_pipeline()
@@ -470,8 +476,34 @@ def transform_documents_and_save_to_db(
     db.register_transformer(transformer=data_transformer, key="split_and_embed")
     db.load(documents)
     db.transform(key="split_and_embed")
+    
+    # Save to Azure Blob Storage when configured (no fallback to local)
+    if blob_path and is_blob_storage_configured():
+        try:
+            blob_client = get_blob_storage_client()
+            if not blob_client:
+                error_msg = "Azure Blob Storage is configured but failed to create client. Check MSI configuration."
+                logger.error(error_msg)
+                raise ConnectionError(error_msg)
+            
+            if blob_client.save_pickle(blob_path, db):
+                logger.info(f"Database saved to Azure Blob Storage: {blob_path}")
+                return db
+            else:
+                error_msg = f"Failed to save database to Azure Blob Storage: {blob_path}"
+                logger.error(error_msg)
+                raise ConnectionError(error_msg)
+        except ConnectionError:
+            raise  # Re-raise connection errors
+        except Exception as e:
+            error_msg = f"Failed to connect to Azure Blob Storage for saving: {e}"
+            logger.error(error_msg)
+            raise ConnectionError(error_msg) from e
+    
+    # Local storage mode (blob not configured)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     db.save_state(filepath=db_path)
+    logger.info(f"Database saved to local storage: {db_path}")
     return db
 
 def get_github_file_content(repo_url: str, file_path: str, access_token: str = None) -> str:
@@ -897,9 +929,15 @@ class DatabaseManager:
                     access_token: str = None, branch: str = None) -> None:
         """
         Download and prepare all paths.
-        Paths:
-        ~/.adalflow/repos/{owner}_{repo_name} (for url, local path same)
-        ~/.adalflow/databases/{owner}_{repo_name}.pkl
+        
+        Path structure (consistent between local and blob):
+        - Local root: ~/.adalflow/
+        - Blob container: deepwiki-data (configured in infra.json)
+        
+        Storage paths:
+        - Repos (local only): {root}/repos/{owner}_{repo_name}/
+        - Database (local):   {root}/databases/{owner}_{repo_name}.pkl
+        - Database (blob):    databases/{owner}_{repo_name}.pkl
 
         Args:
             repo_type(str): Type of repository
@@ -924,27 +962,73 @@ class DatabaseManager:
                 logger.info(f"Extracted repo name: {repo_name}")
 
                 save_repo_dir = os.path.join(root_path, "repos", repo_name)
+                blob_repo_path = f"repos/{repo_name}/"  # Blob prefix for repo files
+
+                # Check if repo exists in blob storage first (when configured)
+                repo_from_blob = False
+                if is_blob_storage_configured():
+                    try:
+                        blob_client = get_blob_storage_client()
+                        if blob_client and blob_client.directory_exists(blob_repo_path):
+                            logger.info(f"Repository found in Azure Blob Storage: {blob_repo_path}")
+                            # Download from blob to local if not exists locally
+                            if not (os.path.exists(save_repo_dir) and os.listdir(save_repo_dir)):
+                                logger.info(f"Downloading repository from blob to {save_repo_dir}")
+                                if blob_client.download_directory(blob_repo_path, save_repo_dir):
+                                    repo_from_blob = True
+                                    logger.info(f"Repository downloaded from blob storage successfully")
+                                else:
+                                    logger.warning(f"Failed to download repository from blob, will clone fresh")
+                            else:
+                                repo_from_blob = True
+                                logger.info(f"Repository exists locally, skipping blob download")
+                    except Exception as e:
+                        logger.warning(f"Error checking blob storage for repo: {e}, will try local/clone")
 
                 # Check if the repository directory already exists and is not empty
-                if not (os.path.exists(save_repo_dir) and os.listdir(save_repo_dir)):
+                if not repo_from_blob and not (os.path.exists(save_repo_dir) and os.listdir(save_repo_dir)):
                     # Only download if the repository doesn't exist or is empty
                     download_repo(repo_url_or_path, save_repo_dir, repo_type, 
                                 access_token, branch)
+                    
+                    # Upload to blob storage after cloning (when configured)
+                    if is_blob_storage_configured():
+                        try:
+                            blob_client = get_blob_storage_client()
+                            if blob_client:
+                                logger.info(f"Uploading cloned repository to blob storage: {blob_repo_path}")
+                                blob_client.upload_directory(save_repo_dir, blob_repo_path)
+                        except Exception as e:
+                            logger.warning(f"Failed to upload repository to blob storage: {e}")
                 else:
-                    logger.info(f"Repository already exists at {save_repo_dir}. "
-                              f"Using existing repository.")
+                    if not repo_from_blob:
+                        logger.info(f"Repository already exists at {save_repo_dir}. "
+                                  f"Using existing repository.")
             else:  # local path
                 repo_name = os.path.basename(repo_url_or_path)
                 save_repo_dir = repo_url_or_path
+                blob_repo_path = f"repos/{repo_name}/"
 
-            save_db_file = os.path.join(root_path, "databases", f"{repo_name}.pkl")
-            logger.info(f"DEBUG: save_db_file path is: {save_db_file}")
+            # Path consistency: local and blob use same relative structure
+            # Local: ~/.adalflow/databases/{owner}_{repo}.pkl
+            # Blob:  databases/{owner}_{repo}.pkl (same structure, different root)
+            db_relative_path = f"databases/{repo_name}.pkl"
+            save_db_file = os.path.join(root_path, db_relative_path)
+            blob_db_path = db_relative_path  # Same relative path for blob
+            
+            logger.info(f"Database relative path: {db_relative_path}")
+            logger.info(f"Local database path: {save_db_file}")
+            logger.info(f"Blob database path: {blob_db_path}")
+            
             os.makedirs(save_repo_dir, exist_ok=True)
             os.makedirs(os.path.dirname(save_db_file), exist_ok=True)
 
             self.repo_paths = {
                 "save_repo_dir": save_repo_dir,
                 "save_db_file": save_db_file,
+                "blob_db_path": blob_db_path,
+                "blob_repo_path": blob_repo_path,  # Add blob repo path
+                "repo_name": repo_name,  # Store for reference
             }
             self.repo_url_or_path = repo_url_or_path
             logger.info(f"Repo paths: {self.repo_paths}")
@@ -958,6 +1042,7 @@ class DatabaseManager:
                         included_dirs: List[str] = None, included_files: List[str] = None) -> List[Document]:
         """
         Prepare the indexed database for the repository.
+        Uses Azure Blob Storage when configured, raises error if blob connection fails.
 
         Args:
             embedder_type (str, optional): Kept for backward compatibility, ignored.
@@ -969,21 +1054,53 @@ class DatabaseManager:
 
         Returns:
             List[Document]: List of Document objects
+            
+        Raises:
+            ConnectionError: If Azure Blob Storage is configured but connection fails
         """
-        # check the database
-        if self.repo_paths and os.path.exists(self.repo_paths["save_db_file"]):
-            logger.info("Loading existing database...")
-            try:
-                self.db = LocalDB.load_state(self.repo_paths["save_db_file"])
-                documents = self.db.get_transformed_data(key="split_and_embed")
-                if documents:
-                    logger.info(f"Loaded {len(documents)} documents from existing database")
-                    return documents
-            except Exception as e:
-                logger.error(f"Error loading existing database: {e}")
-                # Continue to create a new database
+        # Try to load from Azure Blob Storage when configured
+        if self.repo_paths and is_blob_storage_configured():
+            blob_db_path = self.repo_paths.get("blob_db_path")
+            if blob_db_path:
+                try:
+                    blob_client = get_blob_storage_client()
+                    if not blob_client:
+                        error_msg = "Azure Blob Storage is configured but failed to create client. Check MSI configuration."
+                        logger.error(error_msg)
+                        raise ConnectionError(error_msg)
+                    
+                    if blob_client.exists(blob_db_path):
+                        logger.info(f"Loading database from Azure Blob Storage: {blob_db_path}")
+                        self.db = blob_client.load_pickle(blob_db_path)
+                        if self.db:
+                            documents = self.db.get_transformed_data(key="split_and_embed")
+                            if documents:
+                                logger.info(f"Loaded {len(documents)} documents from Azure Blob Storage")
+                                return documents
+                        logger.info(f"Database exists in blob but is empty or invalid, will create new")
+                    else:
+                        logger.info(f"Database not found in Azure Blob Storage: {blob_db_path}, will create new")
+                except ConnectionError:
+                    raise  # Re-raise connection errors
+                except Exception as e:
+                    error_msg = f"Failed to connect to Azure Blob Storage: {e}"
+                    logger.error(error_msg)
+                    raise ConnectionError(error_msg) from e
+        else:
+            # Local storage mode (blob not configured)
+            if self.repo_paths and os.path.exists(self.repo_paths["save_db_file"]):
+                logger.info("Loading existing database from local storage...")
+                try:
+                    self.db = LocalDB.load_state(self.repo_paths["save_db_file"])
+                    documents = self.db.get_transformed_data(key="split_and_embed")
+                    if documents:
+                        logger.info(f"Loaded {len(documents)} documents from local database")
+                        return documents
+                except Exception as e:
+                    logger.error(f"Error loading existing local database: {e}")
+                    # Continue to create a new database
 
-        # prepare the database
+        # Create new database
         logger.info("Creating new database...")
         documents = read_all_documents(
             self.repo_paths["save_repo_dir"],
@@ -993,7 +1110,9 @@ class DatabaseManager:
             included_files=included_files
         )
         self.db = transform_documents_and_save_to_db(
-            documents, self.repo_paths["save_db_file"]
+            documents, 
+            self.repo_paths["save_db_file"],
+            blob_path=self.repo_paths.get("blob_db_path")
         )
         logger.info(f"Total documents: {len(documents)}")
         transformed_docs = self.db.get_transformed_data(key="split_and_embed")
