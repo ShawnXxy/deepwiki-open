@@ -377,42 +377,62 @@ class AzureAIClient(ModelClient):
     def init_sync_client(self):
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
+        api_key = os.getenv("AZURE_OPENAI_API_KEY")
         
         if not azure_endpoint:
             raise ValueError("Environment variable AZURE_OPENAI_ENDPOINT must be set")
         if not api_version:
             raise ValueError("Environment variable AZURE_OPENAI_VERSION must be set")
 
-        # Use MSI authentication
-        credential = self._get_credential()
-        token_provider = get_bearer_token_provider(
-            credential, "https://cognitiveservices.azure.com/.default"
-        )
-        return AzureOpenAI(
-            azure_ad_token_provider=token_provider,
-            azure_endpoint=azure_endpoint,
-            api_version=api_version,
-        )
+        # Use API key if available, otherwise fall back to MSI authentication
+        if api_key:
+            log.info("Using API key authentication for Azure OpenAI")
+            return AzureOpenAI(
+                api_key=api_key,
+                azure_endpoint=azure_endpoint,
+                api_version=api_version,
+            )
+        else:
+            log.info("Using MSI authentication for Azure OpenAI")
+            credential = self._get_credential()
+            token_provider = get_bearer_token_provider(
+                credential, "https://cognitiveservices.azure.com/.default"
+            )
+            return AzureOpenAI(
+                azure_ad_token_provider=token_provider,
+                azure_endpoint=azure_endpoint,
+                api_version=api_version,
+            )
 
     def init_async_client(self):
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
+        api_key = os.getenv("AZURE_OPENAI_API_KEY")
         
         if not azure_endpoint:
             raise ValueError("Environment variable AZURE_OPENAI_ENDPOINT must be set")
         if not api_version:
             raise ValueError("Environment variable AZURE_OPENAI_VERSION must be set")
 
-        # Use MSI authentication
-        credential = self._get_credential()
-        token_provider = get_bearer_token_provider(
-            credential, "https://cognitiveservices.azure.com/.default"
-        )
-        return AsyncAzureOpenAI(
-            azure_ad_token_provider=token_provider,
-            azure_endpoint=azure_endpoint,
-            api_version=api_version,
-        )
+        # Use API key if available, otherwise fall back to MSI authentication
+        if api_key:
+            log.info("Using API key authentication for Azure OpenAI (async)")
+            return AsyncAzureOpenAI(
+                api_key=api_key,
+                azure_endpoint=azure_endpoint,
+                api_version=api_version,
+            )
+        else:
+            log.info("Using MSI authentication for Azure OpenAI (async)")
+            credential = self._get_credential()
+            token_provider = get_bearer_token_provider(
+                credential, "https://cognitiveservices.azure.com/.default"
+            )
+            return AsyncAzureOpenAI(
+                azure_ad_token_provider=token_provider,
+                azure_endpoint=azure_endpoint,
+                api_version=api_version,
+            )
 
     # def _parse_chat_completion(self, completion: ChatCompletion) -> "GeneratorOutput":
     #     # TODO: raw output it is better to save the whole completion as a source of truth instead of just the message
