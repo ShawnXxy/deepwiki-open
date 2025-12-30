@@ -1,30 +1,15 @@
-# DeepWiki-Open (Azure OpenAI Edition)
+# Orcas CodeWiki (For MS Internal use)
 
-![DeepWiki Banner](img/screenshots/Deepwiki.png)
+> **Inspired by [DeepWiki-Open](https://github.com/AsyncFuncAI/deepwiki-open)** - This is a fork optimized exclusively for **Azure OpenAI** with Managed Identity authentication. No API keys or `.env` files needed!
 
-**DeepWiki** automatically creates beautiful, interactive wikis for any GitHub, GitLab, BitBucket, or Azure DevOps repository! Just enter a repo name, and DeepWiki will:
+**Orcas CodeWiki** automatically creates  interactive wikis for Azure DevOps repository! Just enter a repo url, and CodeWiki will:
 
 1. Analyze the code structure
 2. Generate comprehensive documentation
 3. Create visual diagrams to explain how everything works
 4. Organize it all into an easy-to-navigate wiki
 
-> **Note**: This fork is optimized exclusively for **Azure OpenAI** as the model provider.
-
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://buymeacoffee.com/sheing)
-
-## ✨ Features
-
-- **Instant Documentation**: Turn any GitHub, GitLab, BitBucket, or Azure DevOps repo into a wiki in seconds
-- **Private Repository Support**: Securely access private repositories with personal access tokens
-- **Smart Analysis**: AI-powered understanding of code structure and relationships
-- **Beautiful Diagrams**: Automatic Mermaid diagrams to visualize architecture and data flow
-- **Easy Navigation**: Simple, intuitive interface to explore the wiki
-- **Ask Feature**: Chat with your repository using RAG-powered AI to get accurate answers
-- **DeepResearch**: Multi-turn research process that thoroughly investigates complex topics
-- **Azure OpenAI**: Enterprise-grade AI with Azure OpenAI Service
-
-## 🚀 Quick Start
+## 🚀 Quick Start (if you want to deloy your own service)
 
 ### Prerequisites
 
@@ -33,21 +18,14 @@
 - **Azure OpenAI Service** with deployed models:
   - Text generation model (e.g., `o4-mini`, `gpt-4o`)
   - Embedding model (e.g., `text-embedding-3-large`)
-- **Managed Identity (MSI)** configured with access to Azure OpenAI
+- **Azure Storage Blob container**
+- **Managed Identity (MSI)** 
+  - configured with access **Cognitive Services OpenAI User** to Azure OpenAI
+  - configured with access **Monitoring Metrics Publisher** to Azure Blob
+- **Application Insight** if you would like to emit logs to Azure 
+- **Web App Service** 
 
-### Step 1: Set Up Azure OpenAI
-
-1. Go to [Azure Portal](https://portal.azure.com/)
-2. Create an Azure OpenAI resource
-3. Deploy your models (e.g., `o4-mini` for generation, `text-embedding-3-large` for embeddings)
-4. Note your endpoint URL (e.g., `https://your-resource.openai.azure.com`)
-
-### Step 2: Configure Managed Identity
-
-1. Create a User-Assigned Managed Identity in Azure Portal
-2. Grant the managed identity **Cognitive Services OpenAI User** role on your Azure OpenAI resource
-
-### Step 3: Configure infra.json
+### Step 1: Configure infra.json
 
 Edit `backend/config/infra.json` with your Azure details:
 
@@ -66,11 +44,19 @@ Edit `backend/config/infra.json` with your Azure details:
     "endpoint": "https://your-resource.openai.azure.com",
     "api_version": "2024-12-01-preview",
     "deployment": "text-embedding-3-large"
+  },
+  "azure_blob_storage": {
+    "enabled": true,
+    "account_name": "your-storage-account",
+    "container_name": "deepwiki-data"
+  },
+  "azure_application_insights": {
+    "enabled": true,
+    "name": "your-app-insights",
+    "connection_string": ""
   }
 }
 ```
-
-> **Note**: No `.env` file or API keys needed! All configuration is in `infra.json` and authentication is handled via Managed Identity (MSI).
 
 ### Step 4: Install Dependencies
 
@@ -105,32 +91,10 @@ npm run dev
 
 1. Open [http://localhost:3000](http://localhost:3000) in your browser
 2. Enter a repository URL (e.g., `https://github.com/microsoft/autogen`)
-3. For private repositories, click "+ Add access tokens" and enter your personal access token
-4. Click "Generate Wiki" and watch the magic happen!
+3. Enter your personal access token
+4. Click "Generate Wiki", it would take some time to generate wiki for large code base. You can check back on the homepage.
 
-## 🐳 Docker Setup
-
-### Using Docker Compose (Recommended)
-
-```bash
-# Edit backend/config/infra.json with your Azure OpenAI configuration
-# Then run with Docker Compose
-docker-compose up
-```
-
-### Using Docker Run
-
-```bash
-# Mount your customized infra.json into the container
-docker run -p 8001:8001 -p 3000:3000 \
-  -v ./backend/config/infra.json:/app/backend/config/infra.json \
-  -v ~/.adalflow:/root/.adalflow \
-  ghcr.io/asyncfuncai/deepwiki-open:latest
-```
-
-> **Note**: When running in Docker on Azure (e.g., Azure Container Apps), MSI authentication is automatic. For local Docker, you may need to mount Azure CLI credentials.
-
-## 🔍 How It Works
+##  How It Works
 
 ```mermaid
 graph TD
@@ -163,7 +127,6 @@ deepwiki/
 ├── pyproject.toml        # Python dependencies (Poetry)
 ├── poetry.lock           # Poetry lock file
 ├── package.json          # Node.js dependencies
-├── docker-compose.yml    # Docker configuration
 │
 ├── backend/              # Backend API server
 │   ├── main.py           # API entry point
@@ -191,7 +154,7 @@ deepwiki/
 
 ## ⚙️ Configuration
 
-All configuration is centralized in `backend/config/infra.json`. No `.env` file needed!
+All configuration is centralized in `backend/config/infra.json`. 
 
 ### infra.json Structure
 
@@ -205,15 +168,73 @@ All configuration is centralized in `backend/config/infra.json`. No `.env` file 
 | `azure_openai_embedding.endpoint` | Azure OpenAI endpoint for embeddings |
 | `azure_openai_embedding.api_version` | API version for embeddings |
 | `azure_openai_embedding.deployment` | Deployment name for embeddings |
+| `azure_blob_storage.enabled` | Enable Azure Blob Storage for persistence (`true`/`false`) |
+| `azure_blob_storage.account_name` | Storage account name |
+| `azure_blob_storage.container_name` | Blob container name (e.g., `deepwiki-data`) |
+| `azure_application_insights.enabled` | Enable Application Insights for centralized logging (`true`/`false`) |
+| `azure_application_insights.name` | Application Insights resource name |
+| `azure_application_insights.connection_string` | Application Insights connection string |
 
 ### Other Configuration Files
 
 - **`backend/config/generator.json`**: Text generation model parameters (temperature)
 - **`backend/config/embedder.json`**: Embedding model and text processing settings
 
+## 💾 Storage Architecture
+
+DeepWiki supports two **mutually exclusive** storage modes:
+
+### Storage Modes
+
+| Mode | When | Use Case |
+|------|------|----------|
+| **Blob Mode** | `azure_blob_storage.enabled: true` | Production deployments (Azure Container Apps, etc.) |
+| **Local Mode** | `azure_blob_storage.enabled: false` | Local development and testing |
+
+> **Important**: These modes are mutually exclusive. There is NO syncing between blob and local storage.
+
+### What Gets Stored
+
+| Data | Description | Blob Path | Local Path |
+|------|-------------|-----------|------------|
+| **Repositories** | Cloned repository files | `repos/{repo_name}/` | `~/.adalflow/repos/{repo_name}/` |
+| **Databases** | Embedded document databases (pkl) | `databases/{repo_name}.pkl` | `~/.adalflow/databases/{repo_name}.pkl` |
+| **Wiki Cache** | Generated wiki content (JSON) | `wikicache/*.json` | `~/.adalflow/wikicache/*.json` |
+
+### Local Working Directory
+
+Even in **Blob Mode**, you may see files in `~/.adalflow/`. This is the **temporary working directory**:
+
+```
+~/.adalflow/
+├── repos/                           # ← Temporary: downloaded from blob for processing
+├── databases/                       # ← Not used in blob mode (blob is source of truth)
+├── wikicache/                       # ← Not used in blob mode (blob is source of truth)
+└── cache_AzureAIClient_*.db/        # ← Local-only LLM response cache (intentional)
+```
+
+**Why local copies exist in blob mode:**
+- File parsing and embedding requires local file access
+- FAISS index building reads files from disk
+- The local copy is a **working cache**, not persistent storage
+
+**Source of truth:**
+- **Blob Mode**: Azure Blob Storage is the source of truth. Local is temporary.
+- **Local Mode**: Local filesystem is the source of truth.
+
+### LLM Response Cache
+
+The `cache_AzureAIClient_*.db/` folder is **intentionally local-only**:
+- Created by adalflow's DiskCache for caching LLM API responses
+- Avoids redundant API calls for identical queries
+- Machine-specific, ephemeral performance optimization
+- Not persistent data - safe to delete anytime
+
 ## 📊 Logging
 
-DeepWiki uses daily rotating log files:
+DeepWiki uses daily rotating log files with optional Azure Application Insights integration:
+
+### Local Logs
 
 - **Backend logs**: `logs/backend-YYMMDD.log`
 - **Frontend logs**: `logs/frontend-YYMMDD.log`
@@ -222,6 +243,40 @@ Set logging level in your environment:
 
 ```bash
 LOG_LEVEL=DEBUG  # DEBUG, INFO, WARNING, ERROR
+```
+
+### Application Insights (Optional)
+
+For centralized cloud logging, configure Azure Application Insights:
+
+1. **Create Application Insights** in Azure Portal
+2. **Get the connection string** from the Application Insights overview page
+3. **Configure in `infra.json`**:
+   ```json
+   "azure_application_insights": {
+     "enabled": true,
+     "name": "your-app-insights-name",
+     "connection_string": "InstrumentationKey=...;IngestionEndpoint=..."
+   }
+   ```
+4. **Assign role** - Your identity needs **"Monitoring Metrics Publisher"** role on the Application Insights resource:
+   ```bash
+   az role assignment create \
+     --assignee <your-user-or-msi-object-id> \
+     --role "Monitoring Metrics Publisher" \
+     --scope <application-insights-resource-id>
+   ```
+
+**Authentication:**
+- In Azure (VMs, Container Apps): Uses Managed Identity from `infra.json`
+- Locally: Uses Azure CLI credentials (`az login`)
+
+**View logs** in Azure Portal → Application Insights → Logs → Query the `traces` table:
+```kusto
+traces
+| where cloud_RoleName == "backend"
+| order by timestamp desc
+| take 100
 ```
 
 ## 🤖 Ask & DeepResearch Features
@@ -249,19 +304,12 @@ Toggle "Deep Research" in the Ask interface for thorough analysis.
 ![DeepWiki Main Interface](img/screenshots/Interface.png)
 *The main interface of DeepWiki*
 
-![Private Repository Support](img/screenshots/privaterepo.png)
-*Access private repositories with personal access tokens*
+![Snippet of Wiki Generated](img/screenshots/wiki.png)
+*Sample Wiki generated*
 
 ![DeepResearch Feature](img/screenshots/DeepResearch.png)
 *DeepResearch conducts multi-turn investigations*
 
-## 🤝 Contributing
-
-Contributions are welcome! Feel free to:
-- Open issues for bugs or feature requests
-- Submit pull requests to improve the code
-- Share your feedback and ideas
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## Limitation (Working in progress)
+- Multi-threaded: Currently, if there is already an ongoing code embedding process running, other newly coming request will be queued. In future, CodeWiki will allow multi-threaded chunking process.
+- Timely scheduled pipeline: with development of any code projects, code repo will change time to time. To ensure accuracy with Wiki generated, need to have a scheduled pipeline to analyze the code changes time to time.
