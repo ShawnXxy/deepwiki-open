@@ -779,7 +779,7 @@ async def get_processed_projects():
                         logger.warning(f"Could not parse project details from blob: {blob_info['name']}")
                 
                 project_entries.sort(key=lambda p: p.submittedAt, reverse=True)
-                logger.info(f"Found {len(project_entries)} processed project entries from Azure Blob Storage.")
+                logger.debug(f"Found {len(project_entries)} processed project entries from Azure Blob Storage.")
                 return project_entries
             except ConnectionError:
                 raise
