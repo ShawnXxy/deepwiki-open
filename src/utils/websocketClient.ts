@@ -1,9 +1,11 @@
 /**
  * WebSocket client for chat completions
  * This replaces the HTTP streaming endpoint with a WebSocket connection
+ * NOTE: WebSocket is only used in localhost environments where port 8001 is accessible.
+ * In cloud deployments, the HTTP proxy (/api/chat/stream) is used instead.
  */
 
-import { getWebSocketUrl, getTimeoutConfig } from './networkConfig';
+import { getWebSocketUrl, getTimeoutConfig, shouldUseWebSocket } from './networkConfig';
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -30,14 +32,22 @@ export interface ChatCompletionRequest {
  * @param onMessage Callback for received messages
  * @param onError Callback for errors
  * @param onClose Callback for when the connection closes
- * @returns The WebSocket connection
+ * @returns The WebSocket connection or null if WebSocket should not be used
  */
 export const createChatWebSocket = (
   request: ChatCompletionRequest,
   onMessage: (message: string) => void,
   onError: (error: Event) => void,
   onClose: () => void
-): WebSocket => {
+): WebSocket | null => {
+  // Check if WebSocket should be used (only in localhost environments)
+  if (!shouldUseWebSocket()) {
+    console.log('Cloud environment detected, WebSocket not available - use HTTP proxy instead');
+    // Trigger error callback to signal fallback to HTTP
+    setTimeout(() => onError(new Event('websocket-unavailable')), 0);
+    return null;
+  }
+  
   // Create WebSocket connection with improved error handling
   const wsUrl = getWebSocketUrl();
   const timeouts = getTimeoutConfig();

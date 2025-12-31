@@ -340,8 +340,8 @@ const Ask: React.FC<AskProps> = ({
 
       let fullResponse = '';
 
-      // Create a new WebSocket connection
-      webSocketRef.current = createChatWebSocket(
+      // Create a new WebSocket connection (returns null in cloud environments)
+      const ws = createChatWebSocket(
         requestBody,
         // Message handler
         (message: string) => {
@@ -375,9 +375,7 @@ const Ask: React.FC<AskProps> = ({
         // Error handler
         (error: Event) => {
           console.error('WebSocket error:', error);
-          setResponse(prev => prev + '\n\nError: WebSocket connection failed. Falling back to HTTP...');
-
-          // Fallback to HTTP if WebSocket fails
+          // Fallback to HTTP if WebSocket fails or is unavailable
           fallbackToHttp(requestBody);
         },
         // Close handler
@@ -401,6 +399,9 @@ const Ask: React.FC<AskProps> = ({
           setIsLoading(false);
         }
       );
+      
+      // Store reference (may be null in cloud environments, error handler will trigger HTTP fallback)
+      webSocketRef.current = ws;
     } catch (error) {
       console.error('Error during API call:', error);
       setResponse(prev => prev + '\n\nError: Failed to continue research. Please try again.');
@@ -587,8 +588,8 @@ const Ask: React.FC<AskProps> = ({
 
       let fullResponse = '';
 
-      // Create a new WebSocket connection
-      webSocketRef.current = createChatWebSocket(
+      // Create a new WebSocket connection (returns null in cloud environments)
+      const ws = createChatWebSocket(
         requestBody,
         // Message handler
         (message: string) => {
@@ -608,9 +609,7 @@ const Ask: React.FC<AskProps> = ({
         // Error handler
         (error: Event) => {
           console.error('WebSocket error:', error);
-          setResponse(prev => prev + '\n\nError: WebSocket connection failed. Falling back to HTTP...');
-
-          // Fallback to HTTP if WebSocket fails
+          // Fallback to HTTP if WebSocket fails or is unavailable
           fallbackToHttp(requestBody);
         },
         // Close handler
@@ -630,6 +629,9 @@ const Ask: React.FC<AskProps> = ({
           setIsLoading(false);
         }
       );
+      
+      // Store reference (may be null in cloud environments, error handler will trigger HTTP fallback)
+      webSocketRef.current = ws;
     } catch (error) {
       console.error('Error during API call:', error);
       setResponse(prev => prev + '\n\nError: Failed to get a response. Please try again.');

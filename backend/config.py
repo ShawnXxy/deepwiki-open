@@ -98,10 +98,14 @@ def is_azure_openai_configured() -> bool:
     endpoint = azure_config.get("endpoint", "")
     has_azure_pattern = ".openai.azure.com" in endpoint
     
-    # Check for MSI client ID in infra.json
+    # Check for API key in environment (for local dev)
+    has_api_key = bool(os.environ.get("AZURE_OPENAI_API_KEY"))
+    
+    # Check for MSI client ID in infra.json (for production)
     has_msi_config = bool(get_managed_identity_client_id())
     
-    return has_basic_config and has_azure_pattern and has_msi_config
+    # Either API key or MSI config is sufficient
+    return has_basic_config and has_azure_pattern and (has_api_key or has_msi_config)
 
 
 def get_azure_openai_text_config() -> Dict[str, Any]:

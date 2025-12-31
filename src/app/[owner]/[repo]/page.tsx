@@ -525,7 +525,15 @@ CRITICAL REMINDERS:
 
         try {
           // Create WebSocket URL with proper network detection
-          const { getWebSocketUrl, getTimeoutConfig } = await import('@/utils/networkConfig');
+          const { getWebSocketUrl, getTimeoutConfig, shouldUseWebSocket } = await import('@/utils/networkConfig');
+          
+          // Only attempt WebSocket in localhost environments where port 8001 is accessible
+          // In cloud deployments (Azure, etc.), skip directly to HTTP proxy
+          if (!shouldUseWebSocket()) {
+            console.log('Cloud environment detected, using HTTP proxy instead of WebSocket');
+            throw new Error('Skip WebSocket in cloud environment');
+          }
+          
           const wsUrl = getWebSocketUrl();
           const timeouts = getTimeoutConfig();
           
@@ -828,7 +836,15 @@ IMPORTANT:
 
       try {
         // Create WebSocket URL with proper network detection
-        const { getWebSocketUrl, getTimeoutConfig } = await import('@/utils/networkConfig');
+        const { getWebSocketUrl, getTimeoutConfig, shouldUseWebSocket } = await import('@/utils/networkConfig');
+        
+        // Only attempt WebSocket in localhost environments where port 8001 is accessible
+        // In cloud deployments (Azure, etc.), skip directly to HTTP proxy
+        if (!shouldUseWebSocket()) {
+          console.log('Cloud environment detected, using HTTP proxy instead of WebSocket');
+          throw new Error('Skip WebSocket in cloud environment');
+        }
+        
         const wsUrl = getWebSocketUrl();
         const timeouts = getTimeoutConfig();
         
@@ -932,9 +948,15 @@ IMPORTANT:
         // Clean up markdown delimiters
       responseText = responseText.replace(/^```(?:xml)?\s*/i, '').replace(/```\s*$/i, '');
 
+      // Log the response for debugging
+      console.log('Wiki structure response length:', responseText.length);
+      console.log('Wiki structure response (first 500 chars):', responseText.substring(0, 500));
+      console.log('Wiki structure response (last 500 chars):', responseText.substring(responseText.length - 500));
+
       // Extract wiki structure from response
       const xmlMatch = responseText.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
       if (!xmlMatch) {
+        console.error('Full response text:', responseText);
         throw new Error('No valid XML found in response');
       }
 

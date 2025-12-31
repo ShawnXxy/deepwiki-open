@@ -235,21 +235,24 @@ class AzureBlobStorageClient:
 
         Returns:
             List of dicts with 'name' and 'last_modified' (timestamp in ms)
+            
+        Raises:
+            Exception: If listing fails, to allow caller to handle appropriately
         """
-        try:
-            container_client = self.get_container_client()
-            blobs = container_client.list_blobs(name_starts_with=prefix)
-            result = []
-            for blob in blobs:
-                last_modified_ms = int(blob.last_modified.timestamp() * 1000) if blob.last_modified else 0
-                result.append({
-                    "name": blob.name,
-                    "last_modified": last_modified_ms
-                })
-            return result
-        except Exception as e:
-            logger.error(f"Failed to list blobs with metadata, prefix {prefix}: {e}")
-            return []
+        logger.info(f"[BlobStorage] list_blobs_with_metadata called with prefix: {prefix}")
+        container_client = self.get_container_client()
+        logger.info(f"[BlobStorage] Got container client, listing blobs...")
+        blobs = container_client.list_blobs(name_starts_with=prefix)
+        result = []
+        for blob in blobs:
+            last_modified_ms = int(blob.last_modified.timestamp() * 1000) if blob.last_modified else 0
+            result.append({
+                "name": blob.name,
+                "last_modified": last_modified_ms
+            })
+            logger.info(f"[BlobStorage] Found blob: {blob.name}")
+        logger.info(f"[BlobStorage] Total blobs found: {len(result)}")
+        return result
 
     def upload_directory(self, local_dir: str, blob_prefix: str) -> bool:
         """
