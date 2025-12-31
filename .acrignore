@@ -1,0 +1,15 @@
+# ACR Upload Exclusions - excludes from tar upload to Azure
+node_modules/
+.venv/
+__pycache__/
+.next/
+.git/
+.github/
+coverage/
+.pytest_cache/
+htmlcov/
+logs/
+*.log
+*.pyc
+.idea/
+.vscode/

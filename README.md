@@ -1,6 +1,6 @@
 # Orcas CodeWiki (For MS Internal use)
 
-> **Inspired by [DeepWiki-Open](https://github.com/AsyncFuncAI/deepwiki-open)** - This is a fork optimized exclusively for **Azure OpenAI** with Managed Identity authentication. No API keys or `.env` files needed!
+> **Inspired by [DeepWiki-Open](https://github.com/AsyncFuncAI/deepwiki-open)** - This is a fork optimized exclusively for **Azure OpenAI** with Managed Identity authentication. 
 
 **Orcas CodeWiki** automatically creates  interactive wikis for Azure DevOps repository! Just enter a repo url, and CodeWiki will:
 
@@ -21,11 +21,11 @@
 - **Azure Storage Blob container**
 - **Managed Identity (MSI)** 
   - configured with access **Cognitive Services OpenAI User** to Azure OpenAI
-  - configured with access **Monitoring Metrics Publisher** to Azure Blob
+  - configured with access **Storage Blob Data Contributor** to Azure Application Insight
+  - configured with access **Monitoring Metrics Publisher** to Azure Application Insight
 - **Application Insight** if you would like to emit logs to Azure 
-- **Web App Service** 
 
-### Step 1: Configure infra.json
+### Configure infra.json
 
 Edit `backend/config/infra.json` with your Azure details:
 
@@ -58,7 +58,49 @@ Edit `backend/config/infra.json` with your Azure details:
 }
 ```
 
-### Step 4: Install Dependencies
+Then you have two options to continue setup.
+
+### 🐳 Option 1: Docker test in local environment
+
+Test the containerized application locally before deploying to Azure:
+
+#### 1. Setup local env
+Locate the sample.env file in root, copy and create a new file named .env. Safely pasting your Azure OpenAI API key in this newly created .env file. 
+
+> This .env will be ignored in online so it will be ONLY available in your local environment
+
+#### 2. run below
+
+The test-local.ps1 file automatically load API key from .env and use it for local docker env variables. 
+
+> Both blob data path and Application Insight logger will be disabled automatically when testing in local docker.
+
+```powershell
+# Run the local testing script
+.\test-local.ps1
+```
+
+This will:
+1. Build the Docker image locally
+2. Run the container with ports 3000 (frontend) + 8001 (backend)
+3. Mount your config files and `.adalflow` cache
+4. Open browser to http://localhost:3000
+
+**Useful commands:**
+```powershell
+# View container logs
+docker logs -f codewiki-local
+
+# Stop the container
+docker stop codewiki-local
+
+# Access container shell
+docker exec -it codewiki-local bash
+```
+
+### Option 2: manual setup in local
+
+#### Step 1: Install Dependencies
 
 ```bash
 # Clone the repository
@@ -77,7 +119,7 @@ poetry install
 npm install
 ```
 
-### Step 5: Start the Application
+#### Step 2: Start the Application
 
 ```bash
 # Terminal 1: Start the API server
@@ -87,12 +129,63 @@ python -m backend.main
 npm run dev
 ```
 
-### Step 6: Use DeepWiki!
+#### Step 3: Use CodeWiki!
 
 1. Open [http://localhost:3000](http://localhost:3000) in your browser
 2. Enter a repository URL (e.g., `https://github.com/microsoft/autogen`)
 3. Enter your personal access token
 4. Click "Generate Wiki", it would take some time to generate wiki for large code base. You can check back on the homepage.
+
+
+## How to deploy to Azure cloud
+
+- locate deploy-azure.ps1 under root
+- fill the `Configuration` section
+- Run the script, which will create an Azure Container Registry, pull images, setup container env, and upload code.
+
+### Deployment Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Azure Container Apps                          │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              codewiki (Container App)                    │   │
+│  │  ┌─────────────────┐    ┌──────────────────────────┐   │   │
+│  │  │   Next.js       │    │       FastAPI            │   │   │
+│  │  │   Frontend      │───▶│       Backend            │   │   │
+│  │  │   :3000         │    │       :8001              │   │   │
+│  │  └─────────────────┘    └──────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│                    Managed Identity                              │
+│                              │                                   │
+└──────────────────────────────┼───────────────────────────────────┘
+                               │
+         ┌─────────────────────┼─────────────────────┐
+         │                     │                     │
+         ▼                     ▼                     ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│  Azure OpenAI   │  │  Azure Blob     │  │  Application    │
+│  - GPT Models   │  │  Storage        │  │  Insights       │
+│  - Embeddings   │  │  - Wiki Data    │  │  - Logs         │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+```
+
+### Useful Azure CLI Commands
+
+```bash
+# View container app logs
+az containerapp logs show -n codewiki -g RG-ORCAS-DEEPWIKI --follow
+
+# Restart the app
+az containerapp revision restart -n codewiki -g RG-ORCAS-DEEPWIKI
+
+# Scale the app
+az containerapp update -n codewiki -g RG-ORCAS-DEEPWIKI --min-replicas 2 --max-replicas 10
+
+# Get app URL
+az containerapp show -n codewiki -g RG-ORCAS-DEEPWIKI --query properties.configuration.ingress.fqdn -o tsv
+
 
 ##  How It Works
 

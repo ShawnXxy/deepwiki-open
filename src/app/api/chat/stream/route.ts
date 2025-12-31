@@ -1,16 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Get the server base URL, adapting to current request hostname for network access
+// Get the server base URL for backend API calls
+// In containerized deployments, frontend and backend run in the same container
+// Frontend on port 3000, Backend on port 8001, both accessible via localhost internally
 const getTargetServerUrl = (req: NextRequest) => {
   // Use environment variable if explicitly set
   if (process.env.SERVER_BASE_URL) {
     return process.env.SERVER_BASE_URL;
   }
   
-  // Derive from the current request hostname
-  const hostname = req.headers.get('host')?.split(':')[0] || 'localhost';
-  const protocol = req.headers.get('x-forwarded-proto') || 'http';
-  return `${protocol}://${hostname}:8001`;
+  // In server-side API routes, always use localhost:8001 to reach the backend
+  // This works in:
+  // - Local development (both services on localhost)
+  // - Docker containers (both services in same container)
+  // - Azure Container Apps (both services in same container)
+  // The external hostname (e.g., *.azurecontainerapps.io) only exposes port 3000/443
+  return 'http://localhost:8001';
 };
 
 // This is a fallback HTTP implementation that will be used if WebSockets are not available

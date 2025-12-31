@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+
+# Development files
+.git/
+.github/
+*.md
+!README.md
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test and coverage
+coverage/
+.pytest_cache/
+htmlcov/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Misc
+*.tar.gz
+*.zip
