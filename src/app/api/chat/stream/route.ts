@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
 
     // Make the actual request to the backend service with increased timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 600000); // 10 minute timeout for large repos
 
     try {
       const backendResponse = await fetch(targetUrl, {

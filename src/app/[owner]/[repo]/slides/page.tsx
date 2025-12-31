@@ -274,19 +274,15 @@ Give me the numbered list with brief descriptions for each slide. Be creative bu
       let planContent = '';
 
       try {
-        // Create WebSocket URL with proper network detection
-        const getWebSocketUrl = () => {
-          // For client-side, derive from current window location
-          if (typeof window !== 'undefined') {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const hostname = window.location.hostname;
-            const port = '8001'; // Backend port
-            return `${protocol}//${hostname}:${port}/ws/chat`;
-          }
-          
-          // Fallback for server-side rendering
-          return 'ws://localhost:8001/ws/chat';
-        };
+        // Import network config utilities
+        const { getWebSocketUrl, shouldUseWebSocket } = await import('@/utils/networkConfig');
+        
+        // Only attempt WebSocket in localhost environments where port 8001 is accessible
+        // In cloud deployments (Azure, etc.), skip directly to HTTP proxy
+        if (!shouldUseWebSocket()) {
+          console.log('Cloud environment detected, using HTTP proxy instead of WebSocket');
+          throw new Error('Skip WebSocket in cloud environment');
+        }
         
         const wsUrl = getWebSocketUrl();
         console.log(`Attempting WebSocket connection to: ${wsUrl}`);
@@ -562,19 +558,15 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
         let slideContent = '';
 
         try {
-          // Create WebSocket URL with proper network detection
-          const getWebSocketUrl = () => {
-            // For client-side, derive from current window location
-            if (typeof window !== 'undefined') {
-              const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-              const hostname = window.location.hostname;
-              const port = '8001'; // Backend port
-              return `${protocol}//${hostname}:${port}/ws/chat`;
-            }
-            
-            // Fallback for server-side rendering
-            return 'ws://localhost:8001/ws/chat';
-          };
+          // Import network config utilities
+          const { getWebSocketUrl, shouldUseWebSocket } = await import('@/utils/networkConfig');
+          
+          // Only attempt WebSocket in localhost environments where port 8001 is accessible
+          // In cloud deployments (Azure, etc.), skip directly to HTTP proxy
+          if (!shouldUseWebSocket()) {
+            console.log('Cloud environment detected, using HTTP proxy instead of WebSocket');
+            throw new Error('Skip WebSocket in cloud environment');
+          }
           
           const wsUrl = getWebSocketUrl();
           console.log(`Attempting WebSocket connection to: ${wsUrl}`);
