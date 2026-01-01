@@ -151,7 +151,8 @@ def _get_app_insights_config() -> Optional[dict]:
         dict with 'enabled', 'name', 'connection_string' or None if not configured
     """
     try:
-        config_path = Path(__file__).parent / "config" / "infra.json"
+        # Path: tools/logger.py -> backend/config/infra.json
+        config_path = Path(__file__).parent.parent / "config" / "infra.json"
         if not config_path.exists():
             return None
         
@@ -167,7 +168,8 @@ def _get_app_insights_config() -> Optional[dict]:
 def _get_managed_identity_client_id() -> Optional[str]:
     """Get managed identity client ID from infra.json."""
     try:
-        config_path = Path(__file__).parent / "config" / "infra.json"
+        # Path: tools/logger.py -> backend/config/infra.json
+        config_path = Path(__file__).parent.parent / "config" / "infra.json"
         if not config_path.exists():
             return None
         
@@ -360,7 +362,8 @@ def setup_logging(
     Log files are named as {prefix}-yymmdd.log and rotate daily at midnight.
     """
     # Determine log directory at project root
-    base_dir = Path(__file__).parent.parent  # Go up from backend to project root
+    # Path: tools/logger.py -> backend -> project root
+    base_dir = Path(__file__).parent.parent.parent
     log_dir = base_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     
@@ -486,7 +489,8 @@ def get_frontend_logger():
         _frontend_logger.propagate = False  # Don't propagate to root logger
         
         # Setup file handler for frontend logs at project root
-        base_dir = Path(__file__).parent.parent
+        # Path: tools/logger.py -> backend -> project root
+        base_dir = Path(__file__).parent.parent.parent
         log_dir = base_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         

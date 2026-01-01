@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-from backend.logging_config import setup_logging
+from backend.tools.logger import setup_logging
 
 # Configure logging
 setup_logging()

@@ -26,7 +26,7 @@ from backend.rag import RAG
 _executor = ThreadPoolExecutor(max_workers=4)
 
 # Configure logging
-from backend.logging_config import setup_logging
+from backend.tools.logger import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
