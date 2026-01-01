@@ -9,6 +9,7 @@ interface ApiProcessedProject {
   repo_type: string;
   submittedAt: number;
   language: string;
+  comprehensive: boolean;
 }
 // Payload for deleting a project cache
 interface DeleteProjectCachePayload {
@@ -16,6 +17,7 @@ interface DeleteProjectCachePayload {
   repo: string;
   repo_type: string;
   language: string;
+  comprehensive: boolean;
 }
 
 /** Type guard to validate DeleteProjectCachePayload at runtime */
@@ -26,7 +28,8 @@ function isDeleteProjectCachePayload(obj: unknown): obj is DeleteProjectCachePay
     'owner' in obj && typeof (obj as Record<string, unknown>).owner === 'string' && ((obj as Record<string, unknown>).owner as string).trim() !== '' &&
     'repo' in obj && typeof (obj as Record<string, unknown>).repo === 'string' && ((obj as Record<string, unknown>).repo as string).trim() !== '' &&
     'repo_type' in obj && typeof (obj as Record<string, unknown>).repo_type === 'string' && ((obj as Record<string, unknown>).repo_type as string).trim() !== '' &&
-    'language' in obj && typeof (obj as Record<string, unknown>).language === 'string' && ((obj as Record<string, unknown>).language as string).trim() !== ''
+    'language' in obj && typeof (obj as Record<string, unknown>).language === 'string' && ((obj as Record<string, unknown>).language as string).trim() !== '' &&
+    'comprehensive' in obj && typeof (obj as Record<string, unknown>).comprehensive === 'boolean'
   );
 }
 
@@ -78,12 +81,12 @@ export async function DELETE(request: Request) {
     const body: unknown = await request.json();
     if (!isDeleteProjectCachePayload(body)) {
       return NextResponse.json(
-        { error: 'Invalid request body: owner, repo, repo_type, and language are required and must be non-empty strings.' },
+        { error: 'Invalid request body: owner, repo, repo_type, language, and comprehensive are required.' },
         { status: 400 }
       );
     }
-    const { owner, repo, repo_type, language } = body;
-    const params = new URLSearchParams({ owner, repo, repo_type, language });
+    const { owner, repo, repo_type, language, comprehensive } = body;
+    const params = new URLSearchParams({ owner, repo, repo_type, language, comprehensive: String(comprehensive) });
     const response = await fetch(`${CACHE_API_ENDPOINT}?${params}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },

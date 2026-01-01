@@ -13,6 +13,7 @@ interface ProcessedProject {
   repo_type: string;
   submittedAt: number;
   language: string;
+  comprehensive: boolean;
 }
 
 interface ProcessedProjectsProps {
@@ -102,7 +103,8 @@ export default function ProcessedProjects({
   };
 
   const handleDelete = async (project: ProcessedProject) => {
-    if (!confirm(`Are you sure you want to delete project ${project.name}?`)) {
+    const modeLabel = project.comprehensive ? 'comprehensive' : 'concise';
+    if (!confirm(`Are you sure you want to delete the ${modeLabel} wiki for ${project.name}?`)) {
       return;
     }
     try {
@@ -114,6 +116,7 @@ export default function ProcessedProjects({
           repo: project.repo,
           repo_type: project.repo_type,
           language: project.language,
+          comprehensive: project.comprehensive,
         }),
       });
       if (!response.ok) {
@@ -205,7 +208,7 @@ export default function ProcessedProjects({
                   <FaTimes className="h-4 w-4" />
                 </button>
                 <Link
-                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}`}
+                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}`}
                   className="block"
                 >
                   <h3 className="text-lg font-semibold text-[var(--link-color)] hover:underline mb-2 line-clamp-2">
@@ -217,6 +220,13 @@ export default function ProcessedProjects({
                     </span>
                     <span className="px-2 py-1 text-xs bg-[var(--background)] text-[var(--muted)] rounded-full border border-[var(--border-color)]">
                       {project.language}
+                    </span>
+                    <span className={`px-2 py-1 text-xs rounded-full border ${
+                      project.comprehensive
+                        ? 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20'
+                        : 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20'
+                    }`}>
+                      {project.comprehensive ? 'comprehensive' : 'concise'}
                     </span>
                   </div>
                   <p className="text-xs text-[var(--muted)]">
@@ -235,7 +245,7 @@ export default function ProcessedProjects({
                   <FaTimes className="h-4 w-4" />
                 </button>
                 <Link
-                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}`}
+                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}`}
                   className="flex items-center justify-between"
                 >
                   <div className="flex-1 min-w-0">
@@ -243,12 +253,19 @@ export default function ProcessedProjects({
                       {project.name}
                     </h3>
                     <p className="text-xs text-[var(--muted)] mt-1">
-                      {t('processedOn')} {new Date(project.submittedAt).toLocaleDateString()} • {project.repo_type} • {project.language}
+                      {t('processedOn')} {new Date(project.submittedAt).toLocaleDateString()} • {project.repo_type} • {project.language} • {project.comprehensive ? 'comprehensive' : 'concise'}
                     </p>
                   </div>
                   <div className="flex gap-2 ml-4">
                     <span className="px-2 py-1 text-xs bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] rounded border border-[var(--accent-primary)]/20">
                       {project.repo_type}
+                    </span>
+                    <span className={`px-2 py-1 text-xs rounded border ${
+                      project.comprehensive
+                        ? 'bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20'
+                        : 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20'
+                    }`}>
+                      {project.comprehensive ? 'comprehensive' : 'concise'}
                     </span>
                   </div>
                 </Link>

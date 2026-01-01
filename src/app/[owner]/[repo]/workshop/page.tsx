@@ -78,6 +78,7 @@ export default function WorkshopPage() {
   const isCustomModelParam = searchParams.get('is_custom_model') === 'true';
   const customModelParam = searchParams.get('custom_model') || '';
   const language = searchParams.get('language') || 'en';
+  const isComprehensive = searchParams.get('comprehensive') !== 'false'; // Default to true
 
   // Import language context for translations
   const { messages } = useLanguage();
@@ -141,6 +142,7 @@ export default function WorkshopPage() {
         repo: repoInfo.repo,
         repo_type: repoInfo.type,
         language: language,
+        comprehensive: isComprehensive.toString(),
       });
       const response = await fetch(`/api/wiki_cache?${params.toString()}`);
 
@@ -163,7 +165,7 @@ export default function WorkshopPage() {
       console.error('Error loading from server cache:', error);
       return null;
     }
-  }, [repoInfo.owner, repoInfo.repo, repoInfo.type, language]);
+  }, [repoInfo.owner, repoInfo.repo, repoInfo.type, language, isComprehensive]);
 
   // Generate workshop content
   const generateWorkshopContent = useCallback(async () => {
