@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { FaTimes, FaTh, FaList } from 'react-icons/fa';
+import { FaTimes, FaTh, FaList, FaBookOpen, FaFileAlt } from 'react-icons/fa';
 
 // Interface should match the structure from the API
 interface ProcessedProject {
@@ -34,6 +34,7 @@ export default function ProcessedProjects({
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
+  const [wikiTypeFilter, setWikiTypeFilter] = useState<'all' | 'comprehensive' | 'concise'>('all');
 
   // Default messages fallback
   const defaultMessages = {
@@ -81,22 +82,30 @@ export default function ProcessedProjects({
     fetchProjects();
   }, []);
 
-  // Filter projects based on search query
+  // Filter projects based on search query and wiki type
   const filteredProjects = useMemo(() => {
-    if (!searchQuery.trim()) {
-      return maxItems ? projects.slice(0, maxItems) : projects;
+    let filtered = projects;
+
+    // Apply wiki type filter
+    if (wikiTypeFilter === 'comprehensive') {
+      filtered = filtered.filter(project => project.comprehensive === true);
+    } else if (wikiTypeFilter === 'concise') {
+      filtered = filtered.filter(project => project.comprehensive === false);
     }
 
-    const query = searchQuery.toLowerCase();
-    const filtered = projects.filter(project => 
-      project.name.toLowerCase().includes(query) ||
-      project.owner.toLowerCase().includes(query) ||
-      project.repo.toLowerCase().includes(query) ||
-      project.repo_type.toLowerCase().includes(query)
-    );
+    // Apply search query filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(project => 
+        project.name.toLowerCase().includes(query) ||
+        project.owner.toLowerCase().includes(query) ||
+        project.repo.toLowerCase().includes(query) ||
+        project.repo_type.toLowerCase().includes(query)
+      );
+    }
 
     return maxItems ? filtered.slice(0, maxItems) : filtered;
-  }, [projects, searchQuery, maxItems]);
+  }, [projects, searchQuery, maxItems, wikiTypeFilter]);
 
   const clearSearch = () => {
     setSearchQuery('');
@@ -162,6 +171,45 @@ export default function ProcessedProjects({
               <FaTimes className="h-4 w-4" />
             </button>
           )}
+        </div>
+
+        {/* Wiki Type Filter Toggle */}
+        <div className="flex items-center bg-[var(--background)] border border-[var(--border-color)] rounded-lg p-1">
+          <button
+            onClick={() => setWikiTypeFilter('all')}
+            className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+              wikiTypeFilter === 'all'
+                ? 'bg-[var(--accent-primary)] text-white'
+                : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--card-bg)]'
+            }`}
+            title="Show All Wikis"
+          >
+            All
+          </button>
+          <button
+            onClick={() => setWikiTypeFilter('comprehensive')}
+            className={`px-2 py-1.5 rounded text-sm transition-colors flex items-center gap-1 ${
+              wikiTypeFilter === 'comprehensive'
+                ? 'bg-green-600 text-white'
+                : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--card-bg)]'
+            }`}
+            title="Comprehensive Wikis"
+          >
+            <FaBookOpen className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Full</span>
+          </button>
+          <button
+            onClick={() => setWikiTypeFilter('concise')}
+            className={`px-2 py-1.5 rounded text-sm transition-colors flex items-center gap-1 ${
+              wikiTypeFilter === 'concise'
+                ? 'bg-orange-500 text-white'
+                : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--card-bg)]'
+            }`}
+            title="Concise Wikis"
+          >
+            <FaFileAlt className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Brief</span>
+          </button>
         </div>
 
         {/* View Toggle */}

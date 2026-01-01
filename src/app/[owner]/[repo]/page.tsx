@@ -15,7 +15,7 @@ import { extractUrlDomain, extractUrlPath } from '@/utils/urlDecoder';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FaBitbucket, FaBookOpen, FaComments, FaDownload, FaExclamationTriangle, FaFileExport, FaFolder, FaGithub, FaGitlab, FaHome, FaSync, FaTimes } from 'react-icons/fa';
+import { FaBitbucket, FaBookOpen, FaCog, FaComments, FaDownload, FaExclamationTriangle, FaFileExport, FaFolder, FaGithub, FaGitlab, FaHome, FaSync, FaTimes } from 'react-icons/fa';
 // Define the WikiSection and WikiStructure types directly in this file
 // since the imported types don't have the sections and rootSections properties
 interface WikiSection {
@@ -1785,12 +1785,18 @@ IMPORTANT:
         return;
       }
 
+      // Add timeout to prevent hanging when backend is slow/unavailable
+      const deleteController = new AbortController();
+      const deleteTimeout = setTimeout(() => deleteController.abort(), 15000); // 15 second timeout
+      
       const response = await fetch(`/api/wiki_cache?${params.toString()}`, {
         method: 'DELETE',
         headers: {
           'Accept': 'application/json',
-        }
+        },
+        signal: deleteController.signal
       });
+      clearTimeout(deleteTimeout);
 
       if (response.ok) {
         console.log('Server-side wiki cache cleared successfully.');
@@ -1822,10 +1828,12 @@ IMPORTANT:
     if (newToken) {
       // Update current token state
       setCurrentToken(newToken);
-      // Update the URL parameters to include the new token
-      const currentUrl = new URL(window.location.href);
-      currentUrl.searchParams.set('token', newToken);
-      window.history.replaceState({}, '', currentUrl.toString());
+      // Also update the token state to trigger dependent useEffects
+      setToken(newToken);
+      // Store in sessionStorage for persistence
+      const tokenKey = `deepwiki_token_${effectiveRepoInfo.owner}_${effectiveRepoInfo.repo}`;
+      sessionStorage.setItem(tokenKey, newToken);
+      console.log('[Token] Token updated via settings modal');
     }
 
     // Proceed with the rest of the refresh logic
@@ -1881,7 +1889,15 @@ IMPORTANT:
             language: language,
             comprehensive: isComprehensiveView.toString(),
           });
-          const response = await fetch(`/api/wiki_cache?${params.toString()}`);
+          
+          // Add timeout to prevent hanging when backend is slow/unavailable
+          const cacheController = new AbortController();
+          const cacheTimeout = setTimeout(() => cacheController.abort(), 10000); // 10 second timeout
+          
+          const response = await fetch(`/api/wiki_cache?${params.toString()}`, {
+            signal: cacheController.signal
+          });
+          clearTimeout(cacheTimeout);
 
           if (response.ok) {
             const cachedData = await response.json(); // Returns null if no cache
@@ -2041,10 +2057,15 @@ IMPORTANT:
 
         // If we reached here, either there was no cache, it was invalid, or an error occurred
         // For Azure DevOps, we need a token to fetch from the API
-        if (effectiveRepoInfo.type === 'azuredevops' && !token) {
-          console.log('[Wiki Init] Cache miss for Azure DevOps repo, waiting for token to load...');
-          // Reset effectRan so we can retry when token becomes available
-          effectRan.current = false;
+        // Check both token (from sessionStorage/URL) and currentToken (may be updated via settings)
+        const effectiveToken = token || currentToken;
+        if (effectiveRepoInfo.type === 'azuredevops' && !effectiveToken) {
+          console.log('[Wiki Init] Cache miss for Azure DevOps repo, no token available');
+          // Stop loading and show error prompting for token
+          setIsLoading(false);
+          setLoadingMessage(undefined);
+          setError('Azure DevOps repositories require a Personal Access Token (PAT) to generate wiki. Please click the Settings button below to provide your PAT.');
+          // Don't reset effectRan - user needs to provide token first via the modal
           return;
         }
         
@@ -2060,7 +2081,7 @@ IMPORTANT:
 
     // Clean up function for this effect is not strictly necessary for loadData,
     // but keeping the main unmount cleanup in the other useEffect
-  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView, token]);
+  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView, token, currentToken]);
 
   // Save wiki to server-side cache when generation is complete
   useEffect(() => {
@@ -2094,13 +2115,20 @@ IMPORTANT:
               provider: selectedProviderState,
               model: selectedModelState
             };
+            
+            // Add timeout to prevent hanging when backend is slow/unavailable
+            const saveController = new AbortController();
+            const saveTimeout = setTimeout(() => saveController.abort(), 30000); // 30 second timeout for POST (larger payload)
+            
             const response = await fetch(`/api/wiki_cache`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify(dataToCache),
+              signal: saveController.signal
             });
+            clearTimeout(saveTimeout);
 
             if (response.ok) {
               console.log('Wiki data successfully saved to server cache');
@@ -2216,7 +2244,17 @@ IMPORTANT:
                 messages.repoPage?.errorMessageDefault || 'Please check that your repository exists and is public. Valid formats are "owner/repo", "https://github.com/owner/repo", "https://gitlab.com/owner/repo", "https://bitbucket.org/owner/repo", or local folder paths like "C:\\path\\to\\folder" or "/path/to/folder".'
               )}
             </p>
-            <div className="mt-5">
+            <div className="mt-5 flex gap-3">
+              {/* Show Settings button for Azure DevOps token error */}
+              {effectiveRepoInfo.type === 'azuredevops' && error.includes('Personal Access Token') && (
+                <button
+                  onClick={() => setIsModelSelectionModalOpen(true)}
+                  className="btn-japanese px-5 py-2 inline-flex items-center gap-1.5"
+                >
+                  <FaCog className="text-sm" />
+                  {messages.repoPage?.settings || 'Settings'}
+                </button>
+              )}
               <Link
                 href="/"
                 className="btn-japanese px-5 py-2 inline-flex items-center gap-1.5"

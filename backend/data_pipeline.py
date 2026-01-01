@@ -10,8 +10,8 @@ import base64
 import glob
 from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
-from backend.config import configs, DEFAULT_EXCLUDED_DIRS, DEFAULT_EXCLUDED_FILES
-from backend.blob_storage import get_blob_storage_client, is_blob_storage_configured
+from backend.config import configs, get_file_filters_config
+from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
 from urllib.parse import urlparse, urlunparse, quote
 import requests
 from requests.exceptions import RequestException
@@ -244,17 +244,10 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
         excluded_dirs = []
         excluded_files = []
     else:
-        # Exclusion mode: use default exclusions plus any additional ones
-        final_excluded_dirs = set(DEFAULT_EXCLUDED_DIRS)
-        final_excluded_files = set(DEFAULT_EXCLUDED_FILES)
-
-        # Add any additional excluded directories from config
-        if "file_filters" in configs and "excluded_dirs" in configs["file_filters"]:
-            final_excluded_dirs.update(configs["file_filters"]["excluded_dirs"])
-
-        # Add any additional excluded files from config
-        if "file_filters" in configs and "excluded_files" in configs["file_filters"]:
-            final_excluded_files.update(configs["file_filters"]["excluded_files"])
+        # Exclusion mode: load filters from repo.json (single source of truth)
+        file_filters = get_file_filters_config()
+        final_excluded_dirs = set(file_filters["excluded_dirs"])
+        final_excluded_files = set(file_filters["excluded_files"])
 
         # Add any explicitly provided excluded directories and files
         if excluded_dirs is not None:

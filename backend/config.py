@@ -13,11 +13,15 @@ from typing import List, Union, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# Import Azure AI client
-from backend.azureai_client import AzureAIClient
+# NOTE: AzureAIClient is imported lazily in get_client_classes() to avoid circular imports
+# The import chain: config.py -> clients/azureai_client.py -> clients/__init__.py
+#                   -> clients/blob_client.py -> config.py (circular!)
 
 # Infrastructure configuration (loaded later via load_json_config)
 _infra_config: Optional[Dict[str, Any]] = None
+
+# Cached client classes (populated lazily)
+_client_classes: Optional[Dict[str, Any]] = None
 
 
 def get_infra_config() -> Dict[str, Any]:
@@ -168,10 +172,22 @@ WIKI_AUTH_CODE = os.environ.get('DEEPWIKI_AUTH_CODE', '')
 # Get configuration directory from environment variable, or use default if not set
 CONFIG_DIR = os.environ.get('DEEPWIKI_CONFIG_DIR', None)
 
-# Client class mapping (Azure only)
-CLIENT_CLASSES = {
-    "AzureAIClient": AzureAIClient,
-}
+
+def get_client_classes() -> Dict[str, Any]:
+    """
+    Get the client class mapping. Imports AzureAIClient lazily to avoid circular imports.
+    
+    Returns:
+        Dict mapping class name strings to actual class objects
+    """
+    global _client_classes
+    if _client_classes is None:
+        # Lazy import to avoid circular dependency
+        from backend.clients.azureai_client import AzureAIClient
+        _client_classes = {
+            "AzureAIClient": AzureAIClient,
+        }
+    return _client_classes
 
 
 def replace_env_placeholders(
@@ -244,13 +260,16 @@ def load_generator_config():
         if "temperature" in azure_config:
             generator_config["generator"]["model_kwargs"]["temperature"] = azure_config["temperature"]
 
+    # Get client classes lazily to avoid circular imports
+    client_classes = get_client_classes()
+    
     # Add client class for Azure provider (legacy support)
     if "providers" in generator_config:
         for provider_id, provider_config in generator_config["providers"].items():
             if provider_id == "azure":
-                provider_config["model_client"] = AzureAIClient
-            elif provider_config.get("client_class") in CLIENT_CLASSES:
-                provider_config["model_client"] = CLIENT_CLASSES[provider_config["client_class"]]
+                provider_config["model_client"] = client_classes.get("AzureAIClient")
+            elif provider_config.get("client_class") in client_classes:
+                provider_config["model_client"] = client_classes[provider_config["client_class"]]
 
     return generator_config
 
@@ -265,6 +284,9 @@ def load_embedder_config():
     
     # Get initialize_kwargs for Azure OpenAI client
     initialize_kwargs = get_azure_openai_embedding_config()
+    
+    # Get client classes lazily to avoid circular imports
+    client_classes = get_client_classes()
     
     # Process embedder configurations
     for key in ["embedder", "embedder_azure"]:
@@ -282,8 +304,8 @@ def load_embedder_config():
             # Process client classes
             if "client_class" in embedder_config[key]:
                 class_name = embedder_config[key]["client_class"]
-                if class_name in CLIENT_CLASSES:
-                    embedder_config[key]["model_client"] = CLIENT_CLASSES[class_name]
+                if class_name in client_classes:
+                    embedder_config[key]["model_client"] = client_classes[class_name]
 
     return embedder_config
 
@@ -319,23 +341,53 @@ def is_ollama_embedder() -> bool:
 
 
 def load_repo_config():
-    """Load repository and file filters configuration."""
+    """Load repository and file filters configuration from repo.json.
+    
+    The repo.json file is the single source of truth for file filtering.
+    See backend/config/repo.json for the complete filter lists.
+    """
     return load_json_config("repo.json")
+
+
+# Minimal fallback defaults if repo.json is missing or malformed
+# The authoritative source is backend/config/repo.json
+_FALLBACK_EXCLUDED_DIRS: List[str] = [
+    "./.venv/", "./venv/", "./node_modules/", "./.git/", "./__pycache__/",
+    "./dist/", "./build/", "./.idea/", "./.vscode/"
+]
+
+_FALLBACK_EXCLUDED_FILES: List[str] = [
+    "*.lock", ".DS_Store", "*.env", "*.pyc", "*.exe", "*.dll", "*.so"
+]
 
 
 def get_file_filters_config() -> Dict[str, List[str]]:
     """
     Get file filters configuration from repo.json.
     
+    This is the single source of truth for file filtering.
+    Falls back to minimal defaults only if repo.json is missing.
+    
     Returns:
         Dict containing excluded_dirs and excluded_files lists
     """
     repo_config = load_repo_config()
     file_filters = repo_config.get("file_filters", {}) if repo_config else {}
-    
+
+    excluded_dirs = file_filters.get("excluded_dirs")
+    excluded_files = file_filters.get("excluded_files")
+
+    # Only use fallbacks if repo.json doesn't have the config
+    if excluded_dirs is None:
+        logger.warning("excluded_dirs not found in repo.json, using fallback defaults")
+        excluded_dirs = _FALLBACK_EXCLUDED_DIRS
+    if excluded_files is None:
+        logger.warning("excluded_files not found in repo.json, using fallback defaults")
+        excluded_files = _FALLBACK_EXCLUDED_FILES
+
     return {
-        "excluded_dirs": file_filters.get("excluded_dirs", DEFAULT_EXCLUDED_DIRS),
-        "excluded_files": file_filters.get("excluded_files", DEFAULT_EXCLUDED_FILES)
+        "excluded_dirs": excluded_dirs,
+        "excluded_files": excluded_files
     }
 
 
@@ -371,41 +423,6 @@ def load_lang_config():
 
     return loaded_config
 
-
-# Default excluded directories and files
-DEFAULT_EXCLUDED_DIRS: List[str] = [
-    "./.venv/", "./venv/", "./env/", "./virtualenv/",
-    "./node_modules/", "./bower_components/", "./jspm_packages/",
-    "./.git/", "./.svn/", "./.hg/", "./.bzr/",
-    "./__pycache__/", "./.pytest_cache/", "./.mypy_cache/",
-    "./.ruff_cache/", "./.coverage/",
-    "./dist/", "./build/", "./out/", "./target/", "./bin/", "./obj/",
-    "./docs/", "./_docs/", "./site-docs/", "./_site/",
-    "./.idea/", "./.vscode/", "./.vs/", "./.eclipse/", "./.settings/",
-    "./logs/", "./log/", "./tmp/", "./temp/",
-]
-
-DEFAULT_EXCLUDED_FILES: List[str] = [
-    "yarn.lock", "pnpm-lock.yaml", "npm-shrinkwrap.json", "poetry.lock",
-    "Pipfile.lock", "requirements.txt.lock", "Cargo.lock", "composer.lock",
-    ".lock", ".DS_Store", "Thumbs.db", "desktop.ini", "*.lnk", ".env",
-    ".env.*", "*.env", "*.cfg", "*.ini", ".flaskenv", ".gitignore",
-    ".gitattributes", ".gitmodules", ".github", ".gitlab-ci.yml",
-    ".prettierrc", ".eslintrc", ".eslintignore", ".stylelintrc",
-    ".editorconfig", ".jshintrc", ".pylintrc", ".flake8", "mypy.ini",
-    "pyproject.toml", "tsconfig.json", "webpack.config.js", "babel.config.js",
-    "rollup.config.js", "jest.config.js", "karma.conf.js", "vite.config.js",
-    "next.config.js", "*.min.js", "*.min.css", "*.bundle.js", "*.bundle.css",
-    "*.map", "*.gz", "*.zip", "*.tar", "*.tgz", "*.rar", "*.7z", "*.iso",
-    "*.dmg", "*.img", "*.msix", "*.appx", "*.appxbundle", "*.xap", "*.ipa",
-    "*.deb", "*.rpm", "*.msi", "*.exe", "*.dll", "*.so", "*.dylib", "*.o",
-    "*.obj", "*.jar", "*.war", "*.ear", "*.jsm", "*.class", "*.pyc", "*.pyd",
-    "*.pyo", "__pycache__", "*.a", "*.lib", "*.lo", "*.la", "*.slo", "*.dSYM",
-    "*.egg", "*.egg-info", "*.dist-info", "*.eggs", "node_modules",
-    "bower_components", "jspm_packages", "lib-cov", "coverage", "htmlcov",
-    ".nyc_output", ".tox", "dist", "build", "bld", "out", "bin", "target",
-    "packages/*/dist", "packages/*/build", ".output"
-]
 
 # Initialize empty configuration
 configs = {}
@@ -446,9 +463,11 @@ if embedder_config:
         # Create default Azure OpenAI embedder configuration
         azure_config = get_azure_openai_embedding_config()
         embedding_infra = get_azure_openai_embedding_config_from_infra()
+        # Get client class lazily to avoid circular imports
+        client_classes = get_client_classes()
         configs["embedder"] = {
             "client_class": "AzureAIClient",
-            "model_client": AzureAIClient,
+            "model_client": client_classes.get("AzureAIClient"),
             "batch_size": 10,
             "model_kwargs": {
                 "model": embedding_infra.get("deployment", "text-embedding-3-large"),
@@ -488,18 +507,21 @@ def get_model_config(provider=None, model=None):
     """
     # Get Azure config from infra.json
     azure_config = get_azure_openai_config()
-    
+
     # Always use model from infra.json - ignore passed model parameter
     deployment = azure_config.get("deployment", "o4-mini")
-    
+
     # Get temperature from infra.json
     temperature = azure_config.get("temperature", 1.0)
 
     logger.info(f"Using Azure OpenAI deployment from infra.json: {deployment}")
 
+    # Get client class lazily to avoid circular imports
+    client_classes = get_client_classes()
+
     # Prepare Azure configuration
     result = {
-        "model_client": AzureAIClient,
+        "model_client": client_classes.get("AzureAIClient"),
         "initialize_kwargs": get_azure_openai_text_config(),
         "model_kwargs": {
             "model": deployment,

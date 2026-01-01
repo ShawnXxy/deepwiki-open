@@ -10,8 +10,8 @@ from pydantic import BaseModel, Field
 import asyncio
 
 # Configure logging
-from backend.logging_config import setup_logging, log_frontend_message
-from backend.blob_storage import get_blob_storage_client, is_blob_storage_configured
+from backend.tools.logger import setup_logging, log_frontend_message
+from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
 
 setup_logging()
 logger = logging.getLogger(__name__)

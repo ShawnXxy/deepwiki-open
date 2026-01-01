@@ -19,14 +19,14 @@ from backend.config import (
     get_azure_deployment_name,
 )
 from backend.data_pipeline import count_tokens, get_file_content
-from backend.azureai_client import AzureAIClient
+from backend.clients.azureai_client import AzureAIClient
 from backend.rag import RAG
 
 # Thread pool for running blocking operations (like embedding)
 _executor = ThreadPoolExecutor(max_workers=4)
 
 # Configure logging
-from backend.logging_config import setup_logging
+from backend.tools.logger import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)
