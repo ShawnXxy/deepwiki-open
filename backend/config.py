@@ -14,7 +14,7 @@ from typing import List, Union, Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 # Import Azure AI client
-from backend.azureai_client import AzureAIClient
+from backend.clients.azureai_client import AzureAIClient
 
 # Infrastructure configuration (loaded later via load_json_config)
 _infra_config: Optional[Dict[str, Any]] = None

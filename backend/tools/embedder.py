@@ -5,7 +5,7 @@ Embedder module for Azure OpenAI embeddings.
 import adalflow as adal
 
 from backend.config import configs
-from backend.azureai_client import AzureAIClient
+from backend.clients.azureai_client import AzureAIClient
 
 
 def get_embedder(embedder_type: str = None) -> adal.Embedder:

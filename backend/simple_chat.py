@@ -17,7 +17,7 @@ from backend.config import (
     get_azure_openai_config, get_managed_identity_client_id
 )
 from backend.data_pipeline import count_tokens, get_file_content
-from backend.azureai_client import AzureAIClient
+from backend.clients.azureai_client import AzureAIClient
 from backend.rag import RAG
 from backend.prompts import (
     DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
