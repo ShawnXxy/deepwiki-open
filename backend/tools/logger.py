@@ -348,6 +348,7 @@ def setup_logging(
     # Quiet down verbose third-party loggers
     noisy_loggers = [
         "azure", "azure.core", "azure.identity",
+        "openai", "openai._base_client",  # Suppress request_id spam
         "httpx", "httpcore",
         "urllib3", "urllib3.connectionpool",  # Very verbose connection logs
         "watchfiles", "watchfiles.main",

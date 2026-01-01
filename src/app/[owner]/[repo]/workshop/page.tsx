@@ -144,7 +144,15 @@ export default function WorkshopPage() {
         language: language,
         comprehensive: isComprehensive.toString(),
       });
-      const response = await fetch(`/api/wiki_cache?${params.toString()}`);
+      
+      // Add timeout to prevent hanging when backend is slow/unavailable
+      const cacheController = new AbortController();
+      const cacheTimeout = setTimeout(() => cacheController.abort(), 10000); // 10 second timeout
+      
+      const response = await fetch(`/api/wiki_cache?${params.toString()}`, {
+        signal: cacheController.signal
+      });
+      clearTimeout(cacheTimeout);
 
       if (response.ok) {
         const cachedData = await response.json();

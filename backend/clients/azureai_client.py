@@ -648,34 +648,47 @@ class AzureAIClient(ModelClient):
 
 
 class AzureBatchEmbedder(DataComponent):
-    """Batch embedder specifically designed for Azure OpenAI API with intelligent rate limiting"""
+    """Batch embedder specifically designed for Azure OpenAI API with intelligent rate limiting and checkpoint saving"""
 
-    def __init__(self, embedder, batch_size: int = 100, embedding_cache_file_name: str = "default") -> None:
+    def __init__(self, embedder, batch_size: int = 100, embedding_cache_file_name: str = "default", 
+                 checkpoint_interval: int = 10) -> None:
         super().__init__(batch_size=batch_size)
         self.embedder = embedder
         self.batch_size = batch_size
+        self.checkpoint_interval = checkpoint_interval  # Save every N batches
+        
         # Reduce batch size for Azure OpenAI to avoid rate limiting
         if self.batch_size > 100:
             log.warning(f"Azure batch embedder initialization, batch size: {self.batch_size}, "
                        f"reducing to 100 for better rate limit handling")
             self.batch_size = 100
-        self.cache_path = f'./embedding_cache/{embedding_cache_file_name}_{self.embedder.__class__.__name__}_azure_embeddings.pkl'
+        
+        # Use proper cache directory under adalflow root
+        from adalflow.utils import get_adalflow_default_root_path
+        cache_dir = os.path.join(get_adalflow_default_root_path(), "embedding_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        self.cache_path = os.path.join(cache_dir, f'{embedding_cache_file_name}_{self.embedder.__class__.__name__}_embeddings.pkl')
+        self.checkpoint_path = os.path.join(cache_dir, f'{embedding_cache_file_name}_{self.embedder.__class__.__name__}_checkpoint.pkl')
 
     def call(
         self, input: BatchEmbedderInputType, model_kwargs: Optional[Dict] = {}, force_recreate: bool = False
     ) -> BatchEmbedderOutputType:
         """
-        Batch call to Azure OpenAI embedder with rate limiting
+        Batch call to Azure OpenAI embedder with rate limiting and checkpoint saving.
+        
+        Checkpoint saving ensures that if embedding is interrupted, progress is not lost.
+        On retry, the process resumes from the last checkpoint.
 
         Args:
             input: List of input texts
             model_kwargs: Model parameters
-            force_recreate: Whether to force recreation
+            force_recreate: Whether to force recreation (ignores cache and checkpoints)
 
         Returns:
             Batch embedding output
         """
-        # Check cache first
+        # Check complete cache first (fully finished embeddings)
         if not force_recreate and os.path.exists(self.cache_path):
             try:
                 with open(self.cache_path, 'rb') as f:
@@ -690,19 +703,41 @@ class AzureBatchEmbedder(DataComponent):
 
         n = len(input)
         embeddings: List[EmbedderOutput] = []
+        start_batch_idx = 0
+        
+        # Check for checkpoint (partial progress from interrupted run)
+        if not force_recreate and os.path.exists(self.checkpoint_path):
+            try:
+                with open(self.checkpoint_path, 'rb') as f:
+                    checkpoint = pickle.load(f)
+                    # Validate checkpoint is for same input
+                    if checkpoint.get('total_texts') == n:
+                        embeddings = checkpoint.get('embeddings', [])
+                        start_batch_idx = checkpoint.get('next_batch_idx', 0)
+                        log.info(f"Resuming from checkpoint: batch {start_batch_idx}/{(n + self.batch_size - 1) // self.batch_size}, "
+                                f"{len(embeddings)} batches already completed")
+                    else:
+                        log.warning(f"Checkpoint input size mismatch ({checkpoint.get('total_texts')} vs {n}), starting fresh")
+            except Exception as e:
+                log.warning(f"Failed to load checkpoint {self.checkpoint_path}: {e}, starting fresh")
 
         log.info(f"Starting Azure batch embedding processing, total {n} texts, batch size: {self.batch_size}")
 
-        for i in tqdm(
-            range(0, n, self.batch_size),
+        total_batches = (n + self.batch_size - 1) // self.batch_size
+        
+        for batch_num, i in enumerate(tqdm(
+            range(start_batch_idx * self.batch_size, n, self.batch_size),
             desc="Azure batch embedding",
             disable=False,
-        ):
+            initial=start_batch_idx,
+            total=total_batches
+        )):
+            current_batch_idx = start_batch_idx + batch_num
             batch_input = input[i : min(i + self.batch_size, n)]
 
             try:
                 # Add small delay between batches to help with rate limiting
-                if i > 0:
+                if current_batch_idx > 0:
                     time.sleep(0.5)  # 500ms delay between batches
                 
                 batch_output = self.embedder(
@@ -712,14 +747,21 @@ class AzureBatchEmbedder(DataComponent):
 
                 # Validate batch output
                 if batch_output.error:
-                    log.error(f"Batch {i//self.batch_size + 1} embedding failed: {batch_output.error}")
+                    log.error(f"Batch {current_batch_idx + 1} embedding failed: {batch_output.error}")
                 elif batch_output.data:
-                    log.debug(f"Batch {i//self.batch_size + 1} successfully generated {len(batch_output.data)} embedding vectors")
+                    log.debug(f"Batch {current_batch_idx + 1}/{total_batches} successfully generated {len(batch_output.data)} embedding vectors")
                 else:
-                    log.warning(f"Batch {i//self.batch_size + 1} returned no embedding data")
+                    log.warning(f"Batch {current_batch_idx + 1} returned no embedding data")
+                
+                # Save checkpoint every N batches
+                if (current_batch_idx + 1) % self.checkpoint_interval == 0:
+                    self._save_checkpoint(embeddings, current_batch_idx + 1, n)
 
             except Exception as e:
-                log.error(f"Batch {i//self.batch_size + 1} processing exception: {e}")
+                log.error(f"Batch {current_batch_idx + 1} processing exception: {e}")
+                # Save checkpoint before recording error
+                self._save_checkpoint(embeddings, current_batch_idx, n)
+                
                 # Create error embedding output
                 error_output = EmbedderOutput(
                     data=[],
@@ -730,17 +772,35 @@ class AzureBatchEmbedder(DataComponent):
 
         log.info(f"Azure batch embedding completed, processed {len(embeddings)} batches")
 
-        # Save to cache
+        # Save to final cache
         try:
-            if not os.path.exists('./embedding_cache'):
-                os.makedirs('./embedding_cache')
             with open(self.cache_path, 'wb') as f:
                 pickle.dump(embeddings, f)
                 log.info(f"Saved Azure embeddings cache to: {self.cache_path}")
+            
+            # Remove checkpoint file since we're done
+            if os.path.exists(self.checkpoint_path):
+                os.remove(self.checkpoint_path)
+                log.debug(f"Removed checkpoint file: {self.checkpoint_path}")
         except Exception as e:
             log.warning(f"Failed to save cache to {self.cache_path}: {e}")
 
         return embeddings
+    
+    def _save_checkpoint(self, embeddings: List[EmbedderOutput], next_batch_idx: int, total_texts: int):
+        """Save checkpoint with current progress."""
+        try:
+            checkpoint = {
+                'embeddings': embeddings,
+                'next_batch_idx': next_batch_idx,
+                'total_texts': total_texts,
+                'timestamp': time.time()
+            }
+            with open(self.checkpoint_path, 'wb') as f:
+                pickle.dump(checkpoint, f)
+            log.debug(f"Checkpoint saved: batch {next_batch_idx}, {len(embeddings)} embeddings")
+        except Exception as e:
+            log.warning(f"Failed to save checkpoint: {e}")
 
 
 class AzureToEmbeddings(DataComponent):

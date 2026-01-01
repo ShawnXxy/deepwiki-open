@@ -239,9 +239,9 @@ class AzureBlobStorageClient:
         Raises:
             Exception: If listing fails, to allow caller to handle appropriately
         """
-        logger.info(f"[BlobStorage] list_blobs_with_metadata called with prefix: {prefix}")
+        logger.debug(f"[BlobStorage] list_blobs_with_metadata called with prefix: {prefix}")
         container_client = self.get_container_client()
-        logger.info(f"[BlobStorage] Got container client, listing blobs...")
+        logger.debug(f"[BlobStorage] Got container client, listing blobs...")
         blobs = container_client.list_blobs(name_starts_with=prefix)
         result = []
         for blob in blobs:
@@ -250,8 +250,8 @@ class AzureBlobStorageClient:
                 "name": blob.name,
                 "last_modified": last_modified_ms
             })
-            logger.info(f"[BlobStorage] Found blob: {blob.name}")
-        logger.info(f"[BlobStorage] Total blobs found: {len(result)}")
+            logger.debug(f"[BlobStorage] Found blob: {blob.name}")
+        logger.debug(f"[BlobStorage] Total blobs found: {len(result)}")
         return result
 
     def upload_directory(self, local_dir: str, blob_prefix: str) -> bool:
