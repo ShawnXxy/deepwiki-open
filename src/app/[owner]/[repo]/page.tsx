@@ -11,6 +11,7 @@ import { RepoInfo } from '@/types/repoinfo';
 import { processCitations, generateFileUrl } from '@/utils/citationProcessor';
 import { detectCurrentBranch } from '@/utils/branchDetection';
 import getRepoUrl from '@/utils/getRepoUrl';
+import logger from '@/utils/logger';
 import { extractUrlDomain, extractUrlPath } from '@/utils/urlDecoder';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
@@ -194,6 +195,7 @@ export default function RepoWikiPage() {
   // SECURITY: Retrieve token from sessionStorage (not URL params)
   // This prevents token exposure in server logs and browser history
   const [token, setToken] = useState<string>('');
+  const [tokenChecked, setTokenChecked] = useState<boolean>(false);
   
   useEffect(() => {
     // Try sessionStorage first (secure), fallback to URL params (legacy)
@@ -201,7 +203,7 @@ export default function RepoWikiPage() {
     const storedToken = sessionStorage.getItem(tokenKey);
     const urlToken = searchParams.get('token') || '';
     
-    console.log('[Token Debug] Loading token:', {
+    logger.info('Token loading started', {
       owner,
       repo,
       tokenKey,
@@ -212,7 +214,7 @@ export default function RepoWikiPage() {
     
     if (storedToken) {
       setToken(storedToken);
-      console.log('[Token Debug] Token loaded from sessionStorage');
+      logger.info('Token loaded from sessionStorage', { tokenLength: storedToken.length });
       // Clear token from URL if it exists (for security)
       if (urlToken) {
         const url = new URL(window.location.href);
@@ -223,14 +225,17 @@ export default function RepoWikiPage() {
       // Legacy support: use URL token but move it to sessionStorage
       setToken(urlToken);
       sessionStorage.setItem(tokenKey, urlToken);
-      console.log('[Token Debug] Token loaded from URL and saved to sessionStorage');
+      logger.info('Token loaded from URL and saved to sessionStorage', { tokenLength: urlToken.length });
       // Remove from URL
       const url = new URL(window.location.href);
       url.searchParams.delete('token');
       window.history.replaceState({}, '', url.toString());
     } else {
-      console.log('[Token Debug] No token found in sessionStorage or URL');
+      logger.info('No token found in sessionStorage or URL');
     }
+    // Mark token as checked (even if empty) to allow main effect to proceed
+    setTokenChecked(true);
+    logger.debug('Token check completed', { tokenChecked: true });
   }, [owner, repo, searchParams]);
   const localPath = searchParams.get('local_path') ? decodeURIComponent(searchParams.get('local_path') || '') : undefined;
   const repoUrl = searchParams.get('repo_url') ? decodeURIComponent(searchParams.get('repo_url') || '') : undefined;
@@ -1875,6 +1880,13 @@ IMPORTANT:
 
   // Start wiki generation when component mounts
   useEffect(() => {
+    // Wait for token to be checked from sessionStorage before proceeding
+    // This prevents race condition where Azure DevOps check fails before token is loaded
+    if (!tokenChecked) {
+      logger.debug('Waiting for token check to complete before wiki init');
+      return;
+    }
+
     if (effectRan.current === false) {
       effectRan.current = true; // Set to true immediately to prevent re-entry due to StrictMode
 
@@ -2044,14 +2056,14 @@ IMPORTANT:
               cacheLoadedSuccessfully.current = true;
               return; // Exit if cache is successfully loaded
             } else {
-              console.log('No valid wiki data in server cache or cache is empty.');
+              logger.info('No valid wiki data in server cache or cache is empty');
             }
           } else {
             // Log error but proceed to fetch structure, as cache is optional
-            console.error('Error fetching wiki cache from server:', response.status, await response.text());
+            logger.error('Error fetching wiki cache from server', { status: response.status });
           }
         } catch (error) {
-          console.error('Error loading from server cache:', error);
+          logger.error('Error loading from server cache', { error: String(error) });
           // Proceed to fetch structure if cache loading fails
         }
 
@@ -2060,7 +2072,12 @@ IMPORTANT:
         // Check both token (from sessionStorage/URL) and currentToken (may be updated via settings)
         const effectiveToken = token || currentToken;
         if (effectiveRepoInfo.type === 'azuredevops' && !effectiveToken) {
-          console.log('[Wiki Init] Cache miss for Azure DevOps repo, no token available');
+          logger.warn('Azure DevOps repo requires PAT but no token available', { 
+            owner: effectiveRepoInfo.owner, 
+            repo: effectiveRepoInfo.repo,
+            hasToken: !!token,
+            hasCurrentToken: !!currentToken
+          });
           // Stop loading and show error prompting for token
           setIsLoading(false);
           setLoadingMessage(undefined);
@@ -2076,12 +2093,12 @@ IMPORTANT:
       loadData();
 
     } else {
-      console.log('Skipping duplicate repository fetch/cache check');
+      logger.debug('Skipping duplicate repository fetch/cache check');
     }
 
     // Clean up function for this effect is not strictly necessary for loadData,
     // but keeping the main unmount cleanup in the other useEffect
-  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView, token, currentToken]);
+  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView, token, currentToken, tokenChecked]);
 
   // Save wiki to server-side cache when generation is complete
   useEffect(() => {

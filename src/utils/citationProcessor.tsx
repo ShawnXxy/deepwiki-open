@@ -13,6 +13,7 @@
  */
 
 import { RepoInfo } from '@/types/repoinfo';
+import logger from '@/utils/logger';
 
 /**
  * Generates a branch-agnostic repository file URL based on the repository type and file path
@@ -27,26 +28,20 @@ import { RepoInfo } from '@/types/repoinfo';
  * @returns The complete branch-agnostic URL to the file in the repository
  */
 export function generateFileUrl(filePath: string, repoInfo: RepoInfo, defaultBranch: string = 'main'): string {
-  // Debug logging to trace branch parameter flow
-  console.log('🔍 Citation Processor - generateFileUrl called (branch-agnostic mode):', {
+  // Debug logging (deduplicated by logger)
+  logger.debug('Citation: generateFileUrl', {
     filePath,
     repoType: repoInfo.type,
-    repoOwner: repoInfo.owner,
-    repoName: repoInfo.repo,
-    repoBranch: repoInfo.branch,
-    defaultBranchParam: defaultBranch,
-    repoUrl: repoInfo.repoUrl
+    hasRepoUrl: !!repoInfo.repoUrl
   });
   
   if (repoInfo.type === 'local') {
-    console.log('📁 Citation Processor - Local repo, returning file path as-is');
     // For local repositories, we can't generate web URLs
     return filePath;
   }
 
   const repoUrl = repoInfo.repoUrl;
   if (!repoUrl) {
-    console.log('⚠️ Citation Processor - No repo URL, returning file path as-is');
     return filePath;
   }
 
@@ -54,26 +49,18 @@ export function generateFileUrl(filePath: string, repoInfo: RepoInfo, defaultBra
     const url = new URL(repoUrl);
     const hostname = url.hostname;
     
-    console.log('🌐 Citation Processor - Processing URL for hostname (branch-agnostic):', hostname);
-    
     if (hostname === 'github.com' || hostname.includes('github')) {
       // GitHub URL format (branch-agnostic): https://github.com/owner/repo/blob/HEAD/path
       // Using HEAD to refer to the default branch without specifying it explicitly
-      const generatedUrl = `${repoUrl}/blob/HEAD/${filePath}`;
-      console.log('📍 Citation Processor - Generated branch-agnostic GitHub URL:', generatedUrl);
-      return generatedUrl;
+      return `${repoUrl}/blob/HEAD/${filePath}`;
     } else if (hostname === 'gitlab.com' || hostname.includes('gitlab')) {
       // GitLab URL format (branch-agnostic): https://gitlab.com/owner/repo/-/blob/HEAD/path
       // Using HEAD to refer to the default branch
-      const generatedUrl = `${repoUrl}/-/blob/HEAD/${filePath}`;
-      console.log('📍 Citation Processor - Generated branch-agnostic GitLab URL:', generatedUrl);
-      return generatedUrl;
+      return `${repoUrl}/-/blob/HEAD/${filePath}`;
     } else if (hostname === 'bitbucket.org' || hostname.includes('bitbucket')) {
       // Bitbucket URL format (branch-agnostic): https://bitbucket.org/owner/repo/src/HEAD/path
       // Using HEAD to refer to the default branch
-      const generatedUrl = `${repoUrl}/src/HEAD/${filePath}`;
-      console.log('📍 Citation Processor - Generated branch-agnostic Bitbucket URL:', generatedUrl);
-      return generatedUrl;
+      return `${repoUrl}/src/HEAD/${filePath}`;
     } else if (hostname === 'dev.azure.com' || hostname.includes('visualstudio.com')) {
       // Azure DevOps URL format (branch-agnostic):
       // https://dev.azure.com/{organization}/{project}/_git/{repo}?path=/path-to-file
@@ -81,14 +68,10 @@ export function generateFileUrl(filePath: string, repoInfo: RepoInfo, defaultBra
       
       // Ensure filePath starts with '/' for proper URL construction
       const encodedPath = encodeURIComponent(filePath.startsWith('/') ? filePath : `/${filePath}`);
-      
-      const azureUrl = `${repoUrl}?path=${encodedPath}`;
-      console.log('📍 Citation Processor - Generated branch-agnostic Azure DevOps URL:', azureUrl);
-      
-      return azureUrl;
+      return `${repoUrl}?path=${encodedPath}`;
     }
   } catch (error) {
-    console.warn('Error generating file URL:', error);
+    logger.warn('Citation: Error generating file URL', { error: String(error), filePath });
   }
 
   // Fallback to just the file path
@@ -110,17 +93,12 @@ export function generateFileUrl(filePath: string, repoInfo: RepoInfo, defaultBra
  * @returns The processed content with proper branch-agnostic citation URLs
  */
 export function processCitations(content: string, repoInfo: RepoInfo, defaultBranch: string = 'main'): string {
-  console.log('📝 Citation Processor - processCitations called (branch-agnostic mode):', {
+  logger.debug('Citation: processCitations', {
     contentLength: content.length,
-    repoType: repoInfo.type,
-    repoOwner: repoInfo.owner,
-    repoName: repoInfo.repo,
-    repoBranch: repoInfo.branch,
-    defaultBranchParam: defaultBranch
+    repoType: repoInfo.type
   });
   
   if (!content) {
-    console.log('⚠️ Citation Processor - No content to process');
     return content;
   }
 
