@@ -266,6 +266,10 @@ def get_log_filename(prefix: str = "backend") -> str:
     return f"{prefix}-{datetime.now().strftime('%y%m%d')}.log"
 
 
+# Track if logging has been initialized to avoid duplicate setup messages
+_logging_initialized = False
+
+
 def setup_logging(
     log_prefix: str = "backend",
     enable_app_insights: bool = True
@@ -291,12 +295,18 @@ def setup_logging(
         LOG_LEVEL: Minimum level to log (default: DEBUG)
         LOG_BACKUP_COUNT: Days of logs to retain (default: 30)
     """
+    global _logging_initialized
+    
     # Setup log directory at project root
     base_dir = Path(__file__).parent.parent.parent
     log_dir = base_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     
     log_file = log_dir / get_log_filename(log_prefix)
+    
+    # If already initialized, just return the log file path (skip re-configuration)
+    if _logging_initialized:
+        return log_file
     
     # Get log level from environment
     level_str = os.environ.get("LOG_LEVEL", "DEBUG").upper()
@@ -339,11 +349,15 @@ def setup_logging(
     noisy_loggers = [
         "azure", "azure.core", "azure.identity",
         "httpx", "httpcore",
+        "urllib3", "urllib3.connectionpool",  # Very verbose connection logs
         "watchfiles", "watchfiles.main",
         "adalflow", "faiss",
     ]
     for name in noisy_loggers:
         logging.getLogger(name).setLevel(logging.WARNING)
+    
+    # Mark as initialized before logging to prevent recursion
+    _logging_initialized = True
     
     logger = logging.getLogger(__name__)
     logger.info(f"Logging initialized: level={level_str}, file={log_file}")
