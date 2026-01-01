@@ -191,8 +191,34 @@ export default function RepoWikiPage() {
   const owner = params.owner as string;
   const repo = params.repo as string;
 
-  // Extract tokens from search params
-  const token = searchParams.get('token') || '';
+  // SECURITY: Retrieve token from sessionStorage (not URL params)
+  // This prevents token exposure in server logs and browser history
+  const [token, setToken] = useState<string>('');
+  
+  useEffect(() => {
+    // Try sessionStorage first (secure), fallback to URL params (legacy)
+    const tokenKey = `deepwiki_token_${owner}_${repo}`;
+    const storedToken = sessionStorage.getItem(tokenKey);
+    const urlToken = searchParams.get('token') || '';
+    
+    if (storedToken) {
+      setToken(storedToken);
+      // Clear token from URL if it exists (for security)
+      if (urlToken) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('token');
+        window.history.replaceState({}, '', url.toString());
+      }
+    } else if (urlToken) {
+      // Legacy support: use URL token but move it to sessionStorage
+      setToken(urlToken);
+      sessionStorage.setItem(tokenKey, urlToken);
+      // Remove from URL
+      const url = new URL(window.location.href);
+      url.searchParams.delete('token');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, [owner, repo, searchParams]);
   const localPath = searchParams.get('local_path') ? decodeURIComponent(searchParams.get('local_path') || '') : undefined;
   const repoUrl = searchParams.get('repo_url') ? decodeURIComponent(searchParams.get('repo_url') || '') : undefined;
   const providerParam = searchParams.get('provider') || '';

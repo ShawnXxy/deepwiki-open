@@ -407,10 +407,13 @@ export default function Home() {
 
     const { owner, repo, type, localPath } = parsedRepo;
 
-    // Store tokens in query params if they exist
+    // SECURITY: Store token in sessionStorage instead of URL query params
+    // This prevents token exposure in server logs and browser history
     const params = new URLSearchParams();
     if (accessToken) {
-      params.append('token', accessToken);
+      // Store token securely in sessionStorage with a unique key
+      const tokenKey = `deepwiki_token_${owner}_${repo}`;
+      sessionStorage.setItem(tokenKey, accessToken);
     }
     // Always include the type parameter - use detected type from URL parsing
     params.append('type', type || 'azuredevops');

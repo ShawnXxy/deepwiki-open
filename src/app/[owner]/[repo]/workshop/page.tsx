@@ -53,8 +53,22 @@ export default function WorkshopPage() {
   const owner = params.owner as string;
   const repo = params.repo as string;
 
-  // Extract tokens from search params
-  const token = searchParams.get('token') || '';
+  // SECURITY: Retrieve token from sessionStorage (not URL params)
+  const [token, setToken] = useState<string>('');
+  
+  useEffect(() => {
+    const tokenKey = `deepwiki_token_${owner}_${repo}`;
+    const storedToken = sessionStorage.getItem(tokenKey);
+    const urlToken = searchParams.get('token') || '';
+    
+    if (storedToken) {
+      setToken(storedToken);
+    } else if (urlToken) {
+      setToken(urlToken);
+      sessionStorage.setItem(tokenKey, urlToken);
+    }
+  }, [owner, repo, searchParams]);
+
   const repoType = searchParams.get('type') || 'github';
   const branch = searchParams.get('branch') || null;
   const localPath = searchParams.get('local_path') ? decodeURIComponent(searchParams.get('local_path') || '') : undefined;

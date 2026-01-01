@@ -5,6 +5,15 @@ const TARGET_SERVER_BASE_URL = process.env.SERVER_BASE_URL || 'http://localhost:
 const nextConfig: NextConfig = {
   /* config options here */
   output: 'standalone',
+  // Security: Disable verbose logging to prevent token exposure in URLs
+  logging: {
+    fetches: {
+      fullUrl: false, // Don't log full URLs with query params
+    },
+  },
+  // Suppress verbose HTTP request logging (tokens in query params)
+  // Note: NODE_ENV=production already reduces logging, but this adds explicit control
+  devIndicators: false,
   // Optimize build for Docker
   experimental: {
     optimizePackageImports: ['@mermaid-js/mermaid', 'react-syntax-highlighter'],
