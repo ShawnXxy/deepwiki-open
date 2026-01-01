@@ -652,111 +652,22 @@ const Ask: React.FC<AskProps> = ({
   }, [messages.ask?.askButton, isLoading]);
 
   return (
-    <div>
-      <div className="p-4">
-        <div className="flex items-center justify-end mb-4">
-          {/* Model selection button */}
-          <button
-            type="button"
-            onClick={() => setIsModelSelectionModalOpen(true)}
-            className="text-xs px-2.5 py-1 rounded border border-[var(--border-color)]/40 bg-[var(--background)]/10 text-[var(--foreground)]/80 hover:bg-[var(--background)]/30 hover:text-[var(--foreground)] transition-colors flex items-center gap-1.5"
-          >
-            <span>{selectedProvider}/{isCustomSelectedModel ? customSelectedModel : selectedModel}</span>
-            <svg className="h-3.5 w-3.5 text-[var(--accent-primary)]/70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-            </svg>
-          </button>
-        </div>
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-y-auto p-4">
+        {/* Model selection button hidden - users cannot change the model */}
 
-        {/* Question input */}
-        <form onSubmit={handleSubmit} className="mt-4">
-          <div className="relative">
-            <input
-              ref={inputRef}
-              type="text"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              placeholder={messages.ask?.placeholder || 'What would you like to know about this codebase?'}
-              className="block w-full rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] text-[var(--foreground)] px-5 py-3.5 text-base shadow-sm focus:border-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]/30 focus:outline-none transition-all"
-              style={{ paddingRight: `${buttonWidth + 24}px` }}
-              disabled={isLoading}
-            />
-            <button
-              ref={buttonRef}
-              type="submit"
-              disabled={isLoading || !question.trim()}
-              className={`absolute right-3 top-1/2 transform -translate-y-1/2 px-4 py-2 rounded-md font-medium text-sm ${
-                isLoading || !question.trim()
-                  ? 'bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)] cursor-not-allowed'
-                  : 'bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-primary)]/90 shadow-sm'
-              } transition-all duration-200 flex items-center gap-1.5`}
-            >
-              {isLoading ? (
-                <div className="w-4 h-4 rounded-full border-2 border-t-transparent border-white animate-spin" />
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-                  </svg>
-                  <span>{messages.ask?.askButton || 'Ask'}</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Deep Research toggle */}
-          <div className="flex items-center mt-2 justify-between">
-            <div className="group relative">
-              <label className="flex items-center cursor-pointer">
-                <span className="text-xs text-gray-600 dark:text-gray-400 mr-2">Deep Research</span>
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    checked={deepResearch}
-                    onChange={() => setDeepResearch(!deepResearch)}
-                    className="sr-only"
-                  />
-                  <div className={`w-10 h-5 rounded-full transition-colors ${deepResearch ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
-                  <div className={`absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white transition-transform transform ${deepResearch ? 'translate-x-5' : ''}`}></div>
-                </div>
-              </label>
-              <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded p-2 w-72 z-10">
-                <div className="relative">
-                  <div className="absolute -bottom-2 left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800"></div>
-                  <p className="mb-1">Deep Research conducts a multi-turn investigation process:</p>
-                  <ul className="list-disc pl-4 text-xs">
-                    <li><strong>Initial Research:</strong> Creates a research plan and initial findings</li>
-                    <li><strong>Iteration 1:</strong> Explores specific aspects in depth</li>
-                    <li><strong>Iteration 2:</strong> Investigates remaining questions</li>
-                    <li><strong>Iterations 3-4:</strong> Dives deeper into complex areas</li>
-                    <li><strong>Final Conclusion:</strong> Comprehensive answer based on all iterations</li>
-                  </ul>
-                  <p className="mt-1 text-xs italic">The AI automatically continues research until complete (up to 5 iterations)</p>
-                </div>
-              </div>
-            </div>
-            {deepResearch && (
-              <div className="text-xs text-purple-600 dark:text-purple-400">
-                Multi-turn research process enabled
-                {researchIteration > 0 && !researchComplete && ` (iteration ${researchIteration})`}
-                {researchComplete && ` (complete)`}
-              </div>
-            )}
-          </div>
-        </form>
-
-        {/* Response area */}
+        {/* Response area - moved to top */}
         {response && (
-          <div className="border-t border-gray-200 dark:border-gray-700 mt-4">
+          <div className="mb-4">
             <div
               ref={responseRef}
-              className="p-4 max-h-[500px] overflow-y-auto"
+              className="max-h-none"
             >
               <Markdown content={processCitations(response, repoInfo, detectCurrentBranch(repoInfo, 'main'))} />
             </div>
 
             {/* Research navigation and clear button */}
-            <div className="p-2 flex justify-between items-center border-t border-gray-200 dark:border-gray-700">
+            <div className="py-2 flex justify-between items-center border-t border-gray-200 dark:border-gray-700 mt-4">
               {/* Research navigation */}
               {deepResearch && researchStages.length > 1 && (
                 <div className="flex items-center space-x-2">
@@ -788,35 +699,35 @@ const Ask: React.FC<AskProps> = ({
                 </div>
               )}
 
-            <div className="flex items-center space-x-2">
-              {/* Download button */}
-              <button
-                onClick={downloadresponse}
-                className="text-xs text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 px-2 py-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 flex items-center gap-1"
-                title="Download response as markdown file"
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Download
-              </button>
+              <div className="flex items-center space-x-2">
+                {/* Download button */}
+                <button
+                  onClick={downloadresponse}
+                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 px-2 py-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 flex items-center gap-1"
+                  title="Download response as markdown file"
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Download
+                </button>
 
-              {/* Clear button */}
-              <button
-                id="ask-clear-conversation"
-                onClick={clearConversation}
-                className="text-xs text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 px-2 py-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700"
-              >
-                Clear conversation
-              </button>
-            </div>
+                {/* Clear button */}
+                <button
+                  id="ask-clear-conversation"
+                  onClick={clearConversation}
+                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 px-2 py-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700"
+                >
+                  Clear conversation
+                </button>
               </div>
+            </div>
           </div>
         )}
 
         {/* Loading indicator */}
         {isLoading && !response && (
-          <div className="p-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="py-4">
             <div className="flex items-center space-x-2">
               <div className="animate-pulse flex space-x-1">
                 <div className="h-2 w-2 bg-purple-600 rounded-full"></div>
@@ -911,6 +822,95 @@ const Ask: React.FC<AskProps> = ({
             )}
           </div>
         )}
+
+        {/* Empty state when no response */}
+        {!response && !isLoading && (
+          <div className="flex flex-col items-center justify-center py-8 text-[var(--muted)]">
+            <svg className="w-12 h-12 mb-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+            </svg>
+            <p className="text-sm">Ask a question about this codebase</p>
+          </div>
+        )}
+      </div>
+
+      {/* Question input - fixed at bottom */}
+      <div className="flex-shrink-0 p-4 border-t border-[var(--border-color)] bg-[var(--card-bg)]">
+        <form onSubmit={handleSubmit}>
+          <div className="relative">
+            <input
+              ref={inputRef}
+              type="text"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              placeholder={messages.ask?.placeholder || 'What would you like to know about this codebase?'}
+              className="block w-full rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] text-[var(--foreground)] px-5 py-3.5 text-base shadow-sm focus:border-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]/30 focus:outline-none transition-all"
+              style={{ paddingRight: `${buttonWidth + 24}px` }}
+              disabled={isLoading}
+            />
+            <button
+              ref={buttonRef}
+              type="submit"
+              disabled={isLoading || !question.trim()}
+              className={`absolute right-3 top-1/2 transform -translate-y-1/2 px-4 py-2 rounded-md font-medium text-sm ${
+                isLoading || !question.trim()
+                  ? 'bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)] cursor-not-allowed'
+                  : 'bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-primary)]/90 shadow-sm'
+              } transition-all duration-200 flex items-center gap-1.5`}
+            >
+              {isLoading ? (
+                <div className="w-4 h-4 rounded-full border-2 border-t-transparent border-white animate-spin" />
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                  </svg>
+                  <span>{messages.ask?.askButton || 'Ask'}</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Deep Research toggle */}
+          <div className="flex items-center mt-2 justify-between">
+            <div className="group relative">
+              <label className="flex items-center cursor-pointer">
+                <span className="text-xs text-gray-600 dark:text-gray-400 mr-2">Deep Research</span>
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    checked={deepResearch}
+                    onChange={() => setDeepResearch(!deepResearch)}
+                    className="sr-only"
+                  />
+                  <div className={`w-10 h-5 rounded-full transition-colors ${deepResearch ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
+                  <div className={`absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white transition-transform transform ${deepResearch ? 'translate-x-5' : ''}`}></div>
+                </div>
+              </label>
+              <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded p-2 w-72 z-10">
+                <div className="relative">
+                  <div className="absolute -bottom-2 left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800"></div>
+                  <p className="mb-1">Deep Research conducts a multi-turn investigation process:</p>
+                  <ul className="list-disc pl-4 text-xs">
+                    <li><strong>Initial Research:</strong> Creates a research plan and initial findings</li>
+                    <li><strong>Iteration 1:</strong> Explores specific aspects in depth</li>
+                    <li><strong>Iteration 2:</strong> Investigates remaining questions</li>
+                    <li><strong>Iterations 3-4:</strong> Dives deeper into complex areas</li>
+                    <li><strong>Final Conclusion:</strong> Comprehensive answer based on all iterations</li>
+                  </ul>
+                  <p className="mt-1 text-xs italic">The AI automatically continues research until complete (up to 5 iterations)</p>
+                </div>
+              </div>
+            </div>
+            {deepResearch && (
+              <div className="text-xs text-purple-600 dark:text-purple-400">
+                Multi-turn research process enabled
+                {researchIteration > 0 && !researchComplete && ` (iteration ${researchIteration})`}
+                {researchComplete && ` (complete)`}
+              </div>
+            )}
+          </div>
+        </form>
       </div>
 
       {/* Model Selection Modal */}
