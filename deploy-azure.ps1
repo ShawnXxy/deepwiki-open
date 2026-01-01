@@ -96,6 +96,31 @@ if ($envExists) {
 }
 
 # ============================================
+# Step 3b: Add D4 Dedicated Workload Profile
+# ============================================
+Write-Host ""
+Write-Host "🔧 Step 3b: Adding D4 Dedicated Workload Profile..." -ForegroundColor Cyan
+Write-Host "   D4 profile provides 4 vCPU / 16GB RAM for large repository embedding" -ForegroundColor DarkGray
+
+$profileExists = az containerapp env workload-profile show `
+    --name $ENVIRONMENT_NAME `
+    --resource-group $RESOURCE_GROUP `
+    --workload-profile-name "D4" 2>$null
+
+if ($profileExists) {
+    Write-Host "✅ D4 workload profile already exists" -ForegroundColor Green
+} else {
+    az containerapp env workload-profile add `
+        --name $ENVIRONMENT_NAME `
+        --resource-group $RESOURCE_GROUP `
+        --workload-profile-name "D4" `
+        --workload-profile-type "D4" `
+        --min-nodes 0 `
+        --max-nodes 1
+    Write-Host "✅ D4 workload profile added" -ForegroundColor Green
+}
+
+# ============================================
 # Step 4: Deploy Container App
 # ============================================
 Write-Host ""
@@ -115,17 +140,21 @@ if ($appExists) {
         --image "$ACR_LOGIN_SERVER/codewiki:latest"
 } else {
     Write-Host "   Creating new app..." -ForegroundColor Yellow
+    # Using D4 dedicated workload profile with 4 CPU / 16GB RAM
+    # Required for large repository embedding (5000+ files)
+    # Consumption tier max is 8GB which causes OOM for large repos
     az containerapp create `
         --name $APP_NAME `
         --resource-group $RESOURCE_GROUP `
         --environment $ENVIRONMENT_NAME `
         --image "$ACR_LOGIN_SERVER/codewiki:latest" `
+        --workload-profile-name "D4" `
         --target-port 3000 `
         --ingress external `
         --min-replicas 1 `
         --max-replicas 5 `
-        --cpu 2.0 `
-        --memory 4.0Gi `
+        --cpu 4.0 `
+        --memory 16.0Gi `
         --registry-server $ACR_LOGIN_SERVER `
         --registry-username $ACR_USERNAME `
         --registry-password $ACR_PASSWORD `

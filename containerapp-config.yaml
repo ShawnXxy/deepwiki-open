@@ -1,0 +1,152 @@
+id: /subscriptions/f0c4c6eb-8b72-4615-a1ca-6cdcb13edf01/resourceGroups/RG-ORCAS-DEEPWIKI/providers/Microsoft.App/containerapps/orcascodewiki
+identity:
+  principalId: b320ba5c-dfbc-4e17-b02f-1025cacc7987
+  tenantId: 16b3c013-d300-468d-ac64-7eda0820b6d3
+  type: SystemAssigned, UserAssigned
+  userAssignedIdentities:
+    ? /subscriptions/f0c4c6eb-8b72-4615-a1ca-6cdcb13edf01/resourcegroups/RG-ORCAS-DEEPWIKI/providers/Microsoft.ManagedIdentity/userAssignedIdentities/mid-deepwiki-ea
+    : clientId: 6e58add9-816c-4307-b9bd-bb7ce616d486
+      principalId: 0b359119-271e-425f-ba51-4273f14a65de
+location: East Asia
+name: orcascodewiki
+properties:
+  configuration:
+    activeRevisionsMode: Single
+    dapr: null
+    identitySettings: []
+    ingress:
+      additionalPortMappings: null
+      allowInsecure: false
+      clientCertificateMode: null
+      corsPolicy: null
+      customDomains: null
+      exposedPort: 0
+      external: true
+      fqdn: orcascodewiki.livelysea-35e98976.eastasia.azurecontainerapps.io
+      ipSecurityRestrictions: null
+      stickySessions: null
+      targetPort: 3000
+      traffic:
+      - latestRevision: true
+        weight: 100
+      transport: Auto
+    maxInactiveRevisions: 100
+    registries:
+    - identity: ''
+      passwordSecretRef: orcascodewikiacrazurecrio-orcascodewikiacr
+      server: orcascodewikiacr.azurecr.io
+      username: orcascodewikiacr
+    runtime: null
+    secrets:
+    - name: orcascodewikiacrazurecrio-orcascodewikiacr
+    service: null
+  customDomainVerificationId: D2C14D6A99F055397ECBE8F0B2DE06F1F07DE597CD4A5161DDA9B90156ACF850
+  delegatedIdentities: []
+  environmentId: /subscriptions/f0c4c6eb-8b72-4615-a1ca-6cdcb13edf01/resourceGroups/RG-ORCAS-DEEPWIKI/providers/Microsoft.App/managedEnvironments/codewiki-env
+  eventStreamEndpoint: https://eastasia.azurecontainerapps.dev/subscriptions/f0c4c6eb-8b72-4615-a1ca-6cdcb13edf01/resourceGroups/RG-ORCAS-DEEPWIKI/containerApps/orcascodewiki/eventstream
+  latestReadyRevisionName: orcascodewiki--0000002
+  latestRevisionFqdn: orcascodewiki--0000002.livelysea-35e98976.eastasia.azurecontainerapps.io
+  latestRevisionName: orcascodewiki--0000002
+  managedEnvironmentId: /subscriptions/f0c4c6eb-8b72-4615-a1ca-6cdcb13edf01/resourceGroups/RG-ORCAS-DEEPWIKI/providers/Microsoft.App/managedEnvironments/codewiki-env
+  outboundIpAddresses:
+  - 20.24.118.146
+  - 20.24.118.114
+  - 20.255.130.69
+  - 20.2.50.68
+  - 4.144.38.77
+  - 20.255.120.249
+  - 20.255.130.110
+  - 20.255.130.116
+  - 20.2.50.109
+  - 20.255.216.151
+  - 4.192.75.28
+  - 4.144.42.55
+  - 20.239.96.151
+  - 20.255.112.178
+  - 20.255.42.70
+  - 20.255.104.232
+  - 20.255.130.200
+  - 20.255.216.201
+  - 20.239.233.121
+  - 4.144.37.131
+  - 20.255.104.166
+  - 20.255.120.242
+  - 4.191.79.31
+  - 20.24.118.177
+  - 4.191.76.61
+  - 4.191.76.1
+  - 4.144.44.222
+  - 4.144.45.4
+  - 20.6.149.223
+  - 20.6.179.93
+  - 20.239.116.82
+  - 20.239.117.15
+  - 20.255.212.172
+  - 20.255.186.215
+  - 20.6.160.45
+  - 20.239.244.204
+  - 4.144.40.7
+  - 20.239.246.61
+  - 20.255.104.137
+  - 20.239.245.49
+  - 20.6.155.117
+  - 4.191.79.216
+  - 20.239.117.29
+  - 4.192.74.154
+  - 4.192.74.189
+  - 4.192.73.235
+  - 20.239.245.239
+  - 20.255.185.135
+  - 4.144.36.9
+  - 4.144.37.120
+  - 4.144.59.105
+  - 20.6.155.178
+  - 4.192.75.21
+  - 20.239.117.113
+  - 20.247.40.35
+  - 20.6.177.176
+  - 20.255.43.216
+  - 20.239.233.12
+  - 20.247.40.168
+  - 20.255.113.126
+  - 4.144.25.32
+  provisioningState: Succeeded
+  runningStatus: Running
+  template:
+    containers:
+    - env:
+      - name: PORT
+        value: '8001'
+      - name: NODE_ENV
+        value: production
+      - name: LOG_LEVEL
+        value: DEBUG
+      - name: AZURE_CLIENT_ID
+        value: 6e58add9-816c-4307-b9bd-bb7ce616d486
+      image: orcascodewikiacr.azurecr.io/codewiki:latest
+      name: orcascodewiki
+      resources:
+        cpu: 2.0
+        ephemeralStorage: 8Gi
+        memory: 4Gi
+    initContainers: null
+    revisionSuffix: ''
+    scale:
+      cooldownPeriod: 300
+      maxReplicas: 5
+      minReplicas: 1
+      pollingInterval: 30
+      rules: null
+    serviceBinds: null
+    terminationGracePeriodSeconds: null
+    volumes: null
+  workloadProfileName: Consumption
+resourceGroup: RG-ORCAS-DEEPWIKI
+systemData:
+  createdAt: '2025-12-31T01:49:11.4347707'
+  createdBy: Xiangyu.Xiao@microsoft.com
+  createdByType: User
+  lastModifiedAt: '2025-12-31T04:10:50.6079037'
+  lastModifiedBy: Xiangyu.Xiao@microsoft.com
+  lastModifiedByType: User
+type: Microsoft.App/containerApps

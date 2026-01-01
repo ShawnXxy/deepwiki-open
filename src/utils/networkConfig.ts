@@ -16,6 +16,15 @@ export const getServerBaseUrl = (): string => {
   if (typeof window !== 'undefined') {
     const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
     const hostname = window.location.hostname;
+    
+    // In cloud environments, use same-origin (nginx proxies to backend)
+    if (isCloudEnvironment()) {
+      // Use same origin - nginx handles proxying to backend
+      const port = window.location.port;
+      return port ? `${protocol}//${hostname}:${port}` : `${protocol}//${hostname}`;
+    }
+    
+    // For local development, use port 8001 directly
     const port = '8001'; // Backend port
     
     // Special handling for localhost development
@@ -23,7 +32,7 @@ export const getServerBaseUrl = (): string => {
       return `${protocol}//${hostname}:${port}`;
     }
     
-    // For network access, use the same hostname as the frontend
+    // For network access in non-cloud, use the same hostname with backend port
     return `${protocol}//${hostname}:${port}`;
   }
   
@@ -35,6 +44,16 @@ export const getServerBaseUrl = (): string => {
  * Get WebSocket URL from HTTP URL
  */
 export const getWebSocketUrl = (httpUrl?: string): string => {
+  // In cloud environments, use same-origin WebSocket (nginx proxies /ws/ to backend)
+  if (typeof window !== 'undefined' && isCloudEnvironment()) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const hostname = window.location.hostname;
+    const port = window.location.port;
+    const baseUrl = port ? `${protocol}//${hostname}:${port}` : `${protocol}//${hostname}`;
+    return `${baseUrl}/ws/chat`;
+  }
+  
+  // For local development, use direct backend connection
   const baseUrl = httpUrl || getServerBaseUrl();
   // Replace http:// with ws:// or https:// with wss://
   const wsBaseUrl = baseUrl.replace(/^http/, 'ws');
@@ -86,19 +105,19 @@ export const isNetworkEnvironment = (): boolean => {
 
 /**
  * Check if WebSocket should be used for backend communication
- * WebSocket is only reliable when backend port (8001) is directly accessible.
- * In cloud deployments, only the frontend port is exposed, so we must use HTTP proxy.
- * In local/Docker environments (even with non-localhost hostnames), WebSocket works.
+ * With nginx reverse proxy, WebSocket works in all environments.
+ * In cloud deployments, nginx proxies /ws/ to the backend.
+ * In local/Docker environments, direct WebSocket connection works.
  */
 export const shouldUseWebSocket = (): boolean => {
-  const isCloud = isCloudEnvironment();
   const hostname = typeof window !== 'undefined' ? window.location.hostname : 'unknown';
+  const isCloud = isCloudEnvironment();
   
   // Log for debugging
-  console.log(`[NetworkConfig] hostname: ${hostname}, isCloud: ${isCloud}, useWebSocket: ${!isCloud}`);
+  console.log(`[NetworkConfig] hostname: ${hostname}, isCloud: ${isCloud}, useWebSocket: true (nginx proxies in cloud)`);
   
-  // Use WebSocket unless we're in a cloud environment
-  return !isCloud;
+  // Always use WebSocket - nginx handles proxying in cloud environments
+  return true;
 };
 
 /**
