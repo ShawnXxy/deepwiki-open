@@ -16,6 +16,14 @@ export async function POST(request: NextRequest) {
     const body: AzureDevOpsStructureRequest = await request.json();
     const { repo_url, token } = body;
 
+    // Debug: Log what we received in the request body
+    console.log('[AzureDevOps API] Request body received:', {
+      repo_url,
+      hasToken: !!token,
+      tokenLength: token?.length || 0,
+      tokenPreview: token ? `${token.substring(0, 5)}...` : 'none'
+    });
+
     if (!repo_url) {
       return NextResponse.json(
         { error: 'Repository URL is required' },
@@ -27,10 +35,11 @@ export async function POST(request: NextRequest) {
     let organization = '';
     let project = '';
     let repository = '';
+    let apiBaseUrl = 'https://dev.azure.com';
 
     try {
       const url = new URL(repo_url);
-      const pathParts = url.pathname.split('/').filter(Boolean);
+      const pathParts = url.pathname.split('/').filter(Boolean).map(part => decodeURIComponent(part));
       const gitIndex = pathParts.indexOf('_git');
       
       console.log('[AzureDevOps API] Parsing URL:', { repo_url, hostname: url.hostname, pathParts, gitIndex });
@@ -39,6 +48,7 @@ export async function POST(request: NextRequest) {
         // Format variations:
         // 1. dev.azure.com/{organization}/{project}/_git/{repository} (gitIndex = 2)
         // 2. dev.azure.com/{organization}/_git/{repository} (gitIndex = 1)
+        apiBaseUrl = 'https://dev.azure.com';
         if (gitIndex >= 1 && pathParts.length > gitIndex + 1) {
           organization = pathParts[0];
           repository = pathParts[gitIndex + 1];
@@ -48,11 +58,13 @@ export async function POST(request: NextRequest) {
         }
       } else if (url.hostname.includes('visualstudio.com')) {
         // Format: {organization}.visualstudio.com/{project}/_git/{repository}
+        // API base URL uses dev.azure.com but with the organization from the hostname
+        organization = url.hostname.split('.')[0];
+        apiBaseUrl = 'https://dev.azure.com';  // Modern API endpoint
         if (gitIndex >= 1 && pathParts.length > gitIndex + 1) {
-          organization = url.hostname.split('.')[0];
           repository = pathParts[gitIndex + 1];
           project = pathParts[gitIndex - 1];
-          console.log('[AzureDevOps API] visualstudio.com parsed:', { organization, project, repository });
+          console.log('[AzureDevOps API] visualstudio.com parsed:', { organization, project, repository, apiBaseUrl });
         }
       } else {
         throw new Error('Invalid Azure DevOps URL format');
@@ -81,39 +93,69 @@ export async function POST(request: NextRequest) {
       // Azure DevOps uses Basic auth with PAT
       const auth = Buffer.from(`:${token}`).toString('base64');
       headers['Authorization'] = `Basic ${auth}`;
+      console.log('[AzureDevOps API] Authorization header set (token provided)');
+    } else {
+      console.log('[AzureDevOps API] WARNING: No token provided - will likely fail for private repos');
     }
 
     let defaultBranch = 'main';
     let fileTreeData = '';
     let readmeContent = '';
 
+    // URL-encode components for API calls (spaces, special chars)
+    const encodedOrg = encodeURIComponent(organization);
+    const encodedProject = encodeURIComponent(project);
+    const encodedRepo = encodeURIComponent(repository);
+
     try {
       // Step 1: Get repository info to determine default branch
-      const repoInfoUrl = `https://dev.azure.com/${organization}/${project}/_apis/git/repositories/${repository}?api-version=6.0`;
+      const repoInfoUrl = `${apiBaseUrl}/${encodedOrg}/${encodedProject}/_apis/git/repositories/${encodedRepo}?api-version=6.0`;
+      console.log('[AzureDevOps API] Fetching repo info from:', repoInfoUrl);
       
       const repoInfoResponse = await fetch(repoInfoUrl, { headers });
       
       if (repoInfoResponse.ok) {
-        const repoInfo = await repoInfoResponse.json();
-        defaultBranch = repoInfo.defaultBranch?.replace('refs/heads/', '') || 'main';
+        const contentType = repoInfoResponse.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const repoInfo = await repoInfoResponse.json();
+          defaultBranch = repoInfo.defaultBranch?.replace('refs/heads/', '') || 'main';
+        } else {
+          console.warn('Repository info response is not JSON, using default branch "main"');
+        }
       } else {
-        console.warn('Could not fetch repository info, using default branch "main"');
+        // Check if this is an authentication issue
+        if (repoInfoResponse.status === 401 || repoInfoResponse.status === 203) {
+          throw new Error('Authentication required. Please provide a valid Azure DevOps Personal Access Token (PAT).');
+        }
+        console.warn(`Could not fetch repository info (${repoInfoResponse.status}), using default branch "main"`);
       }
 
       // Step 2: Get the repository tree
-      const treeUrl = `https://dev.azure.com/${organization}/${project}/_apis/git/repositories/${repository}/items?recursionLevel=Full&api-version=6.0`;
+      const treeUrl = `${apiBaseUrl}/${encodedOrg}/${encodedProject}/_apis/git/repositories/${encodedRepo}/items?recursionLevel=Full&api-version=6.0`;
+      console.log('[AzureDevOps API] Fetching tree from:', treeUrl);
       
       const treeResponse = await fetch(treeUrl, { headers });
 
       if (!treeResponse.ok) {
-        if (treeResponse.status === 401) {
-          throw new Error('Unauthorized access to Azure DevOps. Please check your Personal Access Token (PAT).');
+        if (treeResponse.status === 401 || treeResponse.status === 203) {
+          throw new Error('Authentication required. Please provide a valid Azure DevOps Personal Access Token (PAT).');
         } else if (treeResponse.status === 404) {
           throw new Error('Repository not found. Please check the repository URL and your access permissions.');
         } else {
           const errorText = await treeResponse.text().catch(() => 'Unknown error');
-          throw new Error(`Azure DevOps API error (${treeResponse.status}): ${errorText}`);
+          throw new Error(`Azure DevOps API error (${treeResponse.status}): ${errorText.substring(0, 200)}`);
         }
+      }
+
+      // Verify response is JSON before parsing
+      const treeContentType = treeResponse.headers.get('content-type') || '';
+      if (!treeContentType.includes('application/json')) {
+        const responseText = await treeResponse.text();
+        // Check if it's a login page (HTML response)
+        if (responseText.includes('<!DOCTYPE') || responseText.includes('<html')) {
+          throw new Error('Authentication required. Azure DevOps returned a login page. Please provide a valid Personal Access Token (PAT).');
+        }
+        throw new Error(`Azure DevOps API returned unexpected content type: ${treeContentType}`);
       }
 
       const treeData = await treeResponse.json();
@@ -130,7 +172,7 @@ export async function POST(request: NextRequest) {
 
       // Step 3: Try to fetch README.md content
       try {
-        const readmeUrl = `https://dev.azure.com/${organization}/${project}/_apis/git/repositories/${repository}/items?path=/README.md&api-version=6.0`;
+        const readmeUrl = `${apiBaseUrl}/${encodedOrg}/${encodedProject}/_apis/git/repositories/${encodedRepo}/items?path=/README.md&api-version=6.0`;
         
         const readmeResponse = await fetch(readmeUrl, { headers });
         

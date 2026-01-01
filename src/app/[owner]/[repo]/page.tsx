@@ -201,8 +201,18 @@ export default function RepoWikiPage() {
     const storedToken = sessionStorage.getItem(tokenKey);
     const urlToken = searchParams.get('token') || '';
     
+    console.log('[Token Debug] Loading token:', {
+      owner,
+      repo,
+      tokenKey,
+      hasStoredToken: !!storedToken,
+      storedTokenLength: storedToken?.length || 0,
+      hasUrlToken: !!urlToken
+    });
+    
     if (storedToken) {
       setToken(storedToken);
+      console.log('[Token Debug] Token loaded from sessionStorage');
       // Clear token from URL if it exists (for security)
       if (urlToken) {
         const url = new URL(window.location.href);
@@ -213,10 +223,13 @@ export default function RepoWikiPage() {
       // Legacy support: use URL token but move it to sessionStorage
       setToken(urlToken);
       sessionStorage.setItem(tokenKey, urlToken);
+      console.log('[Token Debug] Token loaded from URL and saved to sessionStorage');
       // Remove from URL
       const url = new URL(window.location.href);
       url.searchParams.delete('token');
       window.history.replaceState({}, '', url.toString());
+    } else {
+      console.log('[Token Debug] No token found in sessionStorage or URL');
     }
   }, [owner, repo, searchParams]);
   const localPath = searchParams.get('local_path') ? decodeURIComponent(searchParams.get('local_path') || '') : undefined;
@@ -277,6 +290,13 @@ export default function RepoWikiPage() {
   const [currentToken, setCurrentToken] = useState(token); // Track current effective token
   const [effectiveRepoInfo, setEffectiveRepoInfo] = useState(repoInfo); // Track effective repo info with cached data
   const [embeddingError, setEmbeddingError] = useState(false);
+
+  // Sync currentToken when token state changes (e.g., loaded from sessionStorage)
+  useEffect(() => {
+    if (token && token !== currentToken) {
+      setCurrentToken(token);
+    }
+  }, [token, currentToken]);
 
   // Model selection state variables
   const [selectedProviderState, setSelectedProviderState] = useState(providerParam);
@@ -606,7 +626,11 @@ CRITICAL REMINDERS:
           await new Promise<void>((resolve, reject) => {
             // Handle incoming messages
             ws.onmessage = (event) => {
-              content += event.data;
+              // Filter out keepalive messages (HTML comments used to keep connection alive during embedding)
+              const data = event.data;
+              if (data && !data.startsWith('<!-- keepalive')) {
+                content += data;
+              }
             };
 
             // Handle WebSocket close
@@ -723,6 +747,37 @@ CRITICAL REMINDERS:
       // Get repository URL
       const repoUrl = getRepoUrl(effectiveRepoInfo);
 
+      // Truncate file tree if it's too large to prevent context overflow
+      // o4-mini has 200k token limit, ~4 chars per token, so ~800k chars max
+      // Leave room for prompt template, readme, and response (~200k chars for file tree)
+      const MAX_FILE_TREE_CHARS = 200000;
+      let truncatedFileTree = fileTree;
+      let fileTreeTruncated = false;
+      if (fileTree.length > MAX_FILE_TREE_CHARS) {
+        // Keep the first portion of the file tree (most important structure)
+        const lines = fileTree.split('\n');
+        let charCount = 0;
+        const keptLines: string[] = [];
+        for (const line of lines) {
+          if (charCount + line.length + 1 > MAX_FILE_TREE_CHARS) {
+            break;
+          }
+          keptLines.push(line);
+          charCount += line.length + 1;
+        }
+        truncatedFileTree = keptLines.join('\n');
+        fileTreeTruncated = true;
+        console.log(`[Wiki Structure] File tree truncated from ${fileTree.length} to ${truncatedFileTree.length} chars (${lines.length} to ${keptLines.length} files)`);
+      }
+
+      // Truncate readme if too large (leave ~50k chars for readme)
+      const MAX_README_CHARS = 50000;
+      let truncatedReadme = readme;
+      if (readme.length > MAX_README_CHARS) {
+        truncatedReadme = readme.substring(0, MAX_README_CHARS) + '\n\n[README truncated due to length...]';
+        console.log(`[Wiki Structure] README truncated from ${readme.length} to ${truncatedReadme.length} chars`);
+      }
+
       // Prepare request body
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const requestBody: Record<string, any> = {
@@ -732,14 +787,14 @@ CRITICAL REMINDERS:
           role: 'user',
 content: `Analyze this GitHub repository ${owner}/${repo} and create a wiki structure for it.
 
-1. The complete file tree of the project:
+1. The ${fileTreeTruncated ? 'partial ' : ''}file tree of the project${fileTreeTruncated ? ' (truncated due to size)' : ''}:
 <file_tree>
-${fileTree}
+${truncatedFileTree}
 </file_tree>
 
 2. The README file of the project:
 <readme>
-${readme}
+${truncatedReadme}
 </readme>
 
 I want to create a wiki for this repository. Determine the most logical structure for a wiki based on the repository's content.
@@ -914,7 +969,11 @@ IMPORTANT:
         await new Promise<void>((resolve, reject) => {
           // Handle incoming messages
           ws.onmessage = (event) => {
-            responseText += event.data;
+            // Filter out keepalive messages (HTML comments used to keep connection alive during embedding)
+            const data = event.data;
+            if (data && !data.startsWith('<!-- keepalive')) {
+              responseText += data;
+            }
           };
 
           // Handle WebSocket close
@@ -1575,6 +1634,16 @@ IMPORTANT:
         try {
           setLoadingMessage(messages.loading?.fetchingStructure || 'Fetching Azure DevOps repository structure...');
 
+          // Use token directly - currentToken may be stale due to React state update timing
+          const effectiveToken = token || currentToken;
+          console.log('[AzureDevOps] Calling structure API with:', {
+            repoUrl: effectiveRepoInfo.repoUrl,
+            hasToken: !!effectiveToken,
+            tokenLength: effectiveToken?.length || 0,
+            usingTokenState: !!token,
+            usingCurrentToken: !!currentToken
+          });
+
           // Use the data pipeline API for Azure DevOps repositories
           const response = await fetch('/api/azure-devops/structure', {
             method: 'POST',
@@ -1583,7 +1652,7 @@ IMPORTANT:
             },
             body: JSON.stringify({
               repo_url: effectiveRepoInfo.repoUrl,
-              token: currentToken
+              token: effectiveToken
             })
           });
 
@@ -1620,7 +1689,7 @@ IMPORTANT:
       // Reset the request in progress flag
       setRequestInProgress(false);
     }
-  }, [owner, repo, determineWikiStructure, currentToken, effectiveRepoInfo, requestInProgress, messages.loading]);
+  }, [owner, repo, determineWikiStructure, currentToken, token, effectiveRepoInfo, requestInProgress, messages.loading]);
 
   // Function to export wiki content
   const exportWiki = useCallback(async (format: 'markdown' | 'json') => {
@@ -1820,7 +1889,7 @@ IMPORTANT:
       effectRan.current = true; // Set to true immediately to prevent re-entry due to StrictMode
 
       const loadData = async () => {
-        // Try loading from server-side cache first
+        // Try loading from server-side cache first (no token needed for cache)
         setLoadingMessage(messages.loading?.fetchingCache || 'Checking for cached wiki...');
         try {
           const params = new URLSearchParams({
@@ -1989,6 +2058,14 @@ IMPORTANT:
         }
 
         // If we reached here, either there was no cache, it was invalid, or an error occurred
+        // For Azure DevOps, we need a token to fetch from the API
+        if (effectiveRepoInfo.type === 'azuredevops' && !token) {
+          console.log('[Wiki Init] Cache miss for Azure DevOps repo, waiting for token to load...');
+          // Reset effectRan so we can retry when token becomes available
+          effectRan.current = false;
+          return;
+        }
+        
         // Proceed to fetch repository structure
         fetchRepositoryStructure();
       };
@@ -2001,7 +2078,7 @@ IMPORTANT:
 
     // Clean up function for this effect is not strictly necessary for loadData,
     // but keeping the main unmount cleanup in the other useEffect
-  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView]);
+  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView, token]);
 
   // Save wiki to server-side cache when generation is complete
   useEffect(() => {
