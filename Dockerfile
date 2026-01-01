@@ -39,13 +39,14 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install Node.js, npm, and Azure CLI (for local dev authentication)
+# Install Node.js, npm, nginx, and Azure CLI (for local dev authentication)
 RUN apt-get update && apt-get install -y \
     curl \
     gnupg \
     git \
     ca-certificates \
     lsb-release \
+    nginx \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
     && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
@@ -54,7 +55,11 @@ RUN apt-get update && apt-get install -y \
     # Install Azure CLI for AzureCliCredential support in local development
     && curl -sL https://aka.ms/InstallAzureCLIDeb | bash \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    # Create nginx temp directories
+    && mkdir -p /tmp/nginx_client_body /tmp/nginx_proxy /tmp/nginx_fastcgi /tmp/nginx_uwsgi /tmp/nginx_scgi \
+    && mkdir -p /var/log/nginx \
+    && chown -R root:root /var/log/nginx
 
 # Update certificates if custom ones were provided and copied successfully
 RUN if [ -n "${CUSTOM_CERT_DIR}" ]; then \
@@ -79,52 +84,75 @@ COPY --from=node_builder /app/public ./public
 COPY --from=node_builder /app/.next/standalone ./
 COPY --from=node_builder /app/.next/static ./.next/static
 
-# Expose the port the app runs on
-EXPOSE ${PORT:-8001} 3000
+# Copy nginx configuration
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# Expose the port the app runs on (nginx on 3000)
+EXPOSE 3000
 
 # Create a script to run both backend and frontend
 RUN echo '#!/bin/bash\n\
-# Load environment variables from .env file if it exists\n\
+# Load environment variables from .env file if it exists (silently)\n\
 if [ -f .env ]; then\n\
-  export $(grep -v "^#" .env | xargs -r)\n\
+  set -a\n\
+  source .env 2>/dev/null || true\n\
+  set +a\n\
 fi\n\
 \n\
-# Check for required environment variables based on provider configuration\n\
-has_azure_openai=false\n\
-has_other_provider=false\n\
+# Configuration status (never log actual keys or values)\n\
+echo "📋 Azure Configuration Status:"\n\
+echo "  • AZURE_CLIENT_ID (MSI): $([ -n \"$AZURE_CLIENT_ID\" ] && echo \"✓ Set\" || echo \"✗ Not set\")"\n\
+echo "  • AZURE_OPENAI_API_KEY: $([ -n \"$AZURE_OPENAI_API_KEY\" ] && echo \"✓ Set\" || echo \"✗ Not set\")"\n\
+echo ""\n\
 \n\
-# Check if Azure OpenAI is configured\n\
-if [ -n "$AZURE_OPENAI_API_KEY" ] && [ -n "$AZURE_OPENAI_ENDPOINT" ]; then\n\
-  has_azure_openai=true\n\
-  echo "✓ Azure OpenAI configuration detected"\n\
+# Check Azure authentication method\n\
+has_azure_msi=false\n\
+has_azure_key=false\n\
+\n\
+if [ -n "$AZURE_CLIENT_ID" ]; then\n\
+  has_azure_msi=true\n\
 fi\n\
-\n\
-# Check if other providers are configured\n\
-if [ -n "$GOOGLE_API_KEY" ] || [ -n "$OPENAI_API_KEY" ] || [ -n "$OPENROUTER_API_KEY" ]; then\n\
-  has_other_provider=true\n\
+if [ -n "$AZURE_OPENAI_API_KEY" ]; then\n\
+  has_azure_key=true\n\
 fi\n\
 \n\
 # Validate configuration\n\
-if [ "$has_azure_openai" = false ] && [ "$has_other_provider" = false ]; then\n\
-  echo "⚠️  Warning: No AI provider configured!"\n\
-  echo "Please configure at least one of the following:"\n\
-  echo "  • Azure OpenAI: AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT"\n\
-  echo "  • Google Gemini: GOOGLE_API_KEY"\n\
-  echo "  • OpenAI: OPENAI_API_KEY"\n\
-  echo "  • OpenRouter: OPENROUTER_API_KEY"\n\
+if [ "$has_azure_msi" = false ] && [ "$has_azure_key" = false ]; then\n\
+  echo "⚠️  Warning: No Azure authentication configured!"\n\
+  echo "Please configure one of the following:"\n\
+  echo "  • AZURE_CLIENT_ID (Managed Identity - recommended for Azure)"\n\
+  echo "  • AZURE_OPENAI_API_KEY (API Key - for local development)"\n\
   echo ""\n\
 fi\n\
 \n\
-if [ "$has_azure_openai" = true ]; then\n\
-  echo "🚀 Starting DeepWiki with Azure OpenAI integration..."\n\
+if [ "$has_azure_msi" = true ]; then\n\
+  echo "🚀 Starting DeepWiki with Azure Managed Identity..."\n\
 else\n\
-  echo "🚀 Starting DeepWiki with standard providers..."\n\
+  echo "🚀 Starting DeepWiki with Azure OpenAI API Key..."\n\
 fi\n\
 \n\
-# Start the API server in the background with the configured port\n\
-python -m backend.main --port ${PORT:-8001} &\n\
-PORT=3000 HOSTNAME=0.0.0.0 node server.js &\n\
-wait -n\n\
+# Start nginx in the foreground (after backgrounding other services)\n\
+# Next.js on port 3001 (internal), FastAPI on port 8001 (internal)\n\
+# nginx on port 3000 (external) proxies to both\n\
+echo "Starting FastAPI backend on port 8001..."\n\
+python -m backend.main --port 8001 &\n\
+BACKEND_PID=$!\n\
+\n\
+echo "Starting Next.js frontend on port 3001..."\n\
+PORT=3001 HOSTNAME=127.0.0.1 node server.js &\n\
+NEXTJS_PID=$!\n\
+\n\
+# Wait for services to start\n\
+sleep 3\n\
+\n\
+echo "Starting nginx reverse proxy on port 3000..."\n\
+nginx -g "daemon off;" &\n\
+NGINX_PID=$!\n\
+\n\
+# Wait for any process to exit\n\
+wait -n $BACKEND_PID $NEXTJS_PID $NGINX_PID\n\
+\n\
+# Exit with the status of the process that exited first\n\
 exit $?' > /app/start.sh && chmod +x /app/start.sh
 
 # Set environment variables
@@ -133,25 +161,17 @@ ENV NODE_ENV=production
 ENV SERVER_BASE_URL=http://localhost:${PORT:-8001}
 
 # Supported environment variables (set via .env file or docker run -e):
-# API Providers:
-#   GOOGLE_API_KEY - Google Gemini API key
-#   OPENAI_API_KEY - OpenAI API key  
-#   OPENROUTER_API_KEY - OpenRouter API key
-# Azure OpenAI (auto-detected when configured):
-#   AZURE_OPENAI_API_KEY - Azure OpenAI API key for text generation
-#   AZURE_OPENAI_ENDPOINT - Azure OpenAI endpoint for text generation
-#   AZURE_OPENAI_DEPLOYMENT - Azure deployment name for text generation
-#   AZURE_OPENAI_VERSION - Azure OpenAI API version (default: 2024-12-01-preview)
-#   AZURE_OPENAI_EMBEDDING_API_KEY - Azure OpenAI API key for embeddings (optional)
-#   AZURE_OPENAI_EMBEDDING_ENDPOINT - Azure OpenAI endpoint for embeddings (optional)
-#   AZURE_OPENAI_EMBEDDING_DEPLOYMENT - Azure deployment name for embeddings (optional) 
-#   AZURE_OPENAI_EMBEDDING_VERSION - Azure OpenAI API version for embeddings (optional)
-# Other services:
-#   OLLAMA_HOST - Ollama server host (default: http://localhost:11434)
-#   OPENAI_BASE_URL - Custom OpenAI API endpoint
+# Azure OpenAI (required):
+#   AZURE_OPENAI_API_KEY - Azure OpenAI API key (or use Managed Identity)
+#   AZURE_OPENAI_ENDPOINT - Azure OpenAI endpoint
+#   AZURE_OPENAI_DEPLOYMENT - Azure deployment name
+#   AZURE_OPENAI_VERSION - API version (default: 2024-12-01-preview)
+# Azure Managed Identity (recommended for Azure deployments):
+#   AZURE_CLIENT_ID - Managed Identity client ID (replaces API key auth)
+# Azure Blob Storage (optional, for data persistence):
+#   Configured via backend/config/infra.json
 # Configuration:
 #   LOG_LEVEL - Logging level (default: INFO)
-#   LOG_FILE_PATH - Log file path (default: logs/application.log)
 #   DEEPWIKI_CONFIG_DIR - Custom config directory path
 
 # Create empty .env file (will be overridden if one exists at runtime)

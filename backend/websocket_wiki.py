@@ -3,7 +3,9 @@ WebSocket handler for wiki chat completions.
 This module handles WebSocket connections for chat completions using Azure OpenAI.
 """
 
+import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 from urllib.parse import unquote
 
@@ -19,6 +21,9 @@ from backend.config import (
 from backend.data_pipeline import count_tokens, get_file_content
 from backend.azureai_client import AzureAIClient
 from backend.rag import RAG
+
+# Thread pool for running blocking operations (like embedding)
+_executor = ThreadPoolExecutor(max_workers=4)
 
 # Configure logging
 from backend.logging_config import setup_logging
@@ -73,6 +78,80 @@ class ChatCompletionRequest(BaseModel):
     included_files: Optional[str] = Field(
         None, description="Comma-separated list of file patterns to include"
     )
+
+
+async def prepare_retriever_with_keepalive(
+    websocket: WebSocket,
+    request_rag: RAG,
+    repo_url: str,
+    repo_type: str,
+    token: Optional[str],
+    branch: Optional[str],
+    excluded_dirs: Optional[List[str]],
+    excluded_files: Optional[List[str]],
+    included_dirs: Optional[List[str]],
+    included_files: Optional[List[str]]
+) -> bool:
+    """
+    Run prepare_retriever in a thread pool while sending keepalive pings to the WebSocket.
+    This prevents connection timeout during long-running embedding operations.
+    
+    Returns True if successful, False if an error occurred.
+    """
+    loop = asyncio.get_event_loop()
+    
+    # Track completion and errors
+    completed = asyncio.Event()
+    error_message = None
+    
+    def run_prepare():
+        nonlocal error_message
+        try:
+            request_rag.prepare_retriever(
+                repo_url,
+                repo_type,
+                token,
+                branch,
+                excluded_dirs,
+                excluded_files,
+                included_dirs,
+                included_files
+            )
+        except Exception as e:
+            error_message = str(e)
+        finally:
+            loop.call_soon_threadsafe(completed.set)
+    
+    # Start the blocking operation in a thread
+    future = loop.run_in_executor(_executor, run_prepare)
+    
+    # Send keepalive pings every 30 seconds while waiting
+    PING_INTERVAL = 30
+    ping_count = 0
+    
+    while not completed.is_set():
+        try:
+            # Wait for either completion or ping interval
+            await asyncio.wait_for(completed.wait(), timeout=PING_INTERVAL)
+        except asyncio.TimeoutError:
+            # Send a keepalive ping
+            try:
+                ping_count += 1
+                logger.debug(f"Sending WebSocket keepalive ping #{ping_count}")
+                # Send an empty comment as keepalive (will be ignored by frontend)
+                await websocket.send_text(f"<!-- keepalive {ping_count} -->")
+            except Exception as e:
+                logger.warning(f"Failed to send keepalive ping: {e}")
+                # Connection might be closed, but let's continue waiting for embedding
+    
+    # Wait for the future to complete (should already be done)
+    await asyncio.wrap_future(future)
+    
+    if error_message:
+        logger.error(f"Error in prepare_retriever: {error_message}")
+        raise Exception(error_message)
+    
+    return True
 
 
 async def handle_websocket_chat(websocket: WebSocket):
@@ -138,7 +217,10 @@ async def handle_websocket_chat(websocket: WebSocket):
                 ]
                 logger.info(f"Using custom included files: {included_files}")
 
-            request_rag.prepare_retriever(
+            # Use async version with keepalive to prevent timeout during long embedding operations
+            await prepare_retriever_with_keepalive(
+                websocket,
+                request_rag,
                 request.repo_url,
                 request.type,
                 request.token,

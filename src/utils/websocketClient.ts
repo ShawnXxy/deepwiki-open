@@ -76,8 +76,12 @@ export const createChatWebSocket = (
   };
   
   ws.onmessage = (event) => {
-    // Call the message handler with the received text
-    onMessage(event.data);
+    // Filter out keepalive messages (HTML comments used to keep connection alive during embedding)
+    const data = event.data;
+    if (data && !data.startsWith('<!-- keepalive')) {
+      // Call the message handler with the received text
+      onMessage(data);
+    }
   };
   
   ws.onerror = (error) => {

@@ -53,8 +53,22 @@ export default function WorkshopPage() {
   const owner = params.owner as string;
   const repo = params.repo as string;
 
-  // Extract tokens from search params
-  const token = searchParams.get('token') || '';
+  // SECURITY: Retrieve token from sessionStorage (not URL params)
+  const [token, setToken] = useState<string>('');
+  
+  useEffect(() => {
+    const tokenKey = `deepwiki_token_${owner}_${repo}`;
+    const storedToken = sessionStorage.getItem(tokenKey);
+    const urlToken = searchParams.get('token') || '';
+    
+    if (storedToken) {
+      setToken(storedToken);
+    } else if (urlToken) {
+      setToken(urlToken);
+      sessionStorage.setItem(tokenKey, urlToken);
+    }
+  }, [owner, repo, searchParams]);
+
   const repoType = searchParams.get('type') || 'github';
   const branch = searchParams.get('branch') || null;
   const localPath = searchParams.get('local_path') ? decodeURIComponent(searchParams.get('local_path') || '') : undefined;
@@ -64,6 +78,7 @@ export default function WorkshopPage() {
   const isCustomModelParam = searchParams.get('is_custom_model') === 'true';
   const customModelParam = searchParams.get('custom_model') || '';
   const language = searchParams.get('language') || 'en';
+  const isComprehensive = searchParams.get('comprehensive') !== 'false'; // Default to true
 
   // Import language context for translations
   const { messages } = useLanguage();
@@ -127,6 +142,7 @@ export default function WorkshopPage() {
         repo: repoInfo.repo,
         repo_type: repoInfo.type,
         language: language,
+        comprehensive: isComprehensive.toString(),
       });
       const response = await fetch(`/api/wiki_cache?${params.toString()}`);
 
@@ -149,7 +165,7 @@ export default function WorkshopPage() {
       console.error('Error loading from server cache:', error);
       return null;
     }
-  }, [repoInfo.owner, repoInfo.repo, repoInfo.type, language]);
+  }, [repoInfo.owner, repoInfo.repo, repoInfo.type, language, isComprehensive]);
 
   // Generate workshop content
   const generateWorkshopContent = useCallback(async () => {

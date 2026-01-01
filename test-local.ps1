@@ -141,9 +141,11 @@ Write-Host ""
 Write-Host "🚀 Starting container..." -ForegroundColor Yellow
 
 # Build docker run command
+# Note: 8GB memory limit for large repository embedding (5000+ files)
 $dockerArgs = @(
     "run", "-d",
     "--name", $CONTAINER_NAME,
+    "--memory", "8g",
     "-p", "${BACKEND_PORT}:${BACKEND_PORT}",
     "-p", "${FRONTEND_PORT}:3000",
     "-e", "PORT=$BACKEND_PORT",

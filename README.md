@@ -143,6 +143,46 @@ npm run dev
 - fill the `Configuration` section
 - Run the script, which will create an Azure Container Registry, pull images, setup container env, and upload code.
 
+### Docker Architecture
+
+This project uses a single `Dockerfile` with nginx for both local testing and Azure deployment:
+
+| File | Purpose | nginx | Use Case |
+|------|---------|-------|----------|
+| `Dockerfile` | All environments | ✅ Yes | Local testing (`test-local.ps1`) and Azure deployment |
+
+**Why nginx?**
+
+Azure Container Apps has a **240-second hard limit** on HTTP request timeouts. Large repository embedding can take 30-60+ minutes, which would fail with 504 Gateway Timeout errors.
+
+The nginx reverse proxy enables **WebSocket connections** which bypass HTTP timeout limits:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Container                                │
+│                                                                  │
+│   External :3000                                                 │
+│        │                                                         │
+│        ▼                                                         │
+│   ┌─────────┐     /ws/*      ┌──────────────────────────┐       │
+│   │  nginx  │ ────────────▶  │   FastAPI Backend :8001  │       │
+│   │         │  (WebSocket)   │   - Wiki generation      │       │
+│   │         │                │   - Chat API             │       │
+│   │         │     /*         │   - Embeddings           │       │
+│   │         │ ────────────▶  └──────────────────────────┘       │
+│   │         │  (HTTP)                                            │
+│   │         │                ┌──────────────────────────┐       │
+│   │         │ ────────────▶  │   Next.js Frontend :3001 │       │
+│   └─────────┘                │   - UI/React app         │       │
+│                              └──────────────────────────┘       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**nginx configuration highlights** (`nginx.conf`):
+- WebSocket timeout: 7 days (for long-running embedding operations)
+- HTTP timeout: 1 hour
+- Proper WebSocket upgrade headers for `/ws/` routes
+
 ### Deployment Architecture
 
 ```
@@ -153,8 +193,14 @@ npm run dev
 │  │  ┌─────────────────┐    ┌──────────────────────────┐   │   │
 │  │  │   Next.js       │    │       FastAPI            │   │   │
 │  │  │   Frontend      │───▶│       Backend            │   │   │
-│  │  │   :3000         │    │       :8001              │   │   │
+│  │  │   :3001         │    │       :8001              │   │   │
 │  │  └─────────────────┘    └──────────────────────────┘   │   │
+│  │           ▲                        ▲                    │   │
+│  │           └────────┬───────────────┘                    │   │
+│  │                    │                                    │   │
+│  │              ┌─────┴─────┐                              │   │
+│  │              │   nginx   │ ◀── External :3000           │   │
+│  │              └───────────┘                              │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                              │                                   │
 │                    Managed Identity                              │
@@ -171,6 +217,21 @@ npm run dev
 └─────────────────┘  └─────────────────┘  └─────────────────┘
 ```
 
+### Resource Requirements
+
+For large repositories (5000+ files), the container needs sufficient memory for embedding:
+
+| Profile | CPU | Memory | Suitable For |
+|---------|-----|--------|-------------|
+| Consumption | 2.0 | 4 GB | Small repos (<1000 files) |
+| Consumption | 4.0 | 8 GB | Medium repos (1000-3000 files) |
+| **D4 (Dedicated)** | 4.0 | **16 GB** | Large repos (5000+ files) - **Default** |
+
+The `deploy-azure.ps1` script creates a **D4 dedicated workload profile** with 4 CPU / 16 GB by default. This is required because:
+- Consumption tier max is 8GB, which causes OOM (exit code 137) for large repos
+- D4 dedicated profile provides up to 16GB RAM per container
+- Costs more than Consumption, but necessary for large repository embedding
+
 ### Useful Azure CLI Commands
 
 ```bash
@@ -182,6 +243,12 @@ az containerapp revision restart -n codewiki -g RG-ORCAS-DEEPWIKI
 
 # Scale the app
 az containerapp update -n codewiki -g RG-ORCAS-DEEPWIKI --min-replicas 2 --max-replicas 10
+
+# Switch to Consumption tier (after embedding, for cost savings)
+az containerapp update -n codewiki -g RG-ORCAS-DEEPWIKI --workload-profile-name Consumption --cpu 4 --memory 8Gi
+
+# Switch to D4 dedicated (for large repo embedding)
+az containerapp update -n codewiki -g RG-ORCAS-DEEPWIKI --workload-profile-name D4 --cpu 4 --memory 16Gi
 
 # Get app URL
 az containerapp show -n codewiki -g RG-ORCAS-DEEPWIKI --query properties.configuration.ingress.fqdn -o tsv
