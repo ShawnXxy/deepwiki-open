@@ -2,8 +2,9 @@
  * Frontend Logger - Sends logs to backend for persistent storage
  * 
  * Features:
- * - Deduplication: Identical messages within time window are counted, not repeated
+ * - Level-aware deduplication: Different windows per level (aligned with backend)
  * - Batching: Logs are buffered and sent to backend in batches
+ * - Auto-retry: Periodically retries backend if unavailable
  * - Fallback: Falls back to console logging if backend is unavailable
  * - All levels logged: No level filtering, all logs captured
  * 
@@ -18,6 +19,7 @@ interface LogEntry {
   level: LogLevel;
   message: string;
   context?: Record<string, unknown>;
+  timestamp?: string;
 }
 
 // Console method mapping
@@ -28,41 +30,62 @@ const CONSOLE_METHODS: Record<LogLevel, 'debug' | 'log' | 'warn' | 'error'> = {
   error: 'error'
 };
 
+// Console color styling for better visibility
+const CONSOLE_STYLES: Record<LogLevel, string> = {
+  debug: 'color: #888',
+  info: 'color: #2196F3',
+  warn: 'color: #FF9800; font-weight: bold',
+  error: 'color: #F44336; font-weight: bold'
+};
+
 // Buffer for batching logs
 const logBuffer: LogEntry[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const FLUSH_INTERVAL = 2000; // 2 seconds
 const MAX_BUFFER_SIZE = 50;
 
+// Level-aware deduplication windows (aligned with backend SmartLogFilter)
+const DEDUP_WINDOWS: Record<LogLevel, number> = {
+  error: 2000,    // 2s - errors always important
+  warn: 10000,    // 10s - warnings semi-important
+  info: 30000,    // 30s - info can be deduplicated more aggressively
+  debug: 60000    // 60s - debug deduplicated most aggressively
+};
+
 // Deduplication tracking
 interface DedupEntry {
   lastTime: number;
   count: number;
+  level: LogLevel;
 }
 const dedupMap = new Map<string, DedupEntry>();
-const DEDUP_WINDOW_MS = 5000; // 5 seconds deduplication window
 
-// Flag to track if backend logging is available
+// Backend availability tracking with auto-retry
 let backendLoggingAvailable = true;
+let lastBackendFailure = 0;
+const BACKEND_RETRY_INTERVAL = 30000; // Retry every 30 seconds
 
 /**
  * Generate deduplication key from log entry
+ * Uses truncated message for performance (no hashing)
  */
 function getDedupKey(entry: LogEntry): string {
-  const contextStr = entry.context ? JSON.stringify(entry.context) : '';
-  return `${entry.level}:${entry.message}:${contextStr}`;
+  const msg = entry.message.substring(0, 100); // Truncate for performance
+  const contextStr = entry.context ? JSON.stringify(entry.context).substring(0, 50) : '';
+  return `${entry.level}:${msg}:${contextStr}`;
 }
 
 /**
- * Check if message should be logged (deduplication)
+ * Check if message should be logged (level-aware deduplication)
  * Returns: { shouldLog: boolean, repeatCount?: number }
  */
 function checkDedup(entry: LogEntry): { shouldLog: boolean; repeatCount?: number } {
   const key = getDedupKey(entry);
   const now = Date.now();
   const existing = dedupMap.get(key);
+  const dedupWindow = DEDUP_WINDOWS[entry.level];
   
-  if (existing && (now - existing.lastTime) < DEDUP_WINDOW_MS) {
+  if (existing && (now - existing.lastTime) < dedupWindow) {
     // Same message within window - increment count, don't log
     existing.count++;
     existing.lastTime = now;
@@ -71,28 +94,52 @@ function checkDedup(entry: LogEntry): { shouldLog: boolean; repeatCount?: number
   
   // Either new message or window expired
   const repeatCount = existing?.count;
-  dedupMap.set(key, { lastTime: now, count: 1 });
+  dedupMap.set(key, { lastTime: now, count: 1, level: entry.level });
   
-  // Clean up old entries periodically
-  if (dedupMap.size > 1000) {
-    const cutoff = now - DEDUP_WINDOW_MS * 2;
-    for (const [k, v] of dedupMap.entries()) {
+  // Clean up old entries periodically (every 100 entries)
+  if (dedupMap.size > 500) {
+    const cutoff = now - 120000; // 2 minutes
+    const keysToDelete: string[] = [];
+    dedupMap.forEach((v, k) => {
       if (v.lastTime < cutoff) {
-        dedupMap.delete(k);
+        keysToDelete.push(k);
       }
-    }
+    });
+    keysToDelete.forEach(k => dedupMap.delete(k));
   }
   
   return { shouldLog: true, repeatCount: repeatCount && repeatCount > 1 ? repeatCount : undefined };
 }
 
 /**
- * Log entry to browser console
+ * Log entry to browser console with styled output
  */
 function logToConsole(entry: LogEntry, repeatCount?: number): void {
   const method = CONSOLE_METHODS[entry.level];
-  const prefix = repeatCount ? `[${entry.level.toUpperCase()}] (repeated ${repeatCount}x)` : `[${entry.level.toUpperCase()}]`;
-  console[method](prefix, entry.message, entry.context || '');
+  const style = CONSOLE_STYLES[entry.level];
+  const prefix = repeatCount 
+    ? `[${entry.level.toUpperCase()}] (×${repeatCount})` 
+    : `[${entry.level.toUpperCase()}]`;
+  
+  // Use styled console output for better visibility
+  if (entry.context && Object.keys(entry.context).length > 0) {
+    console[method](`%c${prefix}`, style, entry.message, entry.context);
+  } else {
+    console[method](`%c${prefix}`, style, entry.message);
+  }
+}
+
+/**
+ * Check if backend should be retried
+ */
+function shouldRetryBackend(): boolean {
+  if (backendLoggingAvailable) return true;
+  const now = Date.now();
+  if (now - lastBackendFailure > BACKEND_RETRY_INTERVAL) {
+    backendLoggingAvailable = true; // Reset to retry
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -104,7 +151,8 @@ async function flushLogs(): Promise<void> {
   const logsToSend = [...logBuffer];
   logBuffer.length = 0;
   
-  if (!backendLoggingAvailable) {
+  // Check if we should try backend
+  if (!shouldRetryBackend()) {
     return; // Already logged to console in addLog
   }
   
@@ -118,9 +166,18 @@ async function flushLogs(): Promise<void> {
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
+    
+    // Success - reset failure state if needed
+    if (!backendLoggingAvailable) {
+      backendLoggingAvailable = true;
+      console.log('%c[Logger] Backend logging restored', 'color: #4CAF50');
+    }
   } catch {
-    console.warn('[Logger] Backend logging unavailable, falling back to console only');
+    if (backendLoggingAvailable) {
+      console.warn('%c[Logger] Backend logging unavailable, using console only (will retry in 30s)', 'color: #FF9800');
+    }
     backendLoggingAvailable = false;
+    lastBackendFailure = Date.now();
   }
 }
 
@@ -138,10 +195,18 @@ function scheduleFlush(): void {
 
 /**
  * Add a log entry - outputs to console immediately and buffers for backend
- * Uses deduplication to prevent identical log spam
+ * Uses level-aware deduplication to prevent identical log spam
  */
 function addLog(level: LogLevel, message: string, context?: Record<string, unknown>): void {
-  const entry: LogEntry = { level, message, context };
+  // Guard against SSR - only log in browser
+  if (typeof window === 'undefined') return;
+  
+  const entry: LogEntry = { 
+    level, 
+    message, 
+    context,
+    timestamp: new Date().toISOString()
+  };
   
   // Check deduplication
   const { shouldLog, repeatCount } = checkDedup(entry);
@@ -153,7 +218,7 @@ function addLog(level: LogLevel, message: string, context?: Record<string, unkno
   
   // If there was a repeat count, add it to the message
   const logEntry: LogEntry = repeatCount 
-    ? { level, message: `${message} (previous message repeated ${repeatCount}x)`, context }
+    ? { ...entry, message: `${message} (×${repeatCount} previous)` }
     : entry;
   
   // Always log to browser console for immediate visibility
@@ -176,6 +241,11 @@ function addLog(level: LogLevel, message: string, context?: Record<string, unkno
 
 /**
  * Logger object with level-specific methods
+ * 
+ * Usage:
+ *   import logger from '@/utils/logger';
+ *   logger.info('User action', { userId: 123 });
+ *   logger.error('Failed to load', { error: err.message });
  */
 const logger = {
   debug: (message: string, context?: Record<string, unknown>) => addLog('debug', message, context),
@@ -196,7 +266,17 @@ const logger = {
   isBackendAvailable: () => backendLoggingAvailable,
 
   /** Reset backend availability (e.g., after reconnection) */
-  resetBackendAvailability: () => { backendLoggingAvailable = true; }
+  resetBackendAvailability: () => { 
+    backendLoggingAvailable = true;
+    lastBackendFailure = 0;
+  },
+  
+  /** Get deduplication stats (for debugging) */
+  getStats: () => ({
+    bufferSize: logBuffer.length,
+    dedupEntries: dedupMap.size,
+    backendAvailable: backendLoggingAvailable
+  })
 };
 
 // Flush logs before page unload using sendBeacon for reliable delivery
