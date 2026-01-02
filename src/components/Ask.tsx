@@ -663,7 +663,7 @@ const Ask: React.FC<AskProps> = ({
               ref={responseRef}
               className="max-h-none"
             >
-              <Markdown content={processCitations(response, repoInfo, detectCurrentBranch(repoInfo, 'main'))} />
+              <Markdown content={processCitations(response, repoInfo, detectCurrentBranch(repoInfo, 'main') ?? 'main')} />
             </div>
 
             {/* Research navigation and clear button */}

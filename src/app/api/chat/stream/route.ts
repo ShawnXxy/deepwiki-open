@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 // Get the server base URL for backend API calls
 // In containerized deployments, frontend and backend run in the same container
 // Frontend on port 3000, Backend on port 8001, both accessible via localhost internally
-const getTargetServerUrl = (req: NextRequest) => {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const getTargetServerUrl = (_req: NextRequest) => {
   // Use environment variable if explicitly set
   if (process.env.SERVER_BASE_URL) {
     return process.env.SERVER_BASE_URL;

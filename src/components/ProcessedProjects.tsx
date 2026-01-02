@@ -115,6 +115,7 @@ export default function ProcessedProjects({
     setSearchQuery('');
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleDelete = async (project: ProcessedProject) => {
     const modeLabel = project.comprehensive ? 'comprehensive' : 'concise';
     if (!confirm(`Are you sure you want to delete the ${modeLabel} wiki for ${project.name}?`)) {

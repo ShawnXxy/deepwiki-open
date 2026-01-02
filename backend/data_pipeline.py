@@ -24,6 +24,41 @@ logger = logging.getLogger(__name__)
 # Maximum token limit for OpenAI embedding models
 MAX_EMBEDDING_TOKENS = 8192
 
+
+def safe_read_file(file_path: str) -> str:
+    """
+    Safely read a file with automatic encoding detection.
+    Tries multiple encodings to handle files with different encodings (UTF-8, UTF-16, etc.)
+
+    Args:
+        file_path (str): Path to the file to read.
+
+    Returns:
+        str: The file content as a string.
+
+    Raises:
+        UnicodeDecodeError: If no encoding can decode the file.
+    """
+    # List of encodings to try, in order of preference
+    encodings = ['utf-8', 'utf-8-sig', 'utf-16', 'utf-16-le', 'utf-16-be', 'latin-1', 'cp1252']
+
+    for encoding in encodings:
+        try:
+            with open(file_path, 'r', encoding=encoding) as f:
+                return f.read()
+        except UnicodeDecodeError:
+            continue
+        except Exception as e:
+            # For non-encoding errors, raise immediately
+            raise e
+
+    # If all encodings fail, raise an error
+    raise UnicodeDecodeError(
+        'all-encodings', b'', 0, 1,
+        f"Could not decode file {file_path} with any supported encoding"
+    )
+
+
 def count_tokens(text: str, embedder_type: str = None, is_ollama_embedder: bool = None) -> int:
     """
     Count the number of tokens in a text string using tiktoken.
@@ -346,37 +381,37 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
                 continue
 
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    relative_path = os.path.relpath(file_path, path)
+                # Use safe_read_file for automatic encoding detection
+                content = safe_read_file(file_path)
+                relative_path = os.path.relpath(file_path, path)
 
-                    # Determine if this is an implementation file
-                    is_implementation = (
-                        not relative_path.startswith("test_")
-                        and not relative_path.startswith("app_")
-                        and "test" not in relative_path.lower()
-                    )
+                # Determine if this is an implementation file
+                is_implementation = (
+                    not relative_path.startswith("test_")
+                    and not relative_path.startswith("app_")
+                    and "test" not in relative_path.lower()
+                )
 
-                    # Check token count
-                    token_count = count_tokens(content, embedder_type)
-                    if token_count > MAX_EMBEDDING_TOKENS * 10:
-                        logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
-                        continue
+                # Check token count
+                token_count = count_tokens(content, embedder_type)
+                if token_count > MAX_EMBEDDING_TOKENS * 10:
+                    logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
+                    continue
 
-                    doc = Document(
-                        text=content,
-                        meta_data={
-                            "file_path": relative_path,
-                            "type": ext[1:],
-                            "is_code": True,
-                            "is_implementation": is_implementation,
-                            "title": relative_path,
-                            "token_count": token_count,
-                        },
-                    )
-                    documents.append(doc)
+                doc = Document(
+                    text=content,
+                    meta_data={
+                        "file_path": relative_path,
+                        "type": ext[1:],
+                        "is_code": True,
+                        "is_implementation": is_implementation,
+                        "title": relative_path,
+                        "token_count": token_count,
+                    },
+                )
+                documents.append(doc)
             except Exception as e:
-                logger.error(f"Error reading {file_path}: {e}")
+                logger.error(f"[BE] Error reading {file_path}: {e}")
 
     # Then process documentation files
     for ext in doc_extensions:
@@ -387,30 +422,30 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
                 continue
 
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
-                    relative_path = os.path.relpath(file_path, path)
+                # Use safe_read_file for automatic encoding detection
+                content = safe_read_file(file_path)
+                relative_path = os.path.relpath(file_path, path)
 
-                    # Check token count
-                    token_count = count_tokens(content, embedder_type)
-                    if token_count > MAX_EMBEDDING_TOKENS:
-                        logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
-                        continue
+                # Check token count
+                token_count = count_tokens(content, embedder_type)
+                if token_count > MAX_EMBEDDING_TOKENS:
+                    logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
+                    continue
 
-                    doc = Document(
-                        text=content,
-                        meta_data={
-                            "file_path": relative_path,
-                            "type": ext[1:],
-                            "is_code": False,
-                            "is_implementation": False,
-                            "title": relative_path,
-                            "token_count": token_count,
-                        },
-                    )
-                    documents.append(doc)
+                doc = Document(
+                    text=content,
+                    meta_data={
+                        "file_path": relative_path,
+                        "type": ext[1:],
+                        "is_code": False,
+                        "is_implementation": False,
+                        "title": relative_path,
+                        "token_count": token_count,
+                    },
+                )
+                documents.append(doc)
             except Exception as e:
-                logger.error(f"Error reading {file_path}: {e}")
+                logger.error(f"[BE] Error reading {file_path}: {e}")
 
     logger.info(f"Found {len(documents)} documents")
     return documents

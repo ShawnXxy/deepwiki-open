@@ -1306,7 +1306,7 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
               >
                 {/* Include Font Awesome for icons */}
                 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" />
-                <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: processCitations(slides[currentSlideIndex]?.html || '', repoInfo, detectCurrentBranch(repoInfo, 'main')) }} />
+                <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: processCitations(slides[currentSlideIndex]?.html || '', repoInfo, detectCurrentBranch(repoInfo, 'main') ?? 'main') }} />
               </div>
             </div>
 

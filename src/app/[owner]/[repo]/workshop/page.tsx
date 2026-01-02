@@ -672,7 +672,7 @@ Estimated time: 20-30 minutes | Combines concepts from all exercises
                 <p className="text-red-700 dark:text-red-300 text-sm">{exportError}</p>
               </div>
             )}
-            <Markdown content={processCitations(workshopContent, repoInfo, detectCurrentBranch(repoInfo, 'master'))} />
+            <Markdown content={processCitations(workshopContent, repoInfo, detectCurrentBranch(repoInfo, 'master') ?? 'master')} />
           </div>
         )}
       </main>

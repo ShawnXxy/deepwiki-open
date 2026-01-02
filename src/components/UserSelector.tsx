@@ -51,12 +51,12 @@ interface ModelSelectorProps {
 export default function UserSelector({
   provider,
   setProvider,
-  model,
+  model: _model, // eslint-disable-line @typescript-eslint/no-unused-vars
   setModel,
-  isCustomModel,
-  setIsCustomModel,
-  customModel,
-  setCustomModel,
+  isCustomModel: _isCustomModel, // eslint-disable-line @typescript-eslint/no-unused-vars
+  setIsCustomModel: _setIsCustomModel, // eslint-disable-line @typescript-eslint/no-unused-vars
+  customModel: _customModel, // eslint-disable-line @typescript-eslint/no-unused-vars
+  setCustomModel: _setCustomModel, // eslint-disable-line @typescript-eslint/no-unused-vars
   showFileFilters = false,
   excludedDirs = '',
   setExcludedDirs,
@@ -74,6 +74,7 @@ export default function UserSelector({
   const { messages: t } = useLanguage();
 
   // State for model configurations from backend
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
