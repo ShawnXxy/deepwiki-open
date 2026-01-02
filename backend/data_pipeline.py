@@ -221,12 +221,12 @@ def download_repo(repo_url: str, local_path: str, type: str = "github",
             error_msg = e.stderr.decode('utf-8')
             # Sanitize error message to remove any tokens (both raw and URL-encoded)
             if access_token:
-            # Remove raw token
+                # Remove raw token
                 error_msg = error_msg.replace(access_token, "***TOKEN***")
                 # Also remove URL-encoded token to prevent leaking encoded version
-            encoded_token = quote(access_token, safe='')
-            error_msg = error_msg.replace(encoded_token, "***TOKEN***")
-        raise ValueError(f"Error during cloning: {error_msg}")
+                encoded_token = quote(access_token, safe='')
+                error_msg = error_msg.replace(encoded_token, "***TOKEN***")
+            raise ValueError(f"Error during cloning: {error_msg}")
     except Exception as e:
         raise ValueError(f"An unexpected error occurred: {str(e)}")
 

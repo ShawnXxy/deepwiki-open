@@ -1547,7 +1547,7 @@ IMPORTANT:
 
         const githubApiBaseUrl = getGithubApiUrl(effectiveRepoInfo.repoUrl);
         // First, try to get the default branch from the repository info
-        let defaultBranchLocal = null;
+        let defaultBranchLocal: string | null = null;
         try {
           const repoInfoResponse = await fetch(`${githubApiBaseUrl}/repos/${owner}/${repo}`, {
             headers: createGithubHeaders(currentToken)
@@ -1559,6 +1559,10 @@ IMPORTANT:
             console.log(`Found default branch: ${defaultBranchLocal}`);
             // Store the default branch in state
             setDefaultBranch(defaultBranchLocal || 'main');
+            // Update effectiveRepoInfo.branch if not explicitly set, so cache uses correct branch name
+            if (!effectiveRepoInfo.branch && defaultBranchLocal) {
+              setEffectiveRepoInfo(prev => ({ ...prev, branch: defaultBranchLocal }));
+            }
           }
         } catch (err) {
           console.warn('Could not fetch repository info for default branch:', err);
@@ -1658,6 +1662,10 @@ IMPORTANT:
           console.log(`Found GitLab default branch: ${defaultBranchLocal}`);
           // Store the default branch in state
           setDefaultBranch(defaultBranchLocal);
+          // Update effectiveRepoInfo.branch if not explicitly set, so cache uses correct branch name
+          if (!effectiveRepoInfo.branch && defaultBranchLocal) {
+            setEffectiveRepoInfo(prev => ({ ...prev, branch: defaultBranchLocal }));
+          }
 
           // Step 2: Paginate to fetch full file tree
           let page = 1;
@@ -1825,7 +1833,12 @@ IMPORTANT:
           readmeContent = data.readme || '';
           
           // Store the default branch in state (Azure DevOps typically uses 'main' or 'master')
-          setDefaultBranch(data.default_branch || 'main');
+          const detectedBranch = data.default_branch || 'main';
+          setDefaultBranch(detectedBranch);
+          // Update effectiveRepoInfo.branch if not explicitly set, so cache uses correct branch name
+          if (!effectiveRepoInfo.branch && detectedBranch) {
+            setEffectiveRepoInfo(prev => ({ ...prev, branch: detectedBranch }));
+          }
 
           if (!fileTreeData) {
             throw new Error('Could not fetch repository structure. Repository might not exist, be empty or private. Please check your Personal Access Token (PAT).');
@@ -2533,7 +2546,7 @@ IMPORTANT:
                 <div className="mb-3 flex items-center text-xs text-[var(--muted)]">
                   <span className="mr-2">Branch:</span>
                   <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
-                    {effectiveRepoInfo.branch || 'default'}
+                    {effectiveRepoInfo.branch || defaultBranch || 'default'}
                   </span>
                 </div>
 
