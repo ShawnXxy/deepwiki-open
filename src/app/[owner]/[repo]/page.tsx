@@ -91,8 +91,11 @@ const wikiStyles = `
 `;
 
 // Helper function to generate cache key for localStorage
-const getCacheKey = (owner: string, repo: string, repoType: string, language: string, isComprehensive: boolean = true): string => {
-  return `deepwiki_cache_${repoType}_${owner}_${repo}_${language}_${isComprehensive ? 'comprehensive' : 'concise'}`;
+// Branch is included in the key to support different branches of the same repo
+const getCacheKey = (owner: string, repo: string, repoType: string, language: string, isComprehensive: boolean = true, branch?: string | null): string => {
+  // Use 'default' for null/undefined/empty branch to maintain backwards compatibility
+  const branchSuffix = branch?.trim() || 'default';
+  return `deepwiki_cache_${repoType}_${owner}_${repo}_${language}_${isComprehensive ? 'comprehensive' : 'concise'}_${branchSuffix}`;
 };
 
 // Helper function to add tokens and other parameters to request body
@@ -1775,6 +1778,11 @@ IMPORTANT:
         authorization_code: authCode,
       });
 
+      // Add branch parameter if available
+      if (effectiveRepoInfo.branch) {
+        params.append('branch', effectiveRepoInfo.branch);
+      }
+
       // Add file filters configuration
       if (modelExcludedDirs) {
         params.append('excluded_dirs', modelExcludedDirs);
@@ -1901,6 +1909,11 @@ IMPORTANT:
             language: language,
             comprehensive: isComprehensiveView.toString(),
           });
+
+          // Add branch parameter if available
+          if (effectiveRepoInfo.branch) {
+            params.append('branch', effectiveRepoInfo.branch);
+          }
           
           // Add timeout to prevent hanging when backend is slow/unavailable
           const cacheController = new AbortController();
@@ -2316,6 +2329,14 @@ IMPORTANT:
                       </a>
                     </>
                   )}
+                </div>
+
+                {/* Branch Indicator - displayed for all wikis */}
+                <div className="mb-3 flex items-center text-xs text-[var(--muted)]">
+                  <span className="mr-2">Branch:</span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                    {effectiveRepoInfo.branch || 'default'}
+                  </span>
                 </div>
 
                 {/* Wiki Type Indicator */}

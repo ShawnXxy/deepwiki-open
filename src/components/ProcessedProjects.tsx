@@ -14,6 +14,7 @@ interface ProcessedProject {
   submittedAt: number;
   language: string;
   comprehensive: boolean;
+  branch?: string;  // Branch name ("default" for legacy caches)
 }
 
 interface ProcessedProjectsProps {
@@ -126,6 +127,7 @@ export default function ProcessedProjects({
           repo_type: project.repo_type,
           language: project.language,
           comprehensive: project.comprehensive,
+          branch: project.branch,
         }),
       });
       if (!response.ok) {
@@ -247,16 +249,9 @@ export default function ProcessedProjects({
             {filteredProjects.map((project) => (
             viewMode === 'card' ? (
               <div key={project.id} className="relative p-4 border border-[var(--border-color)] rounded-lg bg-[var(--card-bg)] shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02]">
-                <button
-                  type="button"
-                  onClick={() => handleDelete(project)}
-                  className="absolute top-2 right-2 text-[var(--muted)] hover:text-[var(--foreground)]"
-                  title="Delete project"
-                >
-                  <FaTimes className="h-4 w-4" />
-                </button>
+                {/* Delete button hidden - users cannot remove existing wikis */}
                 <Link
-                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}`}
+                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}${project.branch ? `&branch=${project.branch}` : ''}`}
                   className="block"
                 >
                   <h3 className="text-lg font-semibold text-[var(--link-color)] hover:underline mb-2 line-clamp-2">
@@ -276,6 +271,11 @@ export default function ProcessedProjects({
                     }`}>
                       {project.comprehensive ? 'comprehensive' : 'concise'}
                     </span>
+                    {project.branch && (
+                      <span className="px-2 py-1 text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-full border border-emerald-500/20">
+                        {project.branch}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-[var(--muted)]">
                     {t('processedOn')} {new Date(project.submittedAt).toLocaleDateString()}
@@ -284,16 +284,9 @@ export default function ProcessedProjects({
               </div>
             ) : (
               <div key={project.id} className="relative p-3 border border-[var(--border-color)] rounded-lg bg-[var(--card-bg)] hover:bg-[var(--background)] transition-colors">
-                <button
-                  type="button"
-                  onClick={() => handleDelete(project)}
-                  className="absolute top-2 right-2 text-[var(--muted)] hover:text-[var(--foreground)]"
-                  title="Delete project"
-                >
-                  <FaTimes className="h-4 w-4" />
-                </button>
+                {/* Delete button hidden - users cannot remove existing wikis */}
                 <Link
-                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}`}
+                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}${project.branch ? `&branch=${project.branch}` : ''}`}
                   className="flex items-center justify-between"
                 >
                   <div className="flex-1 min-w-0">
@@ -301,7 +294,7 @@ export default function ProcessedProjects({
                       {project.name}
                     </h3>
                     <p className="text-xs text-[var(--muted)] mt-1">
-                      {t('processedOn')} {new Date(project.submittedAt).toLocaleDateString()} • {project.repo_type} • {project.language} • {project.comprehensive ? 'comprehensive' : 'concise'}
+                      {t('processedOn')} {new Date(project.submittedAt).toLocaleDateString()} • {project.repo_type} • {project.language} • {project.comprehensive ? 'comprehensive' : 'concise'}{project.branch ? ` • ${project.branch}` : ''}
                     </p>
                   </div>
                   <div className="flex gap-2 ml-4">
@@ -315,6 +308,11 @@ export default function ProcessedProjects({
                     }`}>
                       {project.comprehensive ? 'comprehensive' : 'concise'}
                     </span>
+                    {project.branch && (
+                      <span className="px-2 py-1 text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded border border-emerald-500/20">
+                        {project.branch}
+                      </span>
+                    )}
                   </div>
                 </Link>
               </div>

@@ -8,6 +8,8 @@ interface ProcessedProject {
   repo_type: string;
   submittedAt: number;
   language: string;
+  comprehensive?: boolean;
+  branch?: string;  // Branch name ("default" for legacy caches)
 }
 
 export function useProcessedProjects() {

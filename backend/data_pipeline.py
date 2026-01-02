@@ -929,15 +929,15 @@ class DatabaseManager:
         
         Storage paths:
         - Repos (local only): {root}/repos/{owner}_{repo_name}/
-        - Database (local):   {root}/databases/{owner}_{repo_name}.pkl
-        - Database (blob):    databases/{owner}_{repo_name}.pkl
+        - Database (local):   {root}/databases/{owner}_{repo_name}_{branch}.pkl
+        - Database (blob):    databases/{owner}_{repo_name}_{branch}.pkl
 
         Args:
             repo_type(str): Type of repository
             repo_url_or_path (str): The URL or local path of the repository
             repo_type (str): Type of repository (github, gitlab, etc.)
             access_token (str, optional): Access token for private repos
-            branch (str, optional): Branch name to clone/process
+            branch (str, optional): Branch name to clone/process (uses 'default' if not specified)
         """
         logger.info(f"Preparing repo storage for {repo_url_or_path}...")
 
@@ -999,15 +999,18 @@ class DatabaseManager:
                 blob_repo_path = f"repos/{repo_name}/"
 
             # Path consistency: local and blob use same relative structure
-            # Local: ~/.adalflow/databases/{owner}_{repo}.pkl
-            # Blob:  databases/{owner}_{repo}.pkl (same structure, different root)
-            db_relative_path = f"databases/{repo_name}.pkl"
+            # Local: ~/.adalflow/databases/{owner}_{repo}_{branch}.pkl
+            # Blob:  databases/{owner}_{repo}_{branch}.pkl (same structure, different root)
+            # Use 'default' for None/empty branch to maintain backwards compatibility
+            branch_suffix = branch.strip() if branch and branch.strip() else 'default'
+            db_relative_path = f"databases/{repo_name}_{branch_suffix}.pkl"
             save_db_file = os.path.join(root_path, db_relative_path)
             blob_db_path = db_relative_path  # Same relative path for blob
             
             logger.debug(f"Database relative path: {db_relative_path}")
             logger.debug(f"Local database path: {save_db_file}")
             logger.debug(f"Blob database path: {blob_db_path}")
+            logger.debug(f"Branch: {branch} -> suffix: {branch_suffix}")
             
             os.makedirs(save_repo_dir, exist_ok=True)
             os.makedirs(os.path.dirname(save_db_file), exist_ok=True)

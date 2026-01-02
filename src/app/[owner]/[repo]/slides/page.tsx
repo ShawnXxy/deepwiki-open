@@ -153,6 +153,11 @@ export default function SlidesPage() {
         language: language,
         comprehensive: isComprehensive.toString(),
       });
+
+      // Add branch parameter if available
+      if (repoInfo.branch) {
+        params.append('branch', repoInfo.branch);
+      }
       
       // Add timeout to prevent hanging when backend is slow/unavailable
       const cacheController = new AbortController();

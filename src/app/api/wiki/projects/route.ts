@@ -18,6 +18,7 @@ interface DeleteProjectCachePayload {
   repo_type: string;
   language: string;
   comprehensive: boolean;
+  branch?: string; // Optional branch parameter
 }
 
 /** Type guard to validate DeleteProjectCachePayload at runtime */
@@ -85,8 +86,12 @@ export async function DELETE(request: Request) {
         { status: 400 }
       );
     }
-    const { owner, repo, repo_type, language, comprehensive } = body;
+    const { owner, repo, repo_type, language, comprehensive, branch } = body;
     const params = new URLSearchParams({ owner, repo, repo_type, language, comprehensive: String(comprehensive) });
+    // Add branch parameter if provided
+    if (branch) {
+      params.append('branch', branch);
+    }
     const response = await fetch(`${CACHE_API_ENDPOINT}?${params}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
