@@ -56,13 +56,15 @@ class ProcessedProjectEntry(BaseModel):
     repo_type: str # Renamed from type to repo_type for clarity with existing models
     submittedAt: int # Timestamp
     language: str # Extracted from filename
-    comprehensive: bool = True  # Whether this is a comprehensive wiki (default True for backwards compatibility)
+    comprehensive: bool = True  # Whether this is a comprehensive wiki
+    branch: Optional[str] = None  # Branch name (None for legacy caches without branch)
 
 class RepoInfo(BaseModel):
     owner: str
     repo: str
     type: str
     token: Optional[str] = None
+    branch: Optional[str] = None
     localPath: Optional[str] = None
     repoUrl: Optional[str] = None
 
@@ -99,6 +101,7 @@ class WikiCacheData(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     comprehensive: bool = True  # Whether this is a comprehensive wiki (default True for backwards compatibility)
+    is_partial: bool = False  # Whether this is a partial/checkpoint cache (incomplete generation)
 
 class WikiCacheRequest(BaseModel):
     """
@@ -111,6 +114,7 @@ class WikiCacheRequest(BaseModel):
     generated_pages: Dict[str, WikiPage]
     provider: str
     model: str
+    is_partial: bool = False  # Whether this is a partial/checkpoint save (incomplete generation)
 
 class WikiExportRequest(BaseModel):
     """
@@ -403,34 +407,87 @@ WIKI_CACHE_DIR = os.path.join(get_adalflow_default_root_path(), "wikicache")
 WIKI_CACHE_BLOB_PREFIX = "wikicache"  # Blob path prefix
 os.makedirs(WIKI_CACHE_DIR, exist_ok=True)
 
-def get_wiki_cache_filename(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True) -> str:
-    """Generates the filename for a given wiki cache."""
+def get_wiki_cache_filename(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True, branch: Optional[str] = None) -> str:
+    """Generates the filename for a given wiki cache (new format with branch suffix).
+    
+    Args:
+        owner: Repository owner
+        repo: Repository name
+        repo_type: Repository type (github, gitlab, etc.)
+        language: Language code
+        comprehensive: Whether this is comprehensive or concise wiki
+        branch: Branch name (optional, defaults to 'default' if not specified)
+    """
+    mode = 'comprehensive' if comprehensive else 'concise'
+    # Use 'default' for None/empty branch to maintain backwards compatibility
+    branch_suffix = branch.strip() if branch and branch.strip() else 'default'
+    return f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}_{mode}_{branch_suffix}.json"
+
+
+def get_wiki_cache_filename_legacy(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True) -> str:
+    """Generates the legacy filename for wiki cache (without branch suffix).
+    
+    Used for backward compatibility with existing caches created before branch support.
+    
+    Args:
+        owner: Repository owner
+        repo: Repository name
+        repo_type: Repository type (github, gitlab, etc.)
+        language: Language code
+        comprehensive: Whether this is comprehensive or concise wiki
+    """
     mode = 'comprehensive' if comprehensive else 'concise'
     return f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}_{mode}.json"
 
-def get_wiki_cache_path(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True) -> str:
+
+def get_wiki_cache_path(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True, branch: Optional[str] = None) -> str:
     """Generates the local file path for a given wiki cache."""
-    filename = get_wiki_cache_filename(owner, repo, repo_type, language, comprehensive)
+    filename = get_wiki_cache_filename(owner, repo, repo_type, language, comprehensive, branch)
     return os.path.join(WIKI_CACHE_DIR, filename)
 
-def get_wiki_cache_blob_path(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True) -> str:
+
+def get_wiki_cache_path_legacy(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True) -> str:
+    """Generates the legacy local file path for wiki cache (without branch suffix)."""
+    filename = get_wiki_cache_filename_legacy(owner, repo, repo_type, language, comprehensive)
+    return os.path.join(WIKI_CACHE_DIR, filename)
+
+
+def get_wiki_cache_blob_path(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True, branch: Optional[str] = None) -> str:
     """Generates the blob path for a given wiki cache."""
-    filename = get_wiki_cache_filename(owner, repo, repo_type, language, comprehensive)
+    filename = get_wiki_cache_filename(owner, repo, repo_type, language, comprehensive, branch)
     return f"{WIKI_CACHE_BLOB_PREFIX}/{filename}"
 
-async def read_wiki_cache(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True) -> Optional[WikiCacheData]:
+
+def get_wiki_cache_blob_path_legacy(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True) -> str:
+    """Generates the legacy blob path for wiki cache (without branch suffix)."""
+    filename = get_wiki_cache_filename_legacy(owner, repo, repo_type, language, comprehensive)
+    return f"{WIKI_CACHE_BLOB_PREFIX}/{filename}"
+
+async def read_wiki_cache(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True, branch: Optional[str] = None) -> Optional[WikiCacheData]:
     """
-    Reads wiki cache data from storage.
+    Reads wiki cache data from storage with backward compatibility.
+    
+    First tries the new format with branch suffix, then falls back to legacy format
+    (without branch suffix) for backward compatibility with existing caches.
     
     When Azure Blob Storage is configured:
         - Uses blob storage exclusively
         - Raises ConnectionError on failure (no fallback)
     When Azure Blob Storage is NOT configured:
         - Uses local storage
+    
+    Args:
+        owner: Repository owner
+        repo: Repository name
+        repo_type: Repository type
+        language: Language code
+        comprehensive: Whether this is comprehensive or concise wiki
+        branch: Branch name (optional)
     """
     # Try Azure Blob Storage when configured
     if is_blob_storage_configured():
-        blob_path = get_wiki_cache_blob_path(owner, repo, repo_type, language, comprehensive)
+        blob_path = get_wiki_cache_blob_path(owner, repo, repo_type, language, comprehensive, branch)
+        blob_path_legacy = get_wiki_cache_blob_path_legacy(owner, repo, repo_type, language, comprehensive)
         try:
             blob_client = get_blob_storage_client()
             if not blob_client:
@@ -438,13 +495,23 @@ async def read_wiki_cache(owner: str, repo: str, repo_type: str, language: str, 
                 logger.error(error_msg)
                 raise ConnectionError(error_msg)
             
+            # Try new format first (with branch suffix)
             if blob_client.exists(blob_path):
                 logger.info(f"Reading wiki cache from Azure Blob Storage: {blob_path}")
                 content = blob_client.download_text(blob_path)
                 if content:
                     data = json.loads(content)
                     return WikiCacheData(**data)
-            logger.info(f"Wiki cache not found in blob storage: {blob_path}")
+            
+            # Fall back to legacy format (without branch suffix) for backward compatibility
+            if blob_client.exists(blob_path_legacy):
+                logger.info(f"Reading wiki cache from legacy blob path: {blob_path_legacy}")
+                content = blob_client.download_text(blob_path_legacy)
+                if content:
+                    data = json.loads(content)
+                    return WikiCacheData(**data)
+            
+            logger.info(f"Wiki cache not found in blob storage (tried: {blob_path} and {blob_path_legacy})")
             return None
         except ConnectionError:
             raise
@@ -454,15 +521,30 @@ async def read_wiki_cache(owner: str, repo: str, repo_type: str, language: str, 
             raise ConnectionError(error_msg) from e
     
     # Local storage mode (blob not configured)
-    cache_path = get_wiki_cache_path(owner, repo, repo_type, language, comprehensive)
+    cache_path = get_wiki_cache_path(owner, repo, repo_type, language, comprehensive, branch)
+    cache_path_legacy = get_wiki_cache_path_legacy(owner, repo, repo_type, language, comprehensive)
+    
+    # Try new format first (with branch suffix)
     if os.path.exists(cache_path):
         try:
             with open(cache_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+                logger.info(f"Read wiki cache from: {cache_path}")
                 return WikiCacheData(**data)
         except Exception as e:
             logger.error(f"Error reading wiki cache from {cache_path}: {e}")
+    
+    # Fall back to legacy format (without branch suffix) for backward compatibility
+    if os.path.exists(cache_path_legacy):
+        try:
+            with open(cache_path_legacy, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                logger.info(f"Read wiki cache from legacy path: {cache_path_legacy}")
+                return WikiCacheData(**data)
+        except Exception as e:
+            logger.error(f"Error reading wiki cache from legacy path {cache_path_legacy}: {e}")
             return None
+    
     return None
 
 async def save_wiki_cache(data: WikiCacheRequest) -> bool:
@@ -474,6 +556,9 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
         - Raises ConnectionError on failure (no fallback)
     When Azure Blob Storage is NOT configured:
         - Uses local storage
+        
+    Supports partial/checkpoint saves when is_partial=True, allowing resumption
+    after interruption.
     """
     payload = WikiCacheData(
         wiki_structure=data.wiki_structure,
@@ -481,20 +566,24 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
         repo=data.repo,
         provider=data.provider,
         model=data.model,
-        comprehensive=data.comprehensive
+        comprehensive=data.comprehensive,
+        is_partial=data.is_partial
     )
     
     # Log size of data to be cached
     try:
         payload_json = payload.model_dump_json()
         payload_size = len(payload_json.encode('utf-8'))
-        logger.info(f"Payload prepared for caching. Size: {payload_size} bytes.")
+        partial_status = "PARTIAL" if data.is_partial else "COMPLETE"
+        pages_count = len(data.generated_pages)
+        total_pages = len(data.wiki_structure.pages) if data.wiki_structure.pages else 0
+        logger.info(f"Payload prepared for caching. Size: {payload_size} bytes. Status: {partial_status}. Pages: {pages_count}/{total_pages}")
     except Exception as ser_e:
         logger.warning(f"Could not serialize payload for size logging: {ser_e}")
     
     # Try Azure Blob Storage when configured
     if is_blob_storage_configured():
-        blob_path = get_wiki_cache_blob_path(data.repo.owner, data.repo.repo, data.repo.type, data.language, data.comprehensive)
+        blob_path = get_wiki_cache_blob_path(data.repo.owner, data.repo.repo, data.repo.type, data.language, data.comprehensive, data.repo.branch)
         try:
             blob_client = get_blob_storage_client()
             if not blob_client:
@@ -519,7 +608,7 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
             raise ConnectionError(error_msg) from e
     
     # Local storage mode (blob not configured)
-    cache_path = get_wiki_cache_path(data.repo.owner, data.repo.repo, data.repo.type, data.language, data.comprehensive)
+    cache_path = get_wiki_cache_path(data.repo.owner, data.repo.repo, data.repo.type, data.language, data.comprehensive, data.repo.branch)
     logger.info(f"Attempting to save wiki cache locally. Path: {cache_path}")
     try:
         logger.info(f"Writing cache file to: {cache_path}")
@@ -542,7 +631,8 @@ async def get_cached_wiki(
     repo: str = Query(..., description="Repository name"),
     repo_type: str = Query(..., description="Repository type (e.g., github, gitlab)"),
     language: str = Query(..., description="Language of the wiki content"),
-    comprehensive: bool = Query(True, description="Whether this is comprehensive or concise wiki")
+    comprehensive: bool = Query(True, description="Whether this is comprehensive or concise wiki"),
+    branch: Optional[str] = Query(None, description="Branch name (optional, defaults to 'default')")
 ):
     """
     Retrieves cached wiki data (structure and generated pages) for a repository.
@@ -552,14 +642,14 @@ async def get_cached_wiki(
     if not supported_langs.__contains__(language):
         language = configs["lang_config"]["default"]
 
-    logger.info(f"Attempting to retrieve wiki cache for {owner}/{repo} ({repo_type}), lang: {language}, comprehensive: {comprehensive}")
-    cached_data = await read_wiki_cache(owner, repo, repo_type, language, comprehensive)
+    logger.info(f"Attempting to retrieve wiki cache for {owner}/{repo} ({repo_type}), lang: {language}, comprehensive: {comprehensive}, branch: {branch}")
+    cached_data = await read_wiki_cache(owner, repo, repo_type, language, comprehensive, branch)
     if cached_data:
         return cached_data
     else:
         # Return 200 with null body if not found, as frontend expects this behavior
         # Or, raise HTTPException(status_code=404, detail="Wiki cache not found") if preferred
-        logger.info(f"Wiki cache not found for {owner}/{repo} ({repo_type}), lang: {language}, comprehensive: {comprehensive}")
+        logger.info(f"Wiki cache not found for {owner}/{repo} ({repo_type}), lang: {language}, comprehensive: {comprehensive}, branch: {branch}")
         return None
 
 @app.post("/api/wiki_cache")
@@ -587,6 +677,7 @@ async def delete_wiki_cache(
     repo_type: str = Query(..., description="Repository type (e.g., github, gitlab)"),
     language: str = Query(..., description="Language of the wiki content"),
     comprehensive: bool = Query(True, description="Whether this is comprehensive or concise wiki"),
+    branch: Optional[str] = Query(None, description="Branch name (optional, defaults to 'default')"),
     authorization_code: Optional[str] = Query(None, description="Authorization code")
 ):
     """
@@ -603,12 +694,12 @@ async def delete_wiki_cache(
         if not authorization_code or WIKI_AUTH_CODE != authorization_code:
             raise HTTPException(status_code=401, detail="Authorization code is invalid")
 
-    logger.info(f"Attempting to delete wiki cache for {owner}/{repo} ({repo_type}), lang: {language}, comprehensive: {comprehensive}")
+    logger.info(f"Attempting to delete wiki cache for {owner}/{repo} ({repo_type}), lang: {language}, comprehensive: {comprehensive}, branch: {branch}")
 
     try:
         # Try Azure Blob Storage when configured
         if is_blob_storage_configured():
-            blob_path = get_wiki_cache_blob_path(owner, repo, repo_type, language, comprehensive)
+            blob_path = get_wiki_cache_blob_path(owner, repo, repo_type, language, comprehensive, branch)
             try:
                 blob_client = get_blob_storage_client()
                 if not blob_client:
@@ -638,7 +729,7 @@ async def delete_wiki_cache(
                 raise ConnectionError(error_msg) from e
         
         # Local storage mode (blob not configured)
-        cache_path = get_wiki_cache_path(owner, repo, repo_type, language, comprehensive)
+        cache_path = get_wiki_cache_path(owner, repo, repo_type, language, comprehensive, branch)
         if os.path.exists(cache_path):
             try:
                 os.remove(cache_path)
@@ -745,8 +836,9 @@ async def get_processed_projects():
         """Parse a cache filename into a ProcessedProjectEntry.
         
         Supports two filename formats:
-        - New: deepwiki_cache_{repo_type}_{owner}_{repo}_{language}_{mode}.json (mode = comprehensive/concise)
-        - Legacy: deepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json (assumes comprehensive)
+        - New: deepwiki_cache_{repo_type}_{owner}_{repo}_{language}_{mode}_{branch}.json
+        - Legacy: deepwiki_cache_{repo_type}_{owner}_{repo}_{language}_{mode}.json (no branch)
+        where mode = comprehensive/concise
         """
         # Extract just the filename if it includes a path prefix
         base_filename = os.path.basename(filename)
@@ -754,13 +846,32 @@ async def get_processed_projects():
             return None
         
         parts = base_filename.replace("deepwiki_cache_", "").replace(".json", "").split('_')
-        # New format: repo_type_owner_repo_language_mode (5+ parts)
-        # Legacy format: repo_type_owner_repo_language (4+ parts)
-        # Example new: deepwiki_cache_github_AsyncFuncAI_deepwiki-open_en_comprehensive.json
-        # Example legacy: deepwiki_cache_github_AsyncFuncAI_deepwiki-open_en.json
         
+        # New format with branch: repo_type_owner_repo_language_mode_branch (6+ parts)
+        # Example: deepwiki_cache_github_AsyncFuncAI_deepwiki-open_en_comprehensive_main.json
+        if len(parts) >= 6 and parts[-2] in ("comprehensive", "concise"):
+            repo_type = parts[0]
+            owner = parts[1]
+            branch = parts[-1]
+            mode = parts[-2]
+            language = parts[-3]
+            repo = "_".join(parts[2:-3])
+            is_comprehensive = (mode == "comprehensive")
+            return ProcessedProjectEntry(
+                id=base_filename,
+                owner=owner,
+                repo=repo,
+                name=f"{owner}/{repo}",
+                repo_type=repo_type,
+                submittedAt=last_modified_ms,
+                language=language,
+                comprehensive=is_comprehensive,
+                branch=branch
+            )
+        
+        # Legacy format without branch: repo_type_owner_repo_language_mode (5+ parts)
+        # Example: deepwiki_cache_github_AsyncFuncAI_deepwiki-open_en_comprehensive.json
         if len(parts) >= 5 and parts[-1] in ("comprehensive", "concise"):
-            # New format with mode suffix
             repo_type = parts[0]
             owner = parts[1]
             mode = parts[-1]
@@ -775,23 +886,8 @@ async def get_processed_projects():
                 repo_type=repo_type,
                 submittedAt=last_modified_ms,
                 language=language,
-                comprehensive=is_comprehensive
-            )
-        elif len(parts) >= 4:
-            # Legacy format without mode suffix (assume comprehensive)
-            repo_type = parts[0]
-            owner = parts[1]
-            language = parts[-1]
-            repo = "_".join(parts[2:-1])
-            return ProcessedProjectEntry(
-                id=base_filename,
-                owner=owner,
-                repo=repo,
-                name=f"{owner}/{repo}",
-                repo_type=repo_type,
-                submittedAt=last_modified_ms,
-                language=language,
-                comprehensive=True  # Legacy files assumed comprehensive
+                comprehensive=is_comprehensive,
+                branch="default"  # Legacy format has no branch, use "default"
             )
         return None
 

@@ -27,7 +27,8 @@ import logger from '@/utils/logger';
  * @param defaultBranch - The default branch name (kept for compatibility but not used in branch-agnostic mode)
  * @returns The complete branch-agnostic URL to the file in the repository
  */
-export function generateFileUrl(filePath: string, repoInfo: RepoInfo, defaultBranch: string = 'main'): string {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function generateFileUrl(filePath: string, repoInfo: RepoInfo, _defaultBranch: string = 'main'): string {
   // Debug logging (deduplicated by logger)
   logger.debug('Citation: generateFileUrl', {
     filePath,

@@ -14,10 +14,12 @@ interface ProcessedProject {
   submittedAt: number;
   language: string;
   comprehensive: boolean;
+  branch?: string;  // Branch name ("default" for legacy caches)
 }
 
 interface ProcessedProjectsProps {
   showHeader?: boolean;
+  /** @deprecated No longer used - all projects are shown in a scrollable container */
   maxItems?: number;
   className?: string;
   messages?: Record<string, Record<string, string>>; // Translation messages with proper typing
@@ -25,6 +27,7 @@ interface ProcessedProjectsProps {
 
 export default function ProcessedProjects({ 
   showHeader = true, 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   maxItems, 
   className = "",
   messages 
@@ -104,13 +107,15 @@ export default function ProcessedProjects({
       );
     }
 
-    return maxItems ? filtered.slice(0, maxItems) : filtered;
-  }, [projects, searchQuery, maxItems, wikiTypeFilter]);
+    // Note: maxItems is now ignored - all filtered projects are shown in a scrollable container
+    return filtered;
+  }, [projects, searchQuery, wikiTypeFilter]);
 
   const clearSearch = () => {
     setSearchQuery('');
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleDelete = async (project: ProcessedProject) => {
     const modeLabel = project.comprehensive ? 'comprehensive' : 'concise';
     if (!confirm(`Are you sure you want to delete the ${modeLabel} wiki for ${project.name}?`)) {
@@ -126,6 +131,7 @@ export default function ProcessedProjects({
           repo_type: project.repo_type,
           language: project.language,
           comprehensive: project.comprehensive,
+          branch: project.branch,
         }),
       });
       if (!response.ok) {
@@ -243,20 +249,14 @@ export default function ProcessedProjects({
       {error && <p className="text-[var(--highlight)]">{t('errorLoading')} {error}</p>}
 
       {!isLoading && !error && filteredProjects.length > 0 && (
-        <div className={viewMode === 'card' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4' : 'space-y-2'}>
+        <div className="max-h-[400px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-[var(--border-color)] scrollbar-track-transparent">
+          <div className={viewMode === 'card' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4' : 'space-y-2'}>
             {filteredProjects.map((project) => (
             viewMode === 'card' ? (
               <div key={project.id} className="relative p-4 border border-[var(--border-color)] rounded-lg bg-[var(--card-bg)] shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02]">
-                <button
-                  type="button"
-                  onClick={() => handleDelete(project)}
-                  className="absolute top-2 right-2 text-[var(--muted)] hover:text-[var(--foreground)]"
-                  title="Delete project"
-                >
-                  <FaTimes className="h-4 w-4" />
-                </button>
+                {/* Delete button hidden - users cannot remove existing wikis */}
                 <Link
-                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}`}
+                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}${project.branch ? `&branch=${project.branch}` : ''}`}
                   className="block"
                 >
                   <h3 className="text-lg font-semibold text-[var(--link-color)] hover:underline mb-2 line-clamp-2">
@@ -276,6 +276,11 @@ export default function ProcessedProjects({
                     }`}>
                       {project.comprehensive ? 'comprehensive' : 'concise'}
                     </span>
+                    {project.branch && (
+                      <span className="px-2 py-1 text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-full border border-emerald-500/20">
+                        {project.branch}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-[var(--muted)]">
                     {t('processedOn')} {new Date(project.submittedAt).toLocaleDateString()}
@@ -284,16 +289,9 @@ export default function ProcessedProjects({
               </div>
             ) : (
               <div key={project.id} className="relative p-3 border border-[var(--border-color)] rounded-lg bg-[var(--card-bg)] hover:bg-[var(--background)] transition-colors">
-                <button
-                  type="button"
-                  onClick={() => handleDelete(project)}
-                  className="absolute top-2 right-2 text-[var(--muted)] hover:text-[var(--foreground)]"
-                  title="Delete project"
-                >
-                  <FaTimes className="h-4 w-4" />
-                </button>
+                {/* Delete button hidden - users cannot remove existing wikis */}
                 <Link
-                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}`}
+                  href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}${project.branch ? `&branch=${project.branch}` : ''}`}
                   className="flex items-center justify-between"
                 >
                   <div className="flex-1 min-w-0">
@@ -301,7 +299,7 @@ export default function ProcessedProjects({
                       {project.name}
                     </h3>
                     <p className="text-xs text-[var(--muted)] mt-1">
-                      {t('processedOn')} {new Date(project.submittedAt).toLocaleDateString()} • {project.repo_type} • {project.language} • {project.comprehensive ? 'comprehensive' : 'concise'}
+                      {t('processedOn')} {new Date(project.submittedAt).toLocaleDateString()} • {project.repo_type} • {project.language} • {project.comprehensive ? 'comprehensive' : 'concise'}{project.branch ? ` • ${project.branch}` : ''}
                     </p>
                   </div>
                   <div className="flex gap-2 ml-4">
@@ -315,11 +313,17 @@ export default function ProcessedProjects({
                     }`}>
                       {project.comprehensive ? 'comprehensive' : 'concise'}
                     </span>
+                    {project.branch && (
+                      <span className="px-2 py-1 text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded border border-emerald-500/20">
+                        {project.branch}
+                      </span>
+                    )}
                   </div>
                 </Link>
               </div>
             )
           ))}
+          </div>
         </div>
       )}
 

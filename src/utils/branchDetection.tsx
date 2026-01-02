@@ -7,38 +7,34 @@
 
 import { RepoInfo } from '@/types/repoinfo';
 
+// Set to true to enable debug logging for branch detection
+const DEBUG_BRANCH_DETECTION = false;
+
 /**
  * Attempts to detect the current Git branch from various sources
  * 
  * @param repoInfo - Repository information
- * @param fallbackBranch - Fallback branch if detection fails (default: 'main')
- * @returns The detected or fallback branch name
+ * @param fallbackBranch - Fallback branch if detection fails (default: null for legacy/default)
+ * @returns The detected branch name or null if not detected
  */
-export function detectCurrentBranch(repoInfo: RepoInfo, fallbackBranch: string = 'master'): string {
-  console.log('🌿 Branch Detection - Starting detection process:', {
-    repoType: repoInfo.type,
-    repoOwner: repoInfo.owner,
-    repoName: repoInfo.repo,
-    repoBranch: repoInfo.branch,
-    fallbackBranch,
-    repoUrl: repoInfo.repoUrl
-  });
+export function detectCurrentBranch(repoInfo: RepoInfo, fallbackBranch: string | null = null): string | null {
+  if (DEBUG_BRANCH_DETECTION) {
+    console.log('🌿 Branch Detection - Starting:', { owner: repoInfo.owner, repo: repoInfo.repo, branch: repoInfo.branch });
+  }
 
   // 1. If branch is explicitly set in repoInfo, use it
   if (repoInfo.branch) {
-    console.log('✅ Branch Detection - Using explicit branch:', repoInfo.branch);
     return repoInfo.branch;
   }
 
   // 2. Try to detect from current URL path (for repository browsing)
   if (typeof window !== 'undefined') {
     const currentPath = window.location.pathname;
-    console.log('🔍 Branch Detection - Checking URL path:', currentPath);
     
     // For URLs like /owner/repo/tree/branch-name or /owner/repo/blob/branch-name
     const branchFromPath = extractBranchFromPath(currentPath);
     if (branchFromPath && branchFromPath !== 'main') {
-      console.log('✅ Branch Detection - Detected from URL path:', branchFromPath);
+      if (DEBUG_BRANCH_DETECTION) console.log('✅ Branch from URL path:', branchFromPath);
       return branchFromPath;
     }
     
@@ -46,31 +42,29 @@ export function detectCurrentBranch(repoInfo: RepoInfo, fallbackBranch: string =
     const urlParams = new URLSearchParams(window.location.search);
     const branchFromParams = urlParams.get('branch');
     if (branchFromParams) {
-      console.log('✅ Branch Detection - Found branch in URL params:', branchFromParams);
+      if (DEBUG_BRANCH_DETECTION) console.log('✅ Branch from URL params:', branchFromParams);
       return branchFromParams;
     }
-  } else {
-    console.log('🔍 Branch Detection - Window undefined (Node.js/SSR environment)');
   }
 
   // 3. Try to detect from repository URL patterns
   const branchFromRepoUrl = extractBranchFromRepoUrl(repoInfo.repoUrl);
   if (branchFromRepoUrl) {
-    console.log('✅ Branch Detection - Detected from repo URL:', branchFromRepoUrl);
+    if (DEBUG_BRANCH_DETECTION) console.log('✅ Branch from repo URL:', branchFromRepoUrl);
     return branchFromRepoUrl;
   }
 
   // 4. For local development, try to use known branch context
-  // This is where we can hardcode the current branch for now
   const knownBranch = getKnownCurrentBranch(repoInfo);
   if (knownBranch) {
-    console.log('✅ Branch Detection - Using known branch context:', knownBranch);
+    if (DEBUG_BRANCH_DETECTION) console.log('✅ Known branch context:', knownBranch);
     return knownBranch;
   }
 
-  // 5. Fallback to the provided fallback branch
-  console.log('⚠️ Branch Detection - Using fallback branch:', fallbackBranch);
-  console.log('   This means branch detection failed - check the logs above');
+  // 5. Return fallback (null by default, meaning use "default" tag for legacy wikis)
+  if (DEBUG_BRANCH_DETECTION && fallbackBranch) {
+    console.log('⚠️ Branch Detection - Using fallback:', fallbackBranch);
+  }
   return fallbackBranch;
 }
 
@@ -124,8 +118,8 @@ function extractBranchFromRepoUrl(repoUrl: string | null): string | null {
     if (branchIndex !== -1 && pathParts[branchIndex + 1]) {
       return decodeURIComponent(pathParts[branchIndex + 1]);
     }
-  } catch (error) {
-    console.warn('⚠️ Branch Detection - Error parsing repo URL:', error);
+  } catch {
+    // Silently ignore URL parsing errors - branch detection is best-effort
   }
 
   return null;
@@ -139,14 +133,6 @@ function extractBranchFromRepoUrl(repoUrl: string | null): string | null {
  * @returns Known branch name or null
  */
 function getKnownCurrentBranch(repoInfo: RepoInfo): string | null {
-  console.log('🔍 getKnownCurrentBranch - Checking repository:', {
-    owner: repoInfo.owner,
-    repo: repoInfo.repo,
-    type: repoInfo.type,
-    repoUrl: repoInfo.repoUrl
-  });
-  
-  // For the current deepwiki-open repository, we know we're on the 'orcas' branch
   // Check multiple possible owner formats and variations
   const ownerLower = repoInfo.owner?.toLowerCase() || '';
   const repoLower = repoInfo.repo?.toLowerCase() || '';
@@ -154,38 +140,26 @@ function getKnownCurrentBranch(repoInfo: RepoInfo): string | null {
   // Check for deepwiki-open repository with various owner formats
   if ((ownerLower === 'shawnxxy' || ownerLower === 'shawnx') && 
       (repoLower === 'deepwiki-open' || repoLower === 'deepwiki')) {
-    console.log('✅ getKnownCurrentBranch - Matched deepwiki-open repository, returning orcas');
     return 'orcas';
   }
   
   // Also check if the repo URL contains deepwiki-open
   if (repoInfo.repoUrl && repoInfo.repoUrl.toLowerCase().includes('deepwiki-open')) {
-    console.log('✅ getKnownCurrentBranch - Found deepwiki-open in repo URL, returning orcas');
     return 'orcas';
   }
   
   // Additional check: if we're in the deepwiki-open environment, assume orcas branch
-  // This is a fallback for when the repository identification doesn't work as expected
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
     const pathname = window.location.pathname;
     
     // Check if we're running in a deepwiki-open context
     if (pathname.includes('deepwiki') || hostname.includes('deepwiki')) {
-      console.log('✅ getKnownCurrentBranch - Detected deepwiki context from URL, returning orcas');
       return 'orcas';
     }
   }
 
-  console.log('⚠️ getKnownCurrentBranch - No known branch for this repository');
-  console.log('   - Owner (case-sensitive):', repoInfo.owner);
-  console.log('   - Repo (case-sensitive):', repoInfo.repo);
-  console.log('   - Owner (lowercase):', ownerLower);
-  console.log('   - Repo (lowercase):', repoLower);
-  
-  // Add more repository-specific logic as needed
-  // This could also query a branch detection API endpoint
-
+  // No known branch for this repository - will use "default" tag for legacy wikis
   return null;
 }
 
@@ -199,9 +173,12 @@ function getKnownCurrentBranch(repoInfo: RepoInfo): string | null {
  */
 export function processCitations(content: string, repoInfo: RepoInfo, explicitBranch?: string): string {
   // Use explicit branch if provided, otherwise detect current branch
+  // detectCurrentBranch returns null for legacy wikis (will use "default" tag)
   const branchToUse = explicitBranch || detectCurrentBranch(repoInfo);
   
-  console.log('📝 Enhanced Citation Processing - Using branch:', branchToUse);
+  if (DEBUG_BRANCH_DETECTION && branchToUse) {
+    console.log('📝 Citation Processing - Using branch:', branchToUse);
+  }
   
   // Import the original processCitations function
   // Note: This would need to be properly imported in the actual implementation

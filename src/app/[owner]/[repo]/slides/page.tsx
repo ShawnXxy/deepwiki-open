@@ -153,6 +153,11 @@ export default function SlidesPage() {
         language: language,
         comprehensive: isComprehensive.toString(),
       });
+
+      // Add branch parameter if available
+      if (repoInfo.branch) {
+        params.append('branch', repoInfo.branch);
+      }
       
       // Add timeout to prevent hanging when backend is slow/unavailable
       const cacheController = new AbortController();
@@ -1301,7 +1306,7 @@ Please return ONLY the HTML with no markdown formatting or code blocks. Just the
               >
                 {/* Include Font Awesome for icons */}
                 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" />
-                <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: processCitations(slides[currentSlideIndex]?.html || '', repoInfo, detectCurrentBranch(repoInfo, 'main')) }} />
+                <div className="w-full h-full" dangerouslySetInnerHTML={{ __html: processCitations(slides[currentSlideIndex]?.html || '', repoInfo, detectCurrentBranch(repoInfo, 'main') ?? 'main') }} />
               </div>
             </div>
 

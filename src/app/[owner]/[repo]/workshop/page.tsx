@@ -144,6 +144,11 @@ export default function WorkshopPage() {
         language: language,
         comprehensive: isComprehensive.toString(),
       });
+
+      // Add branch parameter if available
+      if (repoInfo.branch) {
+        params.append('branch', repoInfo.branch);
+      }
       
       // Add timeout to prevent hanging when backend is slow/unavailable
       const cacheController = new AbortController();
@@ -667,7 +672,7 @@ Estimated time: 20-30 minutes | Combines concepts from all exercises
                 <p className="text-red-700 dark:text-red-300 text-sm">{exportError}</p>
               </div>
             )}
-            <Markdown content={processCitations(workshopContent, repoInfo, detectCurrentBranch(repoInfo, 'master'))} />
+            <Markdown content={processCitations(workshopContent, repoInfo, detectCurrentBranch(repoInfo, 'master') ?? 'master')} />
           </div>
         )}
       </main>
