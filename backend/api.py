@@ -101,6 +101,7 @@ class WikiCacheData(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     comprehensive: bool = True  # Whether this is a comprehensive wiki (default True for backwards compatibility)
+    is_partial: bool = False  # Whether this is a partial/checkpoint cache (incomplete generation)
 
 class WikiCacheRequest(BaseModel):
     """
@@ -113,6 +114,7 @@ class WikiCacheRequest(BaseModel):
     generated_pages: Dict[str, WikiPage]
     provider: str
     model: str
+    is_partial: bool = False  # Whether this is a partial/checkpoint save (incomplete generation)
 
 class WikiExportRequest(BaseModel):
     """
@@ -554,6 +556,9 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
         - Raises ConnectionError on failure (no fallback)
     When Azure Blob Storage is NOT configured:
         - Uses local storage
+        
+    Supports partial/checkpoint saves when is_partial=True, allowing resumption
+    after interruption.
     """
     payload = WikiCacheData(
         wiki_structure=data.wiki_structure,
@@ -561,14 +566,18 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
         repo=data.repo,
         provider=data.provider,
         model=data.model,
-        comprehensive=data.comprehensive
+        comprehensive=data.comprehensive,
+        is_partial=data.is_partial
     )
     
     # Log size of data to be cached
     try:
         payload_json = payload.model_dump_json()
         payload_size = len(payload_json.encode('utf-8'))
-        logger.info(f"Payload prepared for caching. Size: {payload_size} bytes.")
+        partial_status = "PARTIAL" if data.is_partial else "COMPLETE"
+        pages_count = len(data.generated_pages)
+        total_pages = len(data.wiki_structure.pages) if data.wiki_structure.pages else 0
+        logger.info(f"Payload prepared for caching. Size: {payload_size} bytes. Status: {partial_status}. Pages: {pages_count}/{total_pages}")
     except Exception as ser_e:
         logger.warning(f"Could not serialize payload for size logging: {ser_e}")
     

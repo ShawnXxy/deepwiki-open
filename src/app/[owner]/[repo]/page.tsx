@@ -333,6 +333,13 @@ export default function RepoWikiPage() {
   const [structureRequestInProgress, setStructureRequestInProgress] = useState(false);
   // Create a flag to track if data was loaded from cache to prevent immediate re-save
   const cacheLoadedSuccessfully = useRef(false);
+  
+  // Track last checkpoint save time to avoid too-frequent saves
+  const lastCheckpointTime = useRef<number>(0);
+  const CHECKPOINT_INTERVAL_MS = 10000; // Save checkpoint at most every 10 seconds
+  
+  // Track if we're resuming from a partial cache
+  const [isResumingFromPartial, setIsResumingFromPartial] = useState(false);
 
   // Create a flag to ensure the effect only runs once
   const effectRan = React.useRef(false);
@@ -383,13 +390,88 @@ export default function RepoWikiPage() {
     fetchAuthStatus();
   }, []);
 
+  // Save checkpoint (partial cache) to preserve progress during wiki generation
+  // This allows resumption if the process is interrupted
+  const saveCheckpoint = useCallback(async (
+    structure: WikiStructure,
+    pages: Record<string, WikiPage>,
+    isPartial: boolean = true
+  ) => {
+    // Skip if this was loaded from cache (avoid overwriting complete cache with partial)
+    if (cacheLoadedSuccessfully.current && !isResumingFromPartial) {
+      return;
+    }
+    
+    // Rate limit checkpoint saves
+    const now = Date.now();
+    if (isPartial && now - lastCheckpointTime.current < CHECKPOINT_INTERVAL_MS) {
+      return;
+    }
+    lastCheckpointTime.current = now;
+    
+    // Only save if we have at least one page with content
+    const pagesWithContent = Object.values(pages).filter(
+      p => p.content && p.content !== 'Loading...' && !p.content.startsWith('Error')
+    );
+    if (pagesWithContent.length === 0) {
+      return;
+    }
+    
+    try {
+      const structureToCache = {
+        ...structure,
+        sections: structure.sections || [],
+        rootSections: structure.rootSections || []
+      };
+      
+      const dataToCache = {
+        repo: effectiveRepoInfo,
+        language: language,
+        comprehensive: isComprehensiveView,
+        wiki_structure: structureToCache,
+        generated_pages: pages,
+        provider: selectedProviderState,
+        model: selectedModelState,
+        is_partial: isPartial
+      };
+      
+      // Use fire-and-forget pattern with short timeout to not block UI
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      
+      fetch(`/api/wiki_cache`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dataToCache),
+        signal: controller.signal
+      }).then(response => {
+        clearTimeout(timeout);
+        if (response.ok) {
+          console.log(`Checkpoint saved: ${pagesWithContent.length}/${structure.pages.length} pages (${isPartial ? 'partial' : 'complete'})`);
+        } else {
+          console.warn('Failed to save checkpoint:', response.status);
+        }
+      }).catch(err => {
+        clearTimeout(timeout);
+        if (err.name !== 'AbortError') {
+          console.warn('Error saving checkpoint:', err);
+        }
+      });
+    } catch (err) {
+      console.warn('Error preparing checkpoint:', err);
+    }
+  }, [effectiveRepoInfo, language, isComprehensiveView, selectedProviderState, selectedModelState, isResumingFromPartial]);
+
   // Generate content for a wiki page
-  const generatePageContent = useCallback(async (page: WikiPage, owner: string, repo: string) => {
-    return new Promise<void>(async (resolve) => {
+  // Returns { success: boolean, error?: string } to indicate completion status
+  const generatePageContent = useCallback(async (page: WikiPage, owner: string, repo: string): Promise<{ success: boolean; error?: string }> => {
+    return new Promise<{ success: boolean; error?: string }>(async (resolve) => {
       try {
-        // Skip if content already exists
-        if (generatedPages[page.id]?.content) {
-          resolve();
+        // Skip if content already exists and is valid (not loading/error placeholder)
+        const existingContent = generatedPages[page.id]?.content;
+        if (existingContent && existingContent !== 'Loading...' && !existingContent.startsWith('Error')) {
+          console.log(`Page ${page.id} (${page.title}) already has content, skipping`);
+          resolve({ success: true });
           return;
         }
 
@@ -397,7 +479,7 @@ export default function RepoWikiPage() {
         // Use a synchronized pattern to avoid race conditions
         if (activeContentRequests.get(page.id)) {
           console.log(`Page ${page.id} (${page.title}) is already being processed, skipping duplicate call`);
-          resolve();
+          resolve({ success: true });
           return;
         }
 
@@ -424,7 +506,7 @@ export default function RepoWikiPage() {
         setOriginalMarkdown(prev => ({ ...prev, [page.id]: '' })); // Clear previous original
 
         // Make API call to generate page content
-        console.log(`Starting content generation for page: ${page.title}`);
+        logger.info('Starting content generation', { page: page.title, pageId: page.id });
 
         // Get repository URL
         const repoUrl = getRepoUrl(effectiveRepoInfo);
@@ -452,7 +534,7 @@ Format it exactly like this:
 
 The following files were used as context for generating this wiki page:
 
-${filePaths.map(path => `- [${path}](${generateFileUrl(path, effectiveRepoInfo, detectCurrentBranch(effectiveRepoInfo, 'master'))})`).join('\n')}
+${filePaths.map(path => `- [${path}](${generateFileUrl(path, effectiveRepoInfo, detectCurrentBranch(effectiveRepoInfo, 'master') || 'master')})`).join('\n')}
 </details>
 
 Immediately after the \`<details>\` block, the main title of the page should be a H1 Markdown heading: \`# ${page.title}\`.
@@ -599,14 +681,14 @@ CRITICAL REMINDERS:
             };
 
             ws.onerror = (error) => {
-              console.error('WebSocket error:', error);
+              logger.error('WebSocket error', { error: String(error), page: page.title });
               if (connectionTimeout) clearTimeout(connectionTimeout);
               reject(new Error('WebSocket connection failed'));
             };
 
             // If the connection doesn't open within the configured timeout, fall back to HTTP
             connectionTimeout = setTimeout(() => {
-              console.warn('WebSocket connection timeout, will fallback to HTTP');
+              logger.warn('WebSocket connection timeout, will fallback to HTTP', { page: page.title });
               ws.close();
               reject(new Error('WebSocket connection timeout'));
             }, timeouts.connectionTimeout);
@@ -623,20 +705,24 @@ CRITICAL REMINDERS:
               }
             };
 
-            // Handle WebSocket close
-            ws.onclose = () => {
-              console.log(`WebSocket connection closed for page: ${page.title}`);
+            // Handle WebSocket close - check for abnormal closure
+            ws.onclose = (event) => {
+              logger.info('WebSocket connection closed', { page: page.title, code: event.code, reason: event.reason || 'none' });
+              // Code 1000 = normal closure, 1006 = abnormal (no close frame)
+              if (event.code !== 1000 && event.code !== 1005) {
+                logger.warn('Abnormal WebSocket closure', { code: event.code, wasClean: event.wasClean, page: page.title });
+              }
               resolve();
             };
 
             // Handle WebSocket errors
             ws.onerror = (error) => {
-              console.error('WebSocket error during message reception:', error);
+              logger.error('WebSocket error during message reception', { error: String(error), page: page.title });
               reject(new Error('WebSocket error during message reception'));
             };
           });
         } catch (wsError) {
-          console.error('WebSocket error, falling back to HTTP:', wsError);
+          logger.warn('WebSocket error, falling back to HTTP', { error: String(wsError), page: page.title });
 
           // Fall back to HTTP if WebSocket fails
           const response = await fetch(`/api/chat/stream`, {
@@ -649,7 +735,7 @@ CRITICAL REMINDERS:
 
           if (!response.ok) {
             const errorText = await response.text().catch(() => 'No error details available');
-            console.error(`API error (${response.status}): ${errorText}`);
+            logger.error('API error in HTTP fallback', { status: response.status, error: errorText, page: page.title });
             throw new Error(`Error generating page content: ${response.status} - ${response.statusText}`);
           }
 
@@ -671,7 +757,7 @@ CRITICAL REMINDERS:
             // Ensure final decoding
             content += decoder.decode();
           } catch (readError) {
-            console.error('Error reading stream:', readError);
+            logger.error('Error reading stream', { error: String(readError), page: page.title });
             throw new Error('Error processing response stream');
           }
         }
@@ -679,7 +765,21 @@ CRITICAL REMINDERS:
         // Clean up markdown delimiters
         content = content.replace(/^```markdown\s*/i, '').replace(/```\s*$/i, '');
 
-        console.log(`Received content for ${page.title}, length: ${content.length} characters`);
+        logger.info('Received content', { page: page.title, contentLength: content.length });
+        
+        // Check for error responses from the backend
+        if (content.startsWith('Error:') || content.startsWith('Error preparing retriever')) {
+          logger.error('Backend error in content', { page: page.id, content: content.substring(0, 200) });
+          throw new Error(content);
+        }
+        
+        // Check for empty or minimal content (might indicate connection issues)
+        if (content.length < 50) {
+          logger.warn('Suspiciously short content', { page: page.title, content: content.substring(0, 100), contentLength: content.length });
+          if (content.length === 0) {
+            throw new Error('No content received from backend - possible connection interruption');
+          }
+        }
 
         // Store the FINAL generated content
         const updatedPage = { ...page, content };
@@ -687,17 +787,23 @@ CRITICAL REMINDERS:
         // Store this as the original for potential mermaid retries
         setOriginalMarkdown(prev => ({ ...prev, [page.id]: content }));
 
-        resolve();
+        resolve({ success: true });
       } catch (err) {
-        console.error(`Error generating content for page ${page.id}:`, err);
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        // Log error with context to backend
+        logger.error('Error generating content for page', { 
+          pageId: page.id, 
+          pageTitle: page.title, 
+          error: errorMessage,
+          repoUrl: effectiveRepoInfo?.repoUrl 
+        });
         // Update page state to show error
         setGeneratedPages(prev => ({
           ...prev,
           [page.id]: { ...page, content: `Error generating content: ${errorMessage}` }
         }));
         setError(`Failed to generate content for ${page.title}.`);
-        resolve(); // Resolve even on error to unblock queue
+        resolve({ success: false, error: errorMessage }); // Resolve even on error to unblock queue
       } finally {
         // Clear the processing flag for this page
         // This must happen in the finally block to ensure the flag is cleared
@@ -714,6 +820,25 @@ CRITICAL REMINDERS:
       }
     });
   }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, language, activeContentRequests]);
+
+  // Save checkpoint when pages are generated (to allow resumption on interruption)
+  useEffect(() => {
+    // Skip if no structure or if cache was just loaded
+    if (!wikiStructure || cacheLoadedSuccessfully.current && !isResumingFromPartial) {
+      return;
+    }
+    
+    // Count pages with actual content (not loading or error)
+    const pagesWithContent = Object.values(generatedPages).filter(
+      p => p.content && p.content !== 'Loading...' && !p.content.startsWith('Error')
+    );
+    
+    // Only save checkpoint if we have at least one page and not all pages are done
+    const totalPages = wikiStructure.pages.length;
+    if (pagesWithContent.length > 0 && pagesWithContent.length < totalPages) {
+      saveCheckpoint(wikiStructure, generatedPages, true);
+    }
+  }, [generatedPages, wikiStructure, saveCheckpoint, isResumingFromPartial]);
 
   // Determine the wiki structure from repository data
   const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string) => {
@@ -1231,34 +1356,78 @@ IMPORTANT:
         const initialInProgress = new Set(pages.map(p => p.id));
         setPagesInProgress(initialInProgress);
 
-        console.log(`Starting generation for ${pages.length} pages with controlled concurrency`);
+        logger.info('Starting wiki page generation', { totalPages: pages.length, concurrency: 1 });
 
         // Maximum concurrent requests
         const MAX_CONCURRENT = 1;
+        // Maximum retry attempts for failed pages
+        const MAX_RETRIES = 2;
+        // Delay between retries (in ms) - exponential backoff
+        const RETRY_DELAY_BASE = 5000; // 5 seconds base
 
-        // Create a queue of pages
-        const queue = [...pages];
+        // Create a queue of pages with retry count
+        const queue: { page: WikiPage; retries: number }[] = pages.map(p => ({ page: p, retries: 0 }));
         let activeRequests = 0;
+        const failedPages: WikiPage[] = [];
 
         // Function to process next items in queue
         const processQueue = () => {
           // Process as many items as we can up to our concurrency limit
           while (queue.length > 0 && activeRequests < MAX_CONCURRENT) {
-            const page = queue.shift();
-            if (page) {
+            const item = queue.shift();
+            if (item) {
+              const { page, retries } = item;
               activeRequests++;
-              console.log(`Starting page ${page.title} (${activeRequests} active, ${queue.length} remaining)`);
+              logger.info('Starting page generation', { page: page.title, active: activeRequests, remaining: queue.length, attempt: retries + 1 });
 
               // Start generating content for this page
               generatePageContent(page, owner, repo)
-                .finally(() => {
-                  // When done (success or error), decrement active count and process more
+                .then((result: { success: boolean; error?: string } | void) => {
+                  // When done, decrement active count and log with appropriate status
                   activeRequests--;
-                  console.log(`Finished page ${page.title} (${activeRequests} active, ${queue.length} remaining)`);
+                  
+                  if (result?.success === false) {
+                    // Check if we should retry
+                    if (retries < MAX_RETRIES) {
+                      const retryDelay = RETRY_DELAY_BASE * Math.pow(2, retries); // Exponential backoff
+                      logger.warn('Page generation failed, will retry', { 
+                        page: page.title, 
+                        error: result.error, 
+                        attempt: retries + 1,
+                        nextAttempt: retries + 2,
+                        retryIn: `${retryDelay / 1000}s`
+                      });
+                      // Add back to queue with incremented retry count after delay
+                      setTimeout(() => {
+                        queue.push({ page, retries: retries + 1 });
+                        if (activeRequests < MAX_CONCURRENT) {
+                          processQueue();
+                        }
+                      }, retryDelay);
+                    } else {
+                      logger.error('Page generation failed after max retries', { 
+                        page: page.title, 
+                        error: result.error, 
+                        attempts: retries + 1,
+                        active: activeRequests, 
+                        remaining: queue.length 
+                      });
+                      failedPages.push(page);
+                    }
+                  } else {
+                    logger.info('Page generation completed', { page: page.title, active: activeRequests, remaining: queue.length });
+                  }
 
                   // Check if all work is done (queue empty and no active requests)
                   if (queue.length === 0 && activeRequests === 0) {
-                    console.log("All page generation tasks completed.");
+                    if (failedPages.length > 0) {
+                      logger.warn('Wiki generation completed with failures', { 
+                        failedPages: failedPages.map(p => p.title),
+                        failedCount: failedPages.length 
+                      });
+                    } else {
+                      logger.info('All page generation tasks completed successfully');
+                    }
                     setIsLoading(false);
                     setLoadingMessage(undefined);
                   } else {
@@ -1927,7 +2096,20 @@ IMPORTANT:
           if (response.ok) {
             const cachedData = await response.json(); // Returns null if no cache
             if (cachedData && cachedData.wiki_structure && cachedData.generated_pages && Object.keys(cachedData.generated_pages).length > 0) {
-              console.log('Using server-cached wiki data');
+              // Check if this is a partial/incomplete cache
+              const totalPages = cachedData.wiki_structure.pages?.length || 0;
+              const cachedPagesCount = Object.keys(cachedData.generated_pages).length;
+              const pagesWithContent = (Object.values(cachedData.generated_pages) as WikiPage[]).filter(
+                (p: WikiPage) => p.content && p.content !== 'Loading...' && !p.content.startsWith('Error')
+              ).length;
+              const isPartialCache = cachedData.is_partial === true || pagesWithContent < totalPages;
+              
+              if (isPartialCache) {
+                console.log(`Found partial cache: ${pagesWithContent}/${totalPages} pages with content`);
+              } else {
+                console.log('Using complete server-cached wiki data');
+              }
+              
               if(cachedData.model) {
                 setSelectedModelState(cachedData.model);
               }
@@ -2063,11 +2245,23 @@ IMPORTANT:
               setWikiStructure(cachedStructure);
               setGeneratedPages(cachedData.generated_pages);
               setCurrentPageId(cachedStructure.pages.length > 0 ? cachedStructure.pages[0].id : undefined);
-              setIsLoading(false);
-              setEmbeddingError(false); 
-              setLoadingMessage(undefined);
-              cacheLoadedSuccessfully.current = true;
-              return; // Exit if cache is successfully loaded
+              
+              // If partial cache, set up for resumption and continue generation
+              if (isPartialCache) {
+                console.log('Partial cache detected - will resume generation for missing pages');
+                setIsResumingFromPartial(true);
+                cacheLoadedSuccessfully.current = false; // Allow checkpoints to be saved
+                // Don't set isLoading to false - continue to fetch and generate missing pages
+                setLoadingMessage(`Resuming wiki generation (${pagesWithContent}/${totalPages} pages cached)...`);
+                // Continue to fetchRepositoryStructure to generate missing pages
+              } else {
+                // Complete cache - just display it
+                setIsLoading(false);
+                setEmbeddingError(false); 
+                setLoadingMessage(undefined);
+                cacheLoadedSuccessfully.current = true;
+                return; // Exit if cache is successfully loaded
+              }
             } else {
               logger.info('No valid wiki data in server cache or cache is empty');
             }
@@ -2121,13 +2315,13 @@ IMPORTANT:
           wikiStructure &&
           Object.keys(generatedPages).length > 0 &&
           Object.keys(generatedPages).length >= wikiStructure.pages.length &&
-          !cacheLoadedSuccessfully.current) {
+          (!cacheLoadedSuccessfully.current || isResumingFromPartial)) {
 
         const allPagesHaveContent = wikiStructure.pages.every(page =>
           generatedPages[page.id] && generatedPages[page.id].content && generatedPages[page.id].content !== 'Loading...');
 
         if (allPagesHaveContent) {
-          console.log('Attempting to save wiki data to server cache via Next.js proxy');
+          console.log('Attempting to save COMPLETE wiki data to server cache via Next.js proxy');
 
           try {
             // Make sure wikiStructure has sections and rootSections
@@ -2143,7 +2337,8 @@ IMPORTANT:
               wiki_structure: structureToCache,
               generated_pages: generatedPages,
               provider: selectedProviderState,
-              model: selectedModelState
+              model: selectedModelState,
+              is_partial: false  // Mark as complete cache
             };
             
             // Add timeout to prevent hanging when backend is slow/unavailable
@@ -2161,7 +2356,10 @@ IMPORTANT:
             clearTimeout(saveTimeout);
 
             if (response.ok) {
-              console.log('Wiki data successfully saved to server cache');
+              console.log('Wiki data successfully saved to server cache (complete)');
+              // Reset flags after successful complete save
+              cacheLoadedSuccessfully.current = true;
+              setIsResumingFromPartial(false);
             } else {
               console.error('Error saving wiki data to server cache:', response.status, await response.text());
             }
@@ -2173,7 +2371,7 @@ IMPORTANT:
     };
 
     saveCache();
-  }, [isLoading, error, wikiStructure, generatedPages, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, effectiveRepoInfo.repoUrl, repoUrl, language, isComprehensiveView]);
+  }, [isLoading, error, wikiStructure, generatedPages, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, effectiveRepoInfo.repoUrl, repoUrl, language, isComprehensiveView, isResumingFromPartial]);
 
   const handlePageSelect = (pageId: string) => {
     if (currentPageId != pageId) {
@@ -2421,7 +2619,7 @@ IMPORTANT:
                         content={processCitations(
                           generatedPages[currentPageId].content, 
                           effectiveRepoInfo, 
-                          detectCurrentBranch(effectiveRepoInfo, 'master')
+                          detectCurrentBranch(effectiveRepoInfo, 'master') || 'master'
                         )}
                       />
                     </div>

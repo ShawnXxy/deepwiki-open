@@ -127,9 +127,10 @@ export const getTimeoutConfig = () => {
   const isNetwork = isNetworkEnvironment();
   
   return {
-    // Connection timeout: longer for network access
-    connectionTimeout: isNetwork ? 15000 : 10000,
+    // Connection timeout: very long because backend may be busy processing other requests
+    // The backend can only process one request at a time, so new connections may wait
+    connectionTimeout: isNetwork ? 600000 : 300000, // 10 min vs 5 min to match request timeout
     // Request timeout: much longer for network access due to potential latency
-    requestTimeout: isNetwork ? 600000 : 300000, // 10 min vs 5 min for large repos
+    requestTimeout: isNetwork ? 900000 : 600000, // 15 min vs 10 min for large repos
   };
 };

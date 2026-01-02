@@ -114,11 +114,46 @@ export async function POST(req: NextRequest) {
       clearTimeout(timeoutId);
       console.error('Error fetching from backend:', fetchError);
       
-      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-        return new NextResponse(JSON.stringify({ error: 'Request timeout' }), {
-          status: 504,
-          headers: { 'Content-Type': 'application/json' },
-        });
+      if (fetchError instanceof Error) {
+        if (fetchError.name === 'AbortError') {
+          return new NextResponse(JSON.stringify({ 
+            error: 'Request timeout - backend took too long to respond',
+            retryable: true,
+            suggestion: 'The backend may be processing another request. Please wait and try again.'
+          }), {
+            status: 504,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        
+        // Check for headers timeout (backend busy processing)
+        const cause = (fetchError as Error & { cause?: { code?: string } }).cause;
+        if (cause?.code === 'UND_ERR_HEADERS_TIMEOUT') {
+          console.error(`Backend busy (headers timeout): ${targetUrl}`);
+          return new NextResponse(JSON.stringify({ 
+            error: 'Backend is busy processing another request. The request will be retried automatically.',
+            retryable: true,
+            errorType: 'BackendBusy',
+            suggestion: 'Large repositories take several minutes per page. Please wait for current processing to complete.'
+          }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        
+        // Handle connection refused/network errors more explicitly
+        const errorMsg = fetchError.message || 'Unknown error';
+        if (errorMsg.includes('fetch failed') || errorMsg.includes('ECONNREFUSED') || errorMsg.includes('ENOTFOUND')) {
+          console.error(`Backend connection failed: ${targetUrl} - ${errorMsg}`);
+          return new NextResponse(JSON.stringify({ 
+            error: `Backend connection failed: ${errorMsg}. Please ensure the backend service is running.`,
+            retryable: true,
+            details: { targetUrl, errorType: fetchError.name }
+          }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
       }
       
       throw fetchError; // Re-throw to be caught by outer catch
@@ -127,11 +162,19 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     console.error('Error in API proxy route (/api/chat/stream):', error);
     let errorMessage = 'Internal Server Error in proxy';
+    let statusCode = 500;
+    
     if (error instanceof Error) {
       errorMessage = error.message;
+      // Handle specific error types
+      if (error.message.includes('fetch failed') || error.message.includes('ECONNREFUSED')) {
+        errorMessage = `Unable to connect to backend service: ${error.message}`;
+        statusCode = 503; // Service Unavailable
+      }
     }
+    
     return new NextResponse(JSON.stringify({ error: errorMessage }), {
-      status: 500,
+      status: statusCode,
       headers: { 'Content-Type': 'application/json' },
     });
   }
