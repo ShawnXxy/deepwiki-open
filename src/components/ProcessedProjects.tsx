@@ -19,6 +19,7 @@ interface ProcessedProject {
 
 interface ProcessedProjectsProps {
   showHeader?: boolean;
+  /** @deprecated No longer used - all projects are shown in a scrollable container */
   maxItems?: number;
   className?: string;
   messages?: Record<string, Record<string, string>>; // Translation messages with proper typing
@@ -26,6 +27,7 @@ interface ProcessedProjectsProps {
 
 export default function ProcessedProjects({ 
   showHeader = true, 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   maxItems, 
   className = "",
   messages 
@@ -105,8 +107,9 @@ export default function ProcessedProjects({
       );
     }
 
-    return maxItems ? filtered.slice(0, maxItems) : filtered;
-  }, [projects, searchQuery, maxItems, wikiTypeFilter]);
+    // Note: maxItems is now ignored - all filtered projects are shown in a scrollable container
+    return filtered;
+  }, [projects, searchQuery, wikiTypeFilter]);
 
   const clearSearch = () => {
     setSearchQuery('');
@@ -245,7 +248,8 @@ export default function ProcessedProjects({
       {error && <p className="text-[var(--highlight)]">{t('errorLoading')} {error}</p>}
 
       {!isLoading && !error && filteredProjects.length > 0 && (
-        <div className={viewMode === 'card' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4' : 'space-y-2'}>
+        <div className="max-h-[400px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-[var(--border-color)] scrollbar-track-transparent">
+          <div className={viewMode === 'card' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4' : 'space-y-2'}>
             {filteredProjects.map((project) => (
             viewMode === 'card' ? (
               <div key={project.id} className="relative p-4 border border-[var(--border-color)] rounded-lg bg-[var(--card-bg)] shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02]">
@@ -318,6 +322,7 @@ export default function ProcessedProjects({
               </div>
             )
           ))}
+          </div>
         </div>
       )}
 
