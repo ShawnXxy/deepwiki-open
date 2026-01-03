@@ -1,16 +1,25 @@
 """
 Azure Blob Storage client for DeepWiki.
-Handles storage of repository databases and embeddings using MSI authentication.
+Handles storage of repository databases and embeddings.
+
+Authentication chain:
+1. MSI with explicit client_id (Azure Container Apps)
+2. DefaultAzureCredential fallback (includes Azure CLI, VS Code, etc.)
+
+Storage decision:
+- If blob storage is enabled in config → use Azure Blob
+- If blob storage is disabled → use local storage (~/.adalflow/)
 """
 
 import io
 import os
 import pickle
 import logging
-from typing import Optional, Any
+from typing import Optional, Any, Tuple
 
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, ContainerClient
+from azure.core.exceptions import ClientAuthenticationError
 
 from backend.config import get_infra_config, get_managed_identity_client_id
 
@@ -18,15 +27,26 @@ logger = logging.getLogger(__name__)
 
 # Singleton blob client instance
 _blob_client: Optional["AzureBlobStorageClient"] = None
+# Track if blob storage initialization was attempted and failed
+_blob_init_failed: bool = False
+_blob_init_error: Optional[str] = None
 
 
 class AzureBlobStorageClient:
     """
-    Azure Blob Storage client using MSI authentication.
-    Stores and retrieves pickled database objects.
+    Azure Blob Storage client with MSI/DefaultAzureCredential authentication.
+    
+    Authentication chain:
+    1. MSI with explicit client_id (for Azure Container Apps)
+    2. DefaultAzureCredential (MSI → Azure CLI → VS Code → Environment)
     """
 
-    def __init__(self, account_name: str, container_name: str, managed_identity_client_id: Optional[str] = None):
+    def __init__(
+        self,
+        account_name: str,
+        container_name: str,
+        managed_identity_client_id: Optional[str] = None
+    ):
         """
         Initialize the Azure Blob Storage client.
 
@@ -34,19 +54,29 @@ class AzureBlobStorageClient:
             account_name: Azure Storage account name
             container_name: Blob container name
             managed_identity_client_id: Optional MSI client ID for authentication
+        
+        Raises:
+            ClientAuthenticationError: If authentication fails
+            Exception: If connection to blob storage fails
         """
         self.account_name = account_name
         self.container_name = container_name
         self.account_url = f"https://{account_name}.blob.core.windows.net"
         
-        # Create credential with MSI
+        logger.info(f"🔧 [BlobStorage] Initializing client...")
+        logger.info(f"   Account: {account_name}")
+        logger.info(f"   Container: {container_name}")
+        
+        # Create credential with auth chain
         if managed_identity_client_id:
-            logger.debug(f"Using Managed Identity with client_id: {managed_identity_client_id[:8]}...")
+            logger.info(f"🔐 [BlobStorage] Auth method: MSI with "
+                        f"client_id: {managed_identity_client_id[:8]}...")
             self.credential = DefaultAzureCredential(
                 managed_identity_client_id=managed_identity_client_id
             )
         else:
-            logger.debug("Using DefaultAzureCredential without explicit client_id")
+            logger.info("🔐 [BlobStorage] Auth method: DefaultAzureCredential "
+                        "(MSI → Azure CLI → VS Code → Environment)")
             self.credential = DefaultAzureCredential()
         
         # Create blob service client
@@ -55,10 +85,10 @@ class AzureBlobStorageClient:
             credential=self.credential
         )
         
-        # Ensure container exists
+        # Validate connection by ensuring container exists
         self._ensure_container_exists()
         
-        logger.debug(f"Azure Blob Storage client initialized for account: {account_name}, container: {container_name}")
+        logger.info(f"✅ [BlobStorage] Client initialized successfully")
 
     def _ensure_container_exists(self) -> None:
         """Create the container if it doesn't exist."""
@@ -373,15 +403,33 @@ class AzureBlobStorageClient:
 def get_blob_storage_client() -> Optional[AzureBlobStorageClient]:
     """
     Get the singleton Azure Blob Storage client.
-    Initializes from infra.json configuration.
+    
+    This function checks if blob storage is enabled before initializing.
+    If disabled or initialization fails, returns None.
 
     Returns:
-        AzureBlobStorageClient instance or None if not configured
+        AzureBlobStorageClient instance or None if disabled/failed
+        
+    Note:
+        Callers should use is_blob_storage_configured() first to determine
+        whether to use blob or local storage.
     """
-    global _blob_client
+    global _blob_client, _blob_init_failed, _blob_init_error
     
+    # Return cached client if available
     if _blob_client is not None:
         return _blob_client
+    
+    # Don't retry if initialization already failed
+    if _blob_init_failed:
+        logger.debug(f"📦 [BlobStorage] Skipping - previous init failed: "
+                     f"{_blob_init_error}")
+        return None
+    
+    # Check if blob storage is enabled
+    if not is_blob_storage_configured():
+        logger.info("📦 [BlobStorage] Disabled in config → using local storage")
+        return None
     
     try:
         infra = get_infra_config()
@@ -391,10 +439,15 @@ def get_blob_storage_client() -> Optional[AzureBlobStorageClient]:
         container_name = blob_config.get("container_name", "deepwiki-data")
         
         if not account_name:
-            logger.warning("Azure Blob Storage not configured in infra.json")
+            logger.warning("⚠️ [BlobStorage] No account_name in config")
+            _blob_init_failed = True
+            _blob_init_error = "No account_name configured"
             return None
         
         msi_client_id = get_managed_identity_client_id()
+        
+        logger.info(f"📦 [BlobStorage] Initializing connection to "
+                    f"{account_name}/{container_name}...")
         
         _blob_client = AzureBlobStorageClient(
             account_name=account_name,
@@ -402,31 +455,79 @@ def get_blob_storage_client() -> Optional[AzureBlobStorageClient]:
             managed_identity_client_id=msi_client_id
         )
         
+        logger.info("✅ [BlobStorage] Ready for use")
         return _blob_client
+        
+    except ClientAuthenticationError as e:
+        _blob_init_failed = True
+        _blob_init_error = f"Authentication failed: {e}"
+        logger.error(f"❌ [BlobStorage] Auth failed - check MSI/credentials: {e}")
+        raise ConnectionError(
+            f"Blob storage auth failed. "
+            f"Ensure MSI has 'Storage Blob Data Contributor' role. "
+            f"Error: {e}"
+        )
     except Exception as e:
-        logger.error(f"Failed to initialize Azure Blob Storage client: {e}")
-        return None
+        _blob_init_failed = True
+        _blob_init_error = str(e)
+        logger.error(f"❌ [BlobStorage] Init failed: {e}")
+        raise ConnectionError(f"Blob storage connection failed: {e}")
 
 
 def is_blob_storage_configured() -> bool:
     """
-    Check if Azure Blob Storage is enabled and configured in infra.json.
+    Check if Azure Blob Storage is enabled in infra.json config.
     
-    The 'enabled' property controls whether to use blob storage:
-        - enabled: true (default) -> use Azure Blob Storage
-        - enabled: false -> use local storage
+    This is the PRIMARY check to determine storage mode:
+        - True  → Use Azure Blob Storage
+        - False → Use local storage (~/.adalflow/)
+    
+    The 'enabled' flag in config controls this behavior:
+        - enabled: true  → blob storage mode
+        - enabled: false → local storage mode (for Docker/testing)
 
     Returns:
-        bool: True if enabled and configured, False otherwise
+        bool: True if blob storage should be used, False for local storage
     """
     infra = get_infra_config()
     blob_config = infra.get("azure_blob_storage", {})
     
-    # Check if enabled (defaults to True if not specified)
+    # Check if enabled (defaults to True if not specified for backward compat)
     enabled = blob_config.get("enabled", True)
     if not enabled:
-        logger.debug("Azure Blob Storage is disabled in config")
+        logger.debug("📦 [Storage] Mode: LOCAL (blob disabled in config)")
         return False
     
     # Check if account_name is configured
-    return bool(blob_config.get("account_name"))
+    has_account = bool(blob_config.get("account_name"))
+    if has_account:
+        logger.debug("📦 [Storage] Mode: BLOB (enabled and configured)")
+    else:
+        logger.debug("📦 [Storage] Mode: LOCAL (no account_name)")
+    return has_account
+
+
+def get_storage_mode() -> Tuple[str, Optional[str]]:
+    """
+    Get current storage mode and reason.
+    
+    Returns:
+        Tuple of (mode, reason) where:
+        - mode: "blob" or "local"
+        - reason: Explanation for the mode
+    """
+    infra = get_infra_config()
+    blob_config = infra.get("azure_blob_storage", {})
+    
+    enabled = blob_config.get("enabled", True)
+    if not enabled:
+        return ("local", "Blob storage disabled in config")
+    
+    account_name = blob_config.get("account_name")
+    if not account_name:
+        return ("local", "No blob account_name configured")
+    
+    if _blob_init_failed:
+        return ("local", f"Blob init failed: {_blob_init_error}")
+    
+    return ("blob", f"Using {account_name}")
