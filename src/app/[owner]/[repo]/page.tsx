@@ -465,6 +465,9 @@ export default function RepoWikiPage() {
   // Generate content for a wiki page
   // Returns { success: boolean, error?: string } to indicate completion status
   const generatePageContent = useCallback(async (page: WikiPage, owner: string, repo: string): Promise<{ success: boolean; error?: string }> => {
+    // Use effectiveToken to handle race condition where currentToken may be stale
+    const effectiveToken = token || currentToken;
+    
     return new Promise<{ success: boolean; error?: string }>(async (resolve) => {
       try {
         // Skip if content already exists and is valid (not loading/error placeholder)
@@ -635,8 +638,8 @@ CRITICAL REMINDERS:
           }]
         };
 
-        // Add tokens if available
-        addTokensToRequestBody(requestBody, currentToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, effectiveRepoInfo.branch || undefined, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
+        // Add tokens if available - use effectiveToken to handle race condition
+        addTokensToRequestBody(requestBody, effectiveToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, effectiveRepoInfo.branch || undefined, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
 
         // Use WebSocket for communication
         let content = '';
@@ -819,7 +822,7 @@ CRITICAL REMINDERS:
         setLoadingMessage(undefined); // Clear specific loading message
       }
     });
-  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, language, activeContentRequests]);
+  }, [generatedPages, token, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, language, activeContentRequests]);
 
   // Save checkpoint when pages are generated (to allow resumption on interruption)
   useEffect(() => {
@@ -854,6 +857,15 @@ CRITICAL REMINDERS:
       console.log('Wiki structure determination already in progress, skipping duplicate call');
       return;
     }
+
+    // Use effectiveToken to handle race condition where currentToken may be stale
+    const effectiveToken = token || currentToken;
+    console.log('[determineWikiStructure] Using token:', {
+      hasToken: !!token,
+      hasCurrentToken: !!currentToken,
+      hasEffectiveToken: !!effectiveToken,
+      effectiveTokenLength: effectiveToken?.length || 0
+    });
 
     try {
       setStructureRequestInProgress(true);
@@ -1024,8 +1036,8 @@ IMPORTANT:
         }]
       };
 
-      // Add tokens if available
-      addTokensToRequestBody(requestBody, currentToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, effectiveRepoInfo.branch || undefined, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
+      // Add tokens if available - use effectiveToken to handle race condition
+      addTokensToRequestBody(requestBody, effectiveToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, effectiveRepoInfo.branch || undefined, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
 
       // Use WebSocket for communication
       let responseText = '';
@@ -1470,7 +1482,7 @@ IMPORTANT:
     } finally {
       setStructureRequestInProgress(false);
     }
-  }, [generatePageContent, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, language, messages.loading, isComprehensiveView]);
+  }, [generatePageContent, token, currentToken, effectiveRepoInfo, pagesInProgress.size, structureRequestInProgress, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, language, messages.loading, isComprehensiveView]);
 
   // Fetch repository structure using GitHub or GitLab API
   const fetchRepositoryStructure = useCallback(async () => {

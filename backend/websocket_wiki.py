@@ -164,6 +164,9 @@ async def handle_websocket_chat(websocket: WebSocket):
         # Receive and parse the request data
         request_data = await websocket.receive_json()
         request = ChatCompletionRequest(**request_data)
+        
+        # Debug: Log token status
+        logger.debug(f"Request parsed - token: {'[PROVIDED]' if request.token else '[NONE]'}, type: {request.type}")
 
         # Check if request contains very large input
         input_too_large = False

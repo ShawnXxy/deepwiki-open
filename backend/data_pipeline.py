@@ -122,10 +122,12 @@ def download_repo(repo_url: str, local_path: str, type: str = "github",
 
         # Prepare the clone URL with access token if provided
         clone_url = repo_url
+        logger.debug(f"download_repo called with type={type}, access_token={'[PROVIDED]' if access_token else '[NONE]'}")
         if access_token:
             parsed = urlparse(repo_url)
             # URL-encode the token to handle special characters
             encoded_token = quote(access_token, safe='')
+            logger.debug(f"Token encoded, length: {len(encoded_token)}")
             # Determine the repository type and format the URL accordingly
             if type == "github":
                 # Format: https://{token}@{domain}/owner/repo.git
@@ -140,13 +142,18 @@ def download_repo(repo_url: str, local_path: str, type: str = "github",
             elif type == "azuredevops":
                 # Format: https://{token}@{domain}/owner/repo.git
                 # Azure DevOps supports PAT authentication similar to GitHub
+                # Use encoded_token to handle special characters properly
                 clone_url = urlunparse((
                     parsed.scheme, 
-                    f"{access_token}@{parsed.netloc}", 
+                    f"{encoded_token}@{parsed.netloc}", 
                     parsed.path, '', '', ''
                 ))
+            else:
+                logger.warning(f"Unknown repo type: {type}, token may not be embedded correctly")
 
-            logger.info("Using access token for authentication")
+            logger.info(f"Using access token for authentication (type={type})")
+        else:
+            logger.warning(f"No access token provided for repo type={type}")
 
         # Clone the repository with branch handling
         logger.info(f"Cloning repository from {repo_url} to {local_path}")
@@ -975,6 +982,7 @@ class DatabaseManager:
             branch (str, optional): Branch name to clone/process (uses 'default' if not specified)
         """
         logger.info(f"Preparing repo storage for {repo_url_or_path}...")
+        logger.debug(f"_create_repo params: repo_type={repo_type}, access_token={'[PROVIDED]' if access_token else '[NONE]'}, branch={branch}")
 
         try:
             # Strip whitespace to handle URLs with leading/trailing spaces

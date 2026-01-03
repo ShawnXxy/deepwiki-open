@@ -365,35 +365,57 @@ class AzureAIClient(ModelClient):
         self._input_type = input_type
 
     def _get_credential(self) -> DefaultAzureCredential:
-        """Get the Azure credential with the configured managed identity client ID."""
+        """
+        Get Azure credential with fallback chain.
+        
+        Fallback order:
+        1. MSI with explicit client_id (Azure Container Apps)
+        2. DefaultAzureCredential (includes MSI, Azure CLI, VS Code, etc.)
+        """
         client_id = self._managed_identity_client_id
         if client_id:
-            log.info(f"Using managed identity with client_id: {client_id}")
+            log.info(f"🔐 [Auth] Using Managed Identity with "
+                     f"client_id: {client_id[:8]}...")
             return DefaultAzureCredential(managed_identity_client_id=client_id)
         else:
-            log.info("Using DefaultAzureCredential without specific client_id")
+            log.info("🔐 [Auth] Using DefaultAzureCredential "
+                     "(MSI → Azure CLI → VS Code → Environment)")
             return DefaultAzureCredential()
 
     def init_sync_client(self):
+        """
+        Initialize sync Azure OpenAI client.
+        
+        Authentication fallback chain:
+        1. API Key from environment (AZURE_OPENAI_API_KEY) - Local Docker
+        2. MSI with client_id (Azure Container Apps)
+        3. DefaultAzureCredential (Local terminal with Azure CLI)
+        """
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
         api_key = os.getenv("AZURE_OPENAI_API_KEY")
         
+        log.info("🔧 [AzureOpenAI] Initializing sync client...")
+        log.info(f"   Endpoint: {azure_endpoint}")
+        log.info(f"   API Version: {api_version}")
+        
         if not azure_endpoint:
-            raise ValueError("Environment variable AZURE_OPENAI_ENDPOINT must be set")
+            raise ValueError("AZURE_OPENAI_ENDPOINT must be set")
         if not api_version:
-            raise ValueError("Environment variable AZURE_OPENAI_VERSION must be set")
+            raise ValueError("AZURE_OPENAI_VERSION must be set")
 
-        # Use API key if available, otherwise fall back to MSI authentication
+        # Authentication chain: API Key → MSI/DefaultAzureCredential
         if api_key:
-            log.info("Using API key authentication for Azure OpenAI")
+            log.info("🔑 [AzureOpenAI] Auth method: API Key "
+                     "(from AZURE_OPENAI_API_KEY)")
             return AzureOpenAI(
                 api_key=api_key,
                 azure_endpoint=azure_endpoint,
                 api_version=api_version,
             )
         else:
-            log.info("Using MSI authentication for Azure OpenAI")
+            log.info("🔐 [AzureOpenAI] Auth method: Azure Identity "
+                     "(MSI/CLI fallback)")
             credential = self._get_credential()
             token_provider = get_bearer_token_provider(
                 credential, "https://cognitiveservices.azure.com/.default"
@@ -405,25 +427,35 @@ class AzureAIClient(ModelClient):
             )
 
     def init_async_client(self):
+        """
+        Initialize async Azure OpenAI client.
+        
+        Authentication fallback chain:
+        1. API Key from environment (AZURE_OPENAI_API_KEY) - Local Docker
+        2. MSI with client_id (Azure Container Apps)
+        3. DefaultAzureCredential (Local terminal with Azure CLI)
+        """
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
         api_key = os.getenv("AZURE_OPENAI_API_KEY")
         
+        log.info("🔧 [AzureOpenAI] Initializing async client...")
+        
         if not azure_endpoint:
-            raise ValueError("Environment variable AZURE_OPENAI_ENDPOINT must be set")
+            raise ValueError("AZURE_OPENAI_ENDPOINT must be set")
         if not api_version:
-            raise ValueError("Environment variable AZURE_OPENAI_VERSION must be set")
+            raise ValueError("AZURE_OPENAI_VERSION must be set")
 
-        # Use API key if available, otherwise fall back to MSI authentication
+        # Authentication chain: API Key → MSI/DefaultAzureCredential
         if api_key:
-            log.info("Using API key authentication for Azure OpenAI (async)")
+            log.info("🔑 [AzureOpenAI Async] Auth method: API Key")
             return AsyncAzureOpenAI(
                 api_key=api_key,
                 azure_endpoint=azure_endpoint,
                 api_version=api_version,
             )
         else:
-            log.info("Using MSI authentication for Azure OpenAI (async)")
+            log.info("🔐 [AzureOpenAI Async] Auth method: Azure Identity")
             credential = self._get_credential()
             token_provider = get_bearer_token_provider(
                 credential, "https://cognitiveservices.azure.com/.default"

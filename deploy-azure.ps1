@@ -58,10 +58,45 @@ if ($acrExists) {
 $ACR_LOGIN_SERVER = az acr show --name $ACR_NAME --query loginServer -o tsv
 
 # ============================================
-# Step 2: Build and Push Container Image (Local Docker)
+# Step 2: Create cloud config (enable blob storage and App Insights)
+# ============================================
+# Config Strategy:
+#   - Local terminal: reads backend/config/ directly (blob/appinsights per infra.json)
+#   - Local Docker: uses backend/config/.local/ (blob/appinsights DISABLED)
+#   - Azure Cloud: uses backend/config/.cloud/ (blob/appinsights ENABLED)
+Write-Host ""
+Write-Host "📝 Step 2: Creating .cloud config (ensuring blob storage and App Insights enabled)..." -ForegroundColor Cyan
+
+$cloudConfigDir = Join-Path $PSScriptRoot "backend/config/.cloud"
+if (-not (Test-Path $cloudConfigDir)) {
+    New-Item -ItemType Directory -Path $cloudConfigDir -Force | Out-Null
+}
+
+# Read original infra.json and ensure cloud settings are enabled
+$infraPath = Join-Path $PSScriptRoot "backend/config/infra.json"
+$cloudInfraPath = Join-Path $cloudConfigDir "infra.json"
+
+$infra = Get-Content $infraPath | ConvertFrom-Json
+$infra.azure_blob_storage.enabled = $true
+$infra.azure_application_insights.enabled = $true
+$infra | ConvertTo-Json -Depth 10 | Set-Content $cloudInfraPath
+
+# Copy other config files to .cloud
+$configFiles = @("repo.json", "generator.json", "lang.json", "embedder.json")
+foreach ($configFile in $configFiles) {
+    $sourcePath = Join-Path $PSScriptRoot "backend/config/$configFile"
+    if (Test-Path $sourcePath) {
+        Copy-Item $sourcePath $cloudConfigDir -Force
+    }
+}
+
+Write-Host "✅ Cloud config created with blob storage and App Insights enabled" -ForegroundColor Green
+
+# ============================================
+# Step 3: Build and Push Container Image (Local Docker)
 # ============================================
 Write-Host ""
-Write-Host "🐳 Step 2: Building and pushing container image..." -ForegroundColor Cyan
+Write-Host "🐳 Step 3: Building and pushing container image..." -ForegroundColor Cyan
 Write-Host "   Using local Docker build (faster with .dockerignore)..." -ForegroundColor Yellow
 
 # Login to ACR
@@ -79,10 +114,10 @@ docker push "${ACR_LOGIN_SERVER}/codewiki:latest"
 Write-Host "✅ Image pushed to: $ACR_LOGIN_SERVER/codewiki:latest" -ForegroundColor Green
 
 # ============================================
-# Step 3: Create Container Apps Environment
+# Step 4: Create Container Apps Environment
 # ============================================
 Write-Host ""
-Write-Host "🌐 Step 3: Creating Container Apps Environment..." -ForegroundColor Cyan
+Write-Host "🌐 Step 4: Creating Container Apps Environment..." -ForegroundColor Cyan
 
 $envExists = az containerapp env show --name $ENVIRONMENT_NAME --resource-group $RESOURCE_GROUP 2>$null
 if ($envExists) {
@@ -96,10 +131,10 @@ if ($envExists) {
 }
 
 # ============================================
-# Step 3b: Add D4 Dedicated Workload Profile
+# Step 4b: Add D4 Dedicated Workload Profile
 # ============================================
 Write-Host ""
-Write-Host "🔧 Step 3b: Adding D4 Dedicated Workload Profile..." -ForegroundColor Cyan
+Write-Host "🔧 Step 4b: Adding D4 Dedicated Workload Profile..." -ForegroundColor Cyan
 Write-Host "   D4 profile provides 4 vCPU / 16GB RAM for large repository embedding" -ForegroundColor DarkGray
 
 $profileExists = az containerapp env workload-profile show `
@@ -121,10 +156,10 @@ if ($profileExists) {
 }
 
 # ============================================
-# Step 4: Deploy Container App
+# Step 5: Deploy Container App
 # ============================================
 Write-Host ""
-Write-Host "🚀 Step 4: Deploying Container App..." -ForegroundColor Cyan
+Write-Host "🚀 Step 5: Deploying Container App..." -ForegroundColor Cyan
 
 # Get ACR credentials
 $ACR_USERNAME = az acr credential show --name $ACR_NAME --query username -o tsv
@@ -164,10 +199,10 @@ if ($appExists) {
 Write-Host "✅ Container App deployed" -ForegroundColor Green
 
 # ============================================
-# Step 5: Configure Managed Identity
+# Step 6: Configure Managed Identity
 # ============================================
 Write-Host ""
-Write-Host "🔐 Step 5: Configuring Managed Identity..." -ForegroundColor Cyan
+Write-Host "🔐 Step 6: Configuring Managed Identity..." -ForegroundColor Cyan
 
 # Enable system-assigned managed identity
 az containerapp identity assign `
@@ -198,10 +233,10 @@ az containerapp update `
 Write-Host "✅ Managed Identity configured" -ForegroundColor Green
 
 # ============================================
-# Step 6: Configure Storage Account Firewall
+# Step 7: Configure Storage Account Firewall
 # ============================================
 Write-Host ""
-Write-Host "🔒 Step 6: Configuring Storage Account Firewall..." -ForegroundColor Cyan
+Write-Host "🔒 Step 7: Configuring Storage Account Firewall..." -ForegroundColor Cyan
 
 # Check if storage account exists
 $storageExists = az storage account show --name $STORAGE_ACCOUNT_NAME --resource-group $RESOURCE_GROUP 2>$null
@@ -263,10 +298,10 @@ if ($storageExists) {
 }
 
 # ============================================
-# Step 7: Get App URL
+# Step 8: Get App URL
 # ============================================
 Write-Host ""
-Write-Host "🌍 Step 7: Getting App URL..." -ForegroundColor Cyan
+Write-Host "🌍 Step 8: Getting App URL..." -ForegroundColor Cyan
 
 $APP_FQDN = az containerapp show `
     --name $APP_NAME `
