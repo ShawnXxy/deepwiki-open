@@ -58,6 +58,10 @@ Edit `backend/config/infra.json` with your Azure details:
 }
 ```
 
+> Note <br>
+> Keep `azure_application_insights` and `azure_blob_storage` disabled if testing local.
+> These would be auto enabled when deployed to Azure cloud.
+
 Then you have two options to continue setup.
 
 ### 🐳 Option 1: Docker test in local environment

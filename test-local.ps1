@@ -107,15 +107,19 @@ Write-Host "✅ Image built in $([math]::Round($buildDuration.TotalMinutes, 1)) 
 # ============================================
 # Create local config (disable blob storage and App Insights)
 # ============================================
+# Config Strategy:
+#   - Local terminal: reads backend/config/ directly (blob/appinsights per infra.json)
+#   - Local Docker: uses backend/config/.local/ (blob/appinsights DISABLED)
+#   - Azure Cloud: uses backend/config/.cloud/ (blob/appinsights ENABLED)
 Write-Host ""
-Write-Host "📝 Creating local config (disabling blob storage and App Insights)..." -ForegroundColor Yellow
+Write-Host "📝 Creating .local config (disabling blob storage and App Insights)..." -ForegroundColor Yellow
 
 $localConfigDir = Join-Path $PSScriptRoot "backend/config/.local"
 if (-not (Test-Path $localConfigDir)) {
     New-Item -ItemType Directory -Path $localConfigDir -Force | Out-Null
 }
 
-# Read original infra.json and modify for local testing
+# Read original infra.json and modify for local Docker testing
 $infraPath = Join-Path $PSScriptRoot "backend/config/infra.json"
 $localInfraPath = Join-Path $localConfigDir "infra.json"
 
@@ -124,12 +128,13 @@ $infra.azure_blob_storage.enabled = $false
 $infra.azure_application_insights.enabled = $false
 $infra | ConvertTo-Json -Depth 10 | Set-Content $localInfraPath
 
-# Copy other config files
-Copy-Item (Join-Path $PSScriptRoot "backend/config/repo.json") $localConfigDir -Force
-Copy-Item (Join-Path $PSScriptRoot "backend/config/generator.json") $localConfigDir -Force
-Copy-Item (Join-Path $PSScriptRoot "backend/config/lang.json") $localConfigDir -Force
-if (Test-Path (Join-Path $PSScriptRoot "backend/config/embedder.json")) {
-    Copy-Item (Join-Path $PSScriptRoot "backend/config/embedder.json") $localConfigDir -Force
+# Copy other config files to .local
+$configFiles = @("repo.json", "generator.json", "lang.json", "embedder.json")
+foreach ($configFile in $configFiles) {
+    $sourcePath = Join-Path $PSScriptRoot "backend/config/$configFile"
+    if (Test-Path $sourcePath) {
+        Copy-Item $sourcePath $localConfigDir -Force
+    }
 }
 
 Write-Host "✅ Local config created with blob storage and App Insights disabled" -ForegroundColor Green

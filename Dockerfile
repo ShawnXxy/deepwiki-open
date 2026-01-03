@@ -79,6 +79,12 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY --from=py_deps /app/.venv /opt/venv
 COPY backend/ ./backend/
 
+# Note: Environment-specific configs are handled by deployment scripts:
+# - Local Docker: test-local.ps1 creates .local/ and mounts it at runtime
+# - Azure Cloud: deploy-azure.ps1 creates .cloud/ and copies it before build
+# The .cloud folder (if exists) overrides default config for Azure deployments
+COPY backend/config/.clou[d]/ ./backend/config/
+
 # Copy Node app
 COPY --from=node_builder /app/public ./public
 COPY --from=node_builder /app/.next/standalone ./

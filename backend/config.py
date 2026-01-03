@@ -169,7 +169,14 @@ raw_auth_mode = os.environ.get('DEEPWIKI_AUTH_MODE', 'False')
 WIKI_AUTH_MODE = raw_auth_mode.lower() in ['true', '1', 't']
 WIKI_AUTH_CODE = os.environ.get('DEEPWIKI_AUTH_CODE', '')
 
-# Get configuration directory from environment variable, or use default if not set
+# Configuration directory resolution:
+# - DEEPWIKI_CONFIG_DIR env var: Override config path (used by Docker/Azure)
+# - Default: backend/config/ (for local terminal development)
+#
+# Environment-specific configs:
+# - Local terminal: backend/config/ (direct, blob/appinsights enabled per infra.json)
+# - Local Docker: backend/config/.local/ (mounted, blob/appinsights disabled)
+# - Azure Cloud: backend/config/.cloud/ (copied into image, blob/appinsights enabled)
 CONFIG_DIR = os.environ.get('DEEPWIKI_CONFIG_DIR', None)
 
 
