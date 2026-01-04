@@ -287,6 +287,7 @@ export default function RepoWikiPage() {
     messages.loading?.initializing || 'Initializing wiki generation...'
   );
   const [error, setError] = useState<string | null>(null);
+  const [partialCacheMessage, setPartialCacheMessage] = useState<string | null>(null); // Info banner for partial cache
   const [wikiStructure, setWikiStructure] = useState<WikiStructure | undefined>();
   const [currentPageId, setCurrentPageId] = useState<string | undefined>();
   const [generatedPages, setGeneratedPages] = useState<Record<string, WikiPage>>({});
@@ -1498,6 +1499,7 @@ IMPORTANT:
     setGeneratedPages({});
     setPagesInProgress(new Set());
     setError(null);
+    setPartialCacheMessage(null); // Clear partial cache banner on regeneration
     setEmbeddingError(false); // Reset embedding error state
 
     try {
@@ -2276,6 +2278,23 @@ IMPORTANT:
                 console.log('Partial cache detected - will resume generation for missing pages');
                 setIsResumingFromPartial(true);
                 cacheLoadedSuccessfully.current = false; // Allow checkpoints to be saved
+                
+                // For Azure DevOps without a token, display partial cache but don't try to resume
+                const effectiveTokenForPartial = token || currentToken;
+                if (effectiveRepoInfo.type === 'azuredevops' && !effectiveTokenForPartial) {
+                  logger.info('Azure DevOps partial cache displayed without token - cannot resume generation', {
+                    pagesWithContent,
+                    totalPages
+                  });
+                  setIsLoading(false);
+                  setEmbeddingError(false);
+                  setLoadingMessage(undefined);
+                  // Show informative banner (not blocking error) so wiki content is still displayed
+                  setPartialCacheMessage(`Partial wiki displayed (${pagesWithContent}/${totalPages} pages). To generate remaining pages, please provide a Personal Access Token (PAT) via the Settings button.`);
+                  cacheLoadedSuccessfully.current = true; // Treat as successfully loaded (partial)
+                  return; // Display partial cache without trying to resume
+                }
+                
                 // Don't set isLoading to false - continue to fetch and generate missing pages
                 setLoadingMessage(`Resuming wiki generation (${pagesWithContent}/${totalPages} pages cached)...`);
                 // Continue to fetchRepositoryStructure to generate missing pages
@@ -2519,8 +2538,26 @@ IMPORTANT:
           </div>
         ) : wikiStructure ? (
           <div className="h-full flex flex-col lg:flex-row gap-4 w-full overflow-hidden">
+            {/* Partial Cache Info Banner */}
+            {partialCacheMessage && (
+              <div className="absolute top-0 left-0 right-0 z-10 bg-amber-500/10 border-b border-amber-500/30 px-4 py-3">
+                <div className="flex items-center justify-between max-w-7xl mx-auto">
+                  <div className="flex items-center text-amber-600 dark:text-amber-400 text-sm">
+                    <FaExclamationTriangle className="mr-2 flex-shrink-0" />
+                    <span>{partialCacheMessage}</span>
+                  </div>
+                  <button
+                    onClick={() => setIsModelSelectionModalOpen(true)}
+                    className="ml-4 px-3 py-1 text-xs bg-amber-500/20 hover:bg-amber-500/30 text-amber-700 dark:text-amber-300 rounded-md border border-amber-500/30 transition-colors flex-shrink-0"
+                  >
+                    <FaCog className="inline mr-1" />
+                    Settings
+                  </button>
+                </div>
+              </div>
+            )}
             {/* Wiki Section (Left side - 2/3 on large screens) */}
-            <div className={`h-full flex flex-col lg:flex-row gap-4 overflow-hidden bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese transition-all duration-300 ${isChatPanelCollapsed ? 'w-full' : 'w-full lg:w-2/3'}`}>
+            <div className={`h-full flex flex-col lg:flex-row gap-4 overflow-hidden bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese transition-all duration-300 ${isChatPanelCollapsed ? 'w-full' : 'w-full lg:w-2/3'} ${partialCacheMessage ? 'mt-12' : ''}`}>
               {/* Wiki Navigation */}
               <div className="h-full w-full lg:w-[280px] xl:w-[320px] flex-shrink-0 bg-[var(--background)]/50 rounded-lg rounded-r-none p-5 border-b lg:border-b-0 lg:border-r border-[var(--border-color)] overflow-y-auto">
                 <h3 className="text-lg font-bold text-[var(--foreground)] mb-3 font-serif">{wikiStructure.title}</h3>
