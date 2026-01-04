@@ -126,18 +126,27 @@ const Ask: React.FC<AskProps> = ({
 
         const data = await response.json();
 
-        // use latest provider/model ref to check
-        if(providerRef.current == '' || modelRef.current== '') {
+        // Get the provider to use (current or default)
+        const activeProvider = providerRef.current || data.defaultProvider;
+        const selectedProviderConfig = data.providers.find((p: Provider) => p.id === activeProvider);
+        
+        // Set provider
+        if (providerRef.current === '') {
           setSelectedProvider(data.defaultProvider);
-
-          // Find the default provider and set its default model
-          const selectedProvider = data.providers.find((p:Provider) => p.id === data.defaultProvider);
-          if (selectedProvider && selectedProvider.models.length > 0) {
-            setSelectedModel(selectedProvider.models[0].id);
-          }
         } else {
           setSelectedProvider(providerRef.current);
-          setSelectedModel(modelRef.current);
+        }
+
+        // Validate and set model - ensure it matches available models from API
+        // This handles stale localStorage values (e.g., old "gpt-4.1" cache)
+        if (selectedProviderConfig && selectedProviderConfig.models.length > 0) {
+          const validModelIds = selectedProviderConfig.models.map((m: Model) => m.id);
+          if (modelRef.current === '' || !validModelIds.includes(modelRef.current)) {
+            // Model is empty or invalid - set to first available model
+            setSelectedModel(selectedProviderConfig.models[0].id);
+          } else {
+            setSelectedModel(modelRef.current);
+          }
         }
       } catch (err) {
         console.error('Failed to fetch model configurations:', err);

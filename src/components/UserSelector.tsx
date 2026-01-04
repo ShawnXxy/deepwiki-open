@@ -51,7 +51,7 @@ interface ModelSelectorProps {
 export default function UserSelector({
   provider,
   setProvider,
-  model: _model, // eslint-disable-line @typescript-eslint/no-unused-vars
+  model,
   setModel,
   isCustomModel: _isCustomModel, // eslint-disable-line @typescript-eslint/no-unused-vars
   setIsCustomModel: _setIsCustomModel, // eslint-disable-line @typescript-eslint/no-unused-vars
@@ -120,15 +120,23 @@ export default function UserSelector({
         const data = await response.json();
         setModelConfig(data);
 
-        // Initialize provider and model with defaults from API (always Azure)
+        // Get the provider to use (current or default)
+        const activeProvider = provider || data.defaultProvider;
+        const selectedProvider = data.providers.find(
+          (p: Provider) => p.id === activeProvider
+        );
+
+        // Initialize provider if not set
         if (!provider && data.defaultProvider) {
           setProvider(data.defaultProvider);
+        }
 
-          // Find the default provider and set its default model
-          const selectedProvider = data.providers.find(
-            (p: Provider) => p.id === data.defaultProvider
-          );
-          if (selectedProvider && selectedProvider.models.length > 0) {
+        // Validate and fix model - ensure it matches available models from API
+        // This handles stale localStorage values (e.g., old "gpt-4.1" cache)
+        if (selectedProvider && selectedProvider.models.length > 0) {
+          const validModelIds = selectedProvider.models.map((m: Model) => m.id);
+          if (!model || !validModelIds.includes(model)) {
+            // Model is empty or invalid - set to first available model
             setModel(selectedProvider.models[0].id);
           }
         }
@@ -157,7 +165,7 @@ export default function UserSelector({
     };
 
     fetchModelConfig();
-  }, [provider, setModel, setProvider]);
+  }, [provider, model, setModel, setProvider]);
 
   // Default excluded directories (from backend, empty if not loaded)
   const defaultExcludedDirs = filtersConfig?.excluded_dirs?.join('\n') || '';
