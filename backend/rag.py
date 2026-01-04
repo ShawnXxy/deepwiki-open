@@ -201,15 +201,11 @@ IMPORTANT FORMATTING RULES:
 9. For pipe characters (|) in text, write them directly without escaping them"""
 
         # Get model configuration based on provider and model
-        from backend.config import get_model_config
+        from backend.config import get_model_config, get_azure_ai_client
         generator_config = get_model_config(self.provider, self.model)
 
-        # Initialize model client with proper configuration
-        model_client_class = generator_config["model_client"]
-        if "initialize_kwargs" in generator_config:
-            model_client = model_client_class(**generator_config["initialize_kwargs"])
-        else:
-            model_client = model_client_class()
+        # Use shared Azure AI client instance (singleton)
+        model_client = get_azure_ai_client(self.model)
 
         # Set up the main generator
         self.generator = adal.Generator(

@@ -14,10 +14,9 @@ from pydantic import BaseModel, Field
 
 from backend.config import (
     get_model_config, configs, get_azure_deployment_name,
-    get_azure_openai_config, get_managed_identity_client_id
+    get_azure_ai_client
 )
 from backend.data_pipeline import count_tokens, get_file_content
-from backend.clients.azureai_client import AzureAIClient
 from backend.rag import RAG
 from backend.prompts import (
     DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
@@ -387,14 +386,8 @@ async def chat_completions_stream(request: ChatCompletionRequest):
         # Get Azure model configuration from infra.json
         logger.info(f"Using Azure OpenAI with model: {request.model}")
 
-        azure_config = get_azure_openai_config()
-        client_id = get_managed_identity_client_id()
-        
-        model = AzureAIClient(
-            azure_endpoint=azure_config.get("endpoint"),
-            api_version=azure_config.get("api_version"),
-            managed_identity_client_id=client_id
-        )
+        # Use shared Azure AI client instance (singleton)
+        model = get_azure_ai_client(request.model)
         deployment_name = get_azure_deployment_name(request.model)
         logger.info(f"Using Azure deployment: {deployment_name}")
 

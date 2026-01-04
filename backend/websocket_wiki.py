@@ -17,9 +17,9 @@ from backend.config import (
     get_model_config,
     configs,
     get_azure_deployment_name,
+    get_azure_ai_client,
 )
 from backend.data_pipeline import count_tokens, get_file_content
-from backend.clients.azureai_client import AzureAIClient
 from backend.rag import RAG
 from backend.promptstore import build_chat_system_prompt
 
@@ -449,20 +449,17 @@ async def handle_websocket_chat(websocket: WebSocket):
 
         # Get deployment name for Azure
         deployment_name = get_azure_deployment_name(request.model)
-        logger.info(f"Using Azure deployment: {deployment_name}")
 
         # Get config for the deployment name (includes initialize_kwargs)
         model_config = get_model_config("azure", deployment_name)
         deployment_config = model_config["model_kwargs"]
         logger.info(f"Azure deployment_config: {deployment_config}")
 
-        # Initialize Azure AI client with proper configuration
-        initialize_kwargs = model_config.get("initialize_kwargs", {})
-        model = AzureAIClient(**initialize_kwargs)
+        # Use shared Azure AI client instance (singleton)
+        model = get_azure_ai_client(request.model)
 
         # Get temperature from deployment config
         temperature = deployment_config.get("temperature", 1.0)
-        logger.info(f"Azure temperature: {temperature}")
 
         model_kwargs = {
             "model": deployment_name,
@@ -472,8 +469,6 @@ async def handle_websocket_chat(websocket: WebSocket):
         # Only add top_p if it exists (reasoning models don't support it)
         if "top_p" in deployment_config:
             model_kwargs["top_p"] = deployment_config["top_p"]
-
-        logger.info(f"Azure model_kwargs: {model_kwargs}")
 
         api_kwargs = model.convert_inputs_to_api_kwargs(
             input=prompt,

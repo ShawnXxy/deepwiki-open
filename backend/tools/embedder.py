@@ -5,12 +5,14 @@ Embedder module for Azure OpenAI embeddings.
 import adalflow as adal
 
 from backend.config import configs
-from backend.clients.azureai_client import AzureAIClient
+
+# Cached embedder instance (singleton)
+_embedder: adal.Embedder = None
 
 
 def get_embedder(embedder_type: str = None) -> adal.Embedder:
     """
-    Get an Azure OpenAI embedder instance.
+    Get an Azure OpenAI embedder instance (singleton pattern).
 
     Args:
         embedder_type: Ignored, kept for backward compatibility. Always uses Azure.
@@ -18,24 +20,16 @@ def get_embedder(embedder_type: str = None) -> adal.Embedder:
     Returns:
         adal.Embedder: Configured embedder for Azure OpenAI
     """
+    global _embedder
+    if _embedder is not None:
+        return _embedder
+
     # Always use the default embedder config (Azure)
     embedder_config = configs["embedder"]
 
-    # Initialize model client
-    model_client_class = embedder_config.get("model_client")
-    if not model_client_class:
-        # Fallback to client_class if model_client is not set
-        client_class_name = embedder_config.get("client_class")
-        if client_class_name == "AzureAIClient":
-            model_client_class = AzureAIClient
-        else:
-            raise ValueError(f"Unknown client class: {client_class_name}")
-
-    # Initialize model client with proper configuration
-    if "initialize_kwargs" in embedder_config:
-        model_client = model_client_class(**embedder_config["initialize_kwargs"])
-    else:
-        model_client = model_client_class()
+    # Use the shared Azure AI client
+    from backend.config import get_azure_ai_client
+    model_client = get_azure_ai_client()
 
     # Create embedder with basic parameters
     embedder_kwargs = {
@@ -43,10 +37,10 @@ def get_embedder(embedder_type: str = None) -> adal.Embedder:
         "model_kwargs": embedder_config["model_kwargs"]
     }
 
-    embedder = adal.Embedder(**embedder_kwargs)
+    _embedder = adal.Embedder(**embedder_kwargs)
 
     # Set batch_size as an attribute if available (not a constructor parameter)
     if "batch_size" in embedder_config:
-        embedder.batch_size = embedder_config["batch_size"]
+        _embedder.batch_size = embedder_config["batch_size"]
 
-    return embedder
+    return _embedder
