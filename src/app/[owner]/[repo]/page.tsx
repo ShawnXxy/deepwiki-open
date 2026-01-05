@@ -204,6 +204,8 @@ export default function RepoWikiPage() {
   // This prevents token exposure in server logs and browser history
   const [token, setToken] = useState<string>('');
   const [tokenChecked, setTokenChecked] = useState<boolean>(false);
+  // Use ref to track token synchronously (avoids React state update race conditions)
+  const tokenRef = useRef<string>('');
   
   useEffect(() => {
     // Try sessionStorage first (secure), fallback to URL params (legacy)
@@ -222,6 +224,7 @@ export default function RepoWikiPage() {
     
     if (storedToken) {
       setToken(storedToken);
+      tokenRef.current = storedToken;
       logger.info('Token loaded from sessionStorage', { tokenLength: storedToken.length });
       // Clear token from URL if it exists (for security)
       if (urlToken) {
@@ -232,6 +235,7 @@ export default function RepoWikiPage() {
     } else if (urlToken) {
       // Legacy support: use URL token but move it to sessionStorage
       setToken(urlToken);
+      tokenRef.current = urlToken;
       sessionStorage.setItem(tokenKey, urlToken);
       logger.info('Token loaded from URL and saved to sessionStorage', { tokenLength: urlToken.length });
       // Remove from URL
@@ -310,6 +314,7 @@ export default function RepoWikiPage() {
   useEffect(() => {
     if (token && token !== currentToken) {
       setCurrentToken(token);
+      tokenRef.current = token;
     }
   }, [token, currentToken]);
 
@@ -990,7 +995,8 @@ CRITICAL REMINDERS:
   }, [generatedPages, wikiStructure, saveCheckpoint, isResumingFromPartial]);
 
   // Determine the wiki structure from repository data
-  const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string) => {
+  // detectedBranch is passed directly to avoid race condition with effectiveRepoInfo state update
+  const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string, detectedBranch?: string | null) => {
     if (!owner || !repo) {
       setError('Invalid repository information. Owner and repo name are required.');
       setIsLoading(false);
@@ -1183,7 +1189,10 @@ IMPORTANT:
       };
 
       // Add tokens if available - use effectiveToken to handle race condition
-      addTokensToRequestBody(requestBody, effectiveToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, effectiveRepoInfo.branch || undefined, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
+      // Use detectedBranch (passed directly) or effectiveRepoInfo.branch as fallback
+      // This fixes the race condition where effectiveRepoInfo.branch state hasn't updated yet
+      const branchToUse = detectedBranch || effectiveRepoInfo.branch || undefined;
+      addTokensToRequestBody(requestBody, effectiveToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, branchToUse, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
 
       // Use WebSocket for communication
       let responseText = '';
@@ -1661,6 +1670,9 @@ IMPORTANT:
 
       let fileTreeData = '';
       let readmeContent = '';
+      // Track the detected branch to pass directly to determineWikiStructure
+      // This avoids race condition with effectiveRepoInfo state update
+      let detectedBranchForWiki: string | null = effectiveRepoInfo.branch || null;
 
       if (effectiveRepoInfo.type === 'local' && effectiveRepoInfo.localPath) {
         try {
@@ -1676,6 +1688,7 @@ IMPORTANT:
           readmeContent = data.readme;
           // For local repos, we can't determine the actual branch, so use 'main' as default
           setDefaultBranch('main');
+          detectedBranchForWiki = 'main';
         } catch (err) {
           throw err;
         }
@@ -1722,6 +1735,7 @@ IMPORTANT:
             console.log(`Found default branch: ${defaultBranchLocal}`);
             // Store the default branch in state
             setDefaultBranch(defaultBranchLocal || 'main');
+            detectedBranchForWiki = defaultBranchLocal || 'main';
             // Update effectiveRepoInfo.branch if not explicitly set, so cache uses correct branch name
             if (!effectiveRepoInfo.branch && defaultBranchLocal) {
               setEffectiveRepoInfo(prev => ({ ...prev, branch: defaultBranchLocal }));
@@ -1825,6 +1839,7 @@ IMPORTANT:
           console.log(`Found GitLab default branch: ${defaultBranchLocal}`);
           // Store the default branch in state
           setDefaultBranch(defaultBranchLocal);
+          detectedBranchForWiki = defaultBranchLocal;
           // Update effectiveRepoInfo.branch if not explicitly set, so cache uses correct branch name
           if (!effectiveRepoInfo.branch && defaultBranchLocal) {
             setEffectiveRepoInfo(prev => ({ ...prev, branch: defaultBranchLocal }));
@@ -1902,6 +1917,7 @@ IMPORTANT:
             defaultBranchLocal = projectData.mainbranch.name;
             // Store the default branch in state
             setDefaultBranch(defaultBranchLocal);
+            detectedBranchForWiki = defaultBranchLocal;
 
             const apiUrl = `https://api.bitbucket.org/2.0/repositories/${encodedRepoPath}/src/${defaultBranchLocal}/?recursive=true&per_page=100`;
             try {
@@ -1964,12 +1980,14 @@ IMPORTANT:
         try {
           setLoadingMessage(messages.loading?.fetchingStructure || 'Fetching Azure DevOps repository structure...');
 
-          // Use token directly - currentToken may be stale due to React state update timing
-          const effectiveToken = token || currentToken;
+          // Use tokenRef for synchronous access (avoids React state update race conditions)
+          // Fall back to state values for backward compatibility
+          const effectiveToken = tokenRef.current || token || currentToken;
           console.log('[AzureDevOps] Calling structure API with:', {
             repoUrl: effectiveRepoInfo.repoUrl,
             hasToken: !!effectiveToken,
             tokenLength: effectiveToken?.length || 0,
+            usingTokenRef: !!tokenRef.current,
             usingTokenState: !!token,
             usingCurrentToken: !!currentToken
           });
@@ -1998,6 +2016,7 @@ IMPORTANT:
           // Store the default branch in state (Azure DevOps typically uses 'main' or 'master')
           const detectedBranch = data.default_branch || 'main';
           setDefaultBranch(detectedBranch);
+          detectedBranchForWiki = detectedBranch;
           // Update effectiveRepoInfo.branch if not explicitly set, so cache uses correct branch name
           if (!effectiveRepoInfo.branch && detectedBranch) {
             setEffectiveRepoInfo(prev => ({ ...prev, branch: detectedBranch }));
@@ -2013,7 +2032,8 @@ IMPORTANT:
       }
 
       // Now determine the wiki structure
-      await determineWikiStructure(fileTreeData, readmeContent, owner, repo);
+      // Pass detectedBranchForWiki directly to avoid race condition with effectiveRepoInfo state update
+      await determineWikiStructure(fileTreeData, readmeContent, owner, repo, detectedBranchForWiki);
 
     } catch (error) {
       console.error('Error fetching repository structure:', error);
@@ -2184,6 +2204,8 @@ IMPORTANT:
 
     // Update token if provided
     if (newToken) {
+      // Update token ref synchronously (avoids race conditions)
+      tokenRef.current = newToken;
       // Update current token state
       setCurrentToken(newToken);
       // Also update the token state to trigger dependent useEffects
@@ -2568,12 +2590,13 @@ IMPORTANT:
 
         // If we reached here, either there was no cache, it was invalid, or an error occurred
         // For Azure DevOps, we need a token to fetch from the API
-        // Check both token (from sessionStorage/URL) and currentToken (may be updated via settings)
-        const effectiveToken = token || currentToken;
+        // Use tokenRef for synchronous access (avoids React state update race conditions)
+        const effectiveToken = tokenRef.current || token || currentToken;
         if (effectiveRepoInfo.type === 'azuredevops' && !effectiveToken) {
           logger.warn('Azure DevOps repo requires PAT but no token available', { 
             owner: effectiveRepoInfo.owner, 
             repo: effectiveRepoInfo.repo,
+            hasTokenRef: !!tokenRef.current,
             hasToken: !!token,
             hasCurrentToken: !!currentToken
           });
