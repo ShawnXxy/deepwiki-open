@@ -12,8 +12,10 @@
   },
   "loading": {
     "initializing": "初始化 Wiki 產生...",
+    "fetchingCache": "檢查 Wiki 快取...",
     "fetchingStructure": "取得儲存庫結構...",
-    "determiningStructure": "驗證 Wiki 結構...",
+    "determiningStructure": "分析程式碼並產生 Wiki 結構...",
+    "generatingPages": "產生 Wiki 內容...",
     "clearingCache": "清除伺服器快取...",
     "preparingDownload": "請稍候，我們正在準備您的下載..."
   },
@@ -110,7 +112,24 @@
     "relatedFiles": "相關檔案：",
     "relatedPages": "相關頁面：",
     "selectPagePrompt": "從導覽中選擇一個頁面以檢視其內容",
-    "askAboutRepo": "詢問關於此儲存庫的問題"
+    "askAboutRepo": "詢問關於此儲存庫的問題",
+    "pagesCompleted": "已完成 {completed} / {total} 頁",
+    "currentlyProcessing": "正在處理：",
+    "andMorePages": "...還有 {count} 頁"
+  },
+  "wikiProgress": {
+    "longProcessWarning": "此過程可能需要幾分鐘，具體取決於程式碼庫的大小。您可以瀏覽其他專案，稍後再回來查看。",
+    "minimize": "最小化",
+    "minimizeDescription": "在背景執行",
+    "generating": "正在生成Wiki...",
+    "completed": "生成完成",
+    "pagesCompleted": "{completed} / {total} 頁",
+    "restore": "還原",
+    "confirmClose": "Wiki生成仍在進行中。關閉此小部件不會停止生成。繼續？",
+    "completionTitle": "Wiki生成完成！",
+    "completionMessage": "{repo} 的Wiki已成功生成。",
+    "completionSubtext": "您想現在查看Wiki嗎？",
+    "viewWiki": "查看Wiki"
   },
   "nav": {
     "wikiProjects": "專案清單"

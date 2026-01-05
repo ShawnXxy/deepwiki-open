@@ -12,8 +12,10 @@
     },
     "loading": {
       "initializing": "위키 생성을 초기화하는 중...",
+      "fetchingCache": "위키 캐시 확인 중...",
       "fetchingStructure": "저장소 구조를 가져오는 중...",
-      "determiningStructure": "위키 구조를 결정하는 중...",
+      "determiningStructure": "코드베이스 분석 및 위키 구조 생성 중...",
+      "generatingPages": "위키 콘텐츠 생성 중...",
       "clearingCache": "서버 캐시를 지우는 중...",
       "preparingDownload": "다운로드를 준비 중입니다. 잠시만 기다려 주세요..."
     },
@@ -112,7 +114,24 @@
       "relatedFiles": "관련 파일:",
       "relatedPages": "관련 페이지:",
       "selectPagePrompt": "목록에서 페이지를 선택하여 내용을 확인하세요",
-      "askAboutRepo": "이 저장소에 대해 질문하기"
+      "askAboutRepo": "이 저장소에 대해 질문하기",
+      "pagesCompleted": "{completed}/{total}페이지 완료",
+      "currentlyProcessing": "현재 처리 중:",
+      "andMorePages": "...및 {count}개 더"
+    },
+    "wikiProgress": {
+      "longProcessWarning": "이 프로세스는 코드베이스의 크기에 따라 몇 분 정도 걸릴 수 있습니다. 다른 프로젝트를 둘러보고 나중에 다시 방문하세요.",
+      "minimize": "최소화",
+      "minimizeDescription": "백그라운드에서 실행",
+      "generating": "위키 생성 중...",
+      "completed": "생성 완료",
+      "pagesCompleted": "{completed} / {total} 페이지",
+      "restore": "복원",
+      "confirmClose": "위키 생성이 여전히 진행 중입니다. 이 위젯을 닫아도 생성이 중지되지 않습니다. 계속하시겠습니까?",
+      "completionTitle": "위키 생성 완료!",
+      "completionMessage": "{repo}의 위키가 성공적으로 생성되었습니다.",
+      "completionSubtext": "지금 위키를 보시겠습니까?",
+      "viewWiki": "위키 보기"
     },
     "nav": {
       "wikiProjects": "프로젝트 목록"

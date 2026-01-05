@@ -12,8 +12,10 @@
     },
     "loading": {
       "initializing": "Initialisation de la génération du wiki...",
+      "fetchingCache": "Vérification du cache wiki...",
       "fetchingStructure": "Récupération de la structure du dépôt...",
-      "determiningStructure": "Détermination de la structure du wiki...",
+      "determiningStructure": "Analyse du code et génération de la structure wiki...",
+      "generatingPages": "Génération du contenu wiki...",
       "clearingCache": "Nettoyage du cache serveur...",
       "preparingDownload": "Veuillez patienter pendant que nous préparons votre téléchargement..."
     },
@@ -121,7 +123,24 @@
       "relatedFiles": "Fichiers associés :",
       "relatedPages": "Pages associées :",
       "selectPagePrompt": "Sélectionnez une page dans la navigation pour en voir le contenu",
-      "askAboutRepo": "Poser des questions sur ce dépôt"
+      "askAboutRepo": "Poser des questions sur ce dépôt",
+      "pagesCompleted": "{completed} sur {total} pages complétées",
+      "currentlyProcessing": "En cours de traitement :",
+      "andMorePages": "...et {count} de plus"
+    },
+    "wikiProgress": {
+      "longProcessWarning": "Ce processus peut prendre plusieurs minutes selon la taille de votre base de code. N'hésitez pas à parcourir d'autres projets et à revenir plus tard.",
+      "minimize": "Réduire",
+      "minimizeDescription": "Exécuter en arrière-plan",
+      "generating": "Génération du wiki...",
+      "completed": "Génération terminée",
+      "pagesCompleted": "{completed} / {total} pages",
+      "restore": "Restaurer",
+      "confirmClose": "La génération du wiki est toujours en cours. Fermer ce widget n'arrêtera pas la génération. Continuer ?",
+      "completionTitle": "Génération du Wiki Terminée !",
+      "completionMessage": "Le wiki pour {repo} a été généré avec succès.",
+      "completionSubtext": "Souhaitez-vous voir le wiki maintenant ?",
+      "viewWiki": "Voir le Wiki"
     },
     "nav": {
       "wikiProjects": "Projets Wiki"

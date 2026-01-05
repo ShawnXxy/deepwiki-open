@@ -7,6 +7,7 @@ import ModelSelectionModal from '@/components/ModelSelectionModal';
 import ThemeToggle from '@/components/theme-toggle';
 import WikiTreeView from '@/components/WikiTreeView';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useWikiGeneration } from '@/contexts/WikiGenerationContext';
 import { RepoInfo } from '@/types/repoinfo';
 import { processCitations, generateFileUrl } from '@/utils/citationProcessor';
 import { detectCurrentBranch } from '@/utils/branchDetection';
@@ -14,9 +15,9 @@ import getRepoUrl from '@/utils/getRepoUrl';
 import logger from '@/utils/logger';
 import { extractUrlDomain, extractUrlPath } from '@/utils/urlDecoder';
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FaBitbucket, FaBookOpen, FaCog, FaComments, FaDownload, FaExclamationTriangle, FaFileExport, FaFolder, FaGithub, FaGitlab, FaHome, FaSync, FaTimes } from 'react-icons/fa';
+import { FaBitbucket, FaBookOpen, FaCog, FaComments, FaDownload, FaExclamationTriangle, FaFileExport, FaFolder, FaGithub, FaGitlab, FaHome, FaSync, FaTimes, FaMinusSquare } from 'react-icons/fa';
 // Define the WikiSection and WikiStructure types directly in this file
 // since the imported types don't have the sections and rootSections properties
 interface WikiSection {
@@ -190,6 +191,10 @@ export default function RepoWikiPage() {
   // Get route parameters and search params
   const params = useParams();
   const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // Wiki generation context for minimized progress
+  const { progress, setProgress, isMinimized, minimize: minimizeProgress, restore, setShowCompletionNotification, setIsGeneratingInBackground, isGeneratingInBackground } = useWikiGeneration();
 
   // Extract owner and repo from route params
   const owner = params.owner as string;
@@ -283,6 +288,7 @@ export default function RepoWikiPage() {
 
   // State variables
   const [isLoading, setIsLoading] = useState(true);
+  const [isGenerationStarted, setIsGenerationStarted] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string | undefined>(
     messages.loading?.initializing || 'Initializing wiki generation...'
   );
@@ -341,6 +347,17 @@ export default function RepoWikiPage() {
   
   // Track if we're resuming from a partial cache
   const [isResumingFromPartial, setIsResumingFromPartial] = useState(false);
+  
+  // Ref to capture latest progress value for use in useEffect without causing re-triggers
+  const progressRef = useRef(progress);
+  useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
+
+  // Sync isComprehensiveView when URL params change (useState only uses initial value once)
+  useEffect(() => {
+    setIsComprehensiveView(isComprehensiveParam);
+  }, [isComprehensiveParam]);
 
   // Create a flag to ensure the effect only runs once
   const effectRan = React.useRef(false);
@@ -357,6 +374,43 @@ export default function RepoWikiPage() {
   // Default branch state
   const [defaultBranch, setDefaultBranch] = useState<string>('main');
 
+  // Show page when user navigates back (clear background flag)
+  useEffect(() => {
+    // When component mounts, clear background flag and paused state
+    if (isGeneratingInBackground) {
+      setIsGeneratingInBackground(false);
+    }
+    
+    // If there's progress for this repo that's paused, clear the paused flag
+    if (progress && 
+        progress.owner === owner && 
+        progress.repo === repo && 
+        progress.isPaused) {
+      console.log('[WikiPage] Clearing paused flag on mount');
+      setProgress({
+        ...progress,
+        isPaused: false,
+      });
+    }
+    
+    // When component unmounts while generating, mark as paused
+    return () => {
+      // Use ref to get latest progress value without adding to dependencies
+      const currentProgress = progressRef.current;
+      if (currentProgress && 
+          currentProgress.isGenerating && 
+          !currentProgress.isPaused &&
+          currentProgress.owner === owner && 
+          currentProgress.repo === repo) {
+        console.log('[WikiPage] Component unmounting during generation - marking as paused');
+        setProgress({
+          ...currentProgress,
+          isPaused: true,
+        });
+      }
+    };
+  }, [isGeneratingInBackground, setIsGeneratingInBackground, setProgress, owner, repo]);
+
   // Memoize repo info to avoid triggering updates in callbacks
 
   // Add useEffect to handle scroll reset
@@ -367,6 +421,97 @@ export default function RepoWikiPage() {
       wikiContent.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [currentPageId]);
+
+  // Track wiki generation progress and update global context
+  // Start tracking as soon as generation begins (when fetchRepositoryStructure is called)
+  // This tracks the entire process: fetching repo, embedding, determining structure, generating pages
+  useEffect(() => {
+    if (isLoading && isGenerationStarted) {
+      // Use clean URL without query params for navigation
+      const wikiUrl = `/${owner}/${repo}`;
+      
+      // Calculate progress based on wiki structure if available
+      let completedPages = 0;
+      let totalPages = 0;
+      
+      if (wikiStructure) {
+        totalPages = wikiStructure.pages.length;
+        // Count pages with actual content (not loading or error)
+        completedPages = wikiStructure.pages.filter(page => {
+          const pageContent = generatedPages[page.id]?.content;
+          return pageContent && pageContent !== 'Loading...' && !pageContent.startsWith('Error');
+        }).length;
+      }
+      
+      // Only update if values actually changed to avoid infinite loop
+      if (!progress || 
+          progress.owner !== owner || 
+          progress.repo !== repo ||
+          progress.completedPages !== completedPages ||
+          progress.totalPages !== totalPages ||
+          !progress.isGenerating ||
+          progress.isPaused) {
+        // When resuming (progress exists for this repo), preserve the comprehensive value
+        // Don't overwrite with isComprehensiveView which may not have synced yet
+        const comprehensiveValue = (progress?.owner === owner && progress?.repo === repo) 
+          ? progress.comprehensive 
+          : isComprehensiveView;
+        
+        setProgress({
+          owner,
+          repo,
+          repoType,
+          repoUrl: effectiveRepoInfo.repoUrl ?? undefined,
+          totalPages,
+          completedPages,
+          isGenerating: true,
+          isPaused: false,
+          currentPageId,
+          wikiUrl,
+          language,
+          branch: effectiveRepoInfo.branch,
+          comprehensive: comprehensiveValue,
+        });
+      }
+    }
+  }, [isLoading, isGenerationStarted, wikiStructure, generatedPages, currentPageId, owner, repo, repoType, language, effectiveRepoInfo.repoUrl, effectiveRepoInfo.branch, searchParams, setProgress, progress]);
+
+  // Handle wiki generation completion
+  useEffect(() => {
+    if (!isLoading && wikiStructure && progress && progress.isGenerating && progress.owner === owner && progress.repo === repo) {
+      // Verify all pages actually have content before marking as complete
+      const allPagesComplete = wikiStructure.pages.every(page => {
+        const pageContent = generatedPages[page.id]?.content;
+        return pageContent && pageContent !== 'Loading...' && !pageContent.startsWith('Error');
+      });
+      
+      if (allPagesComplete) {
+        console.log('All pages complete - marking generation as finished');
+        // Wiki generation completed - update final state
+        setProgress({
+          ...progress,
+          completedPages: wikiStructure.pages.length,
+          isGenerating: false,
+        });
+        
+        // Clear generation started flag
+        setIsGenerationStarted(false);
+        
+        // Show completion notification if minimized
+        if (isMinimized) {
+          setShowCompletionNotification(true);
+        }
+      }
+    }
+  }, [isLoading, wikiStructure, generatedPages, progress, owner, repo, isMinimized, setProgress, setShowCompletionNotification]);
+
+  // Handle restore from minimized state - clear progress when viewing completed wiki
+  useEffect(() => {
+    if (!isMinimized && progress && progress.owner === owner && progress.repo === repo && !progress.isGenerating && !isLoading) {
+      // Clear progress since we're viewing the completed wiki
+      setProgress(null);
+    }
+  }, [isMinimized, progress, owner, repo, isLoading, setProgress]);
 
   // Fetch authentication status on component mount
   useEffect(() => {
@@ -1506,6 +1651,10 @@ IMPORTANT:
       // Set the request in progress flag
       setRequestInProgress(true);
 
+      // MARK: Wiki generation truly starts here (not from complete cache)
+      // This enables progress tracking from the very beginning
+      setIsGenerationStarted(true);
+
       // Update loading state
       setIsLoading(true);
       setLoadingMessage(messages.loading?.fetchingStructure || 'Fetching repository structure...');
@@ -2063,6 +2212,7 @@ IMPORTANT:
     setPagesInProgress(new Set());
     setError(null);
     setEmbeddingError(false); // Reset embedding error state
+    setIsGenerationStarted(false); // Will be set when fetchRepositoryStructure is called
     setIsLoading(true); // Set loading state for refresh
     setLoadingMessage(messages.loading?.initializing || 'Initializing wiki generation...');
 
@@ -2089,6 +2239,19 @@ IMPORTANT:
     if (!tokenChecked) {
       logger.debug('Waiting for token check to complete before wiki init');
       return;
+    }
+
+    // Clear paused state if resuming (user navigated back to this page)
+    const currentProgress = progressRef.current;
+    if (currentProgress && 
+        currentProgress.owner === owner && 
+        currentProgress.repo === repo && 
+        currentProgress.isPaused) {
+      console.log('[WikiPage] Clearing paused state for resumed wiki');
+      setProgress({
+        ...currentProgress,
+        isPaused: false,
+      });
     }
 
     if (effectRan.current === false) {
@@ -2295,12 +2458,97 @@ IMPORTANT:
                   return; // Display partial cache without trying to resume
                 }
                 
-                // Don't set isLoading to false - continue to fetch and generate missing pages
+                // Don't set isLoading to false - continue to generate missing pages
                 setLoadingMessage(`Resuming wiki generation (${pagesWithContent}/${totalPages} pages cached)...`);
-                // Continue to fetchRepositoryStructure to generate missing pages
+                
+                // Identify pages that need to be generated
+                const pagesToGenerate = cachedStructure.pages.filter((page: WikiPage) => {
+                  const cachedPage = cachedData.generated_pages[page.id];
+                  return !cachedPage || !cachedPage.content || cachedPage.content === 'Loading...' || cachedPage.content.startsWith('Error');
+                });
+                
+                console.log(`[Partial Cache Resume] ${pagesToGenerate.length} pages need to be generated`);
+                
+                // Mark generation as started for progress tracking (partial cache needs generation)
+                setIsGenerationStarted(true);
+                
+                // Start generating missing pages using the existing generation queue
+                if (pagesToGenerate.length > 0) {
+                  // Use the existing page generation logic (which will be triggered by the normal flow)
+                  // Just need to ensure the pages are marked for generation
+                  console.log('[Partial Cache Resume] Missing pages will be generated:', pagesToGenerate.map((p: WikiPage) => p.title));
+                  
+                  // Mark pages as in progress for progress bar display
+                  setPagesInProgress(new Set(pagesToGenerate.map((p: WikiPage) => p.id)));
+                  
+                  // Process pages with controlled concurrency (same as normal flow)
+                  const MAX_CONCURRENT = 1;
+                  const MAX_RETRIES = 2;
+                  const RETRY_DELAY_BASE = 5000;
+                  
+                  const queue: { page: WikiPage; retries: number }[] = pagesToGenerate.map((p: WikiPage) => ({ page: p, retries: 0 }));
+                  let activeRequests = 0;
+                  const failedPages: WikiPage[] = [];
+                  
+                  const processQueue = () => {
+                    while (queue.length > 0 && activeRequests < MAX_CONCURRENT) {
+                      const item = queue.shift();
+                      if (item) {
+                        const { page, retries } = item;
+                        activeRequests++;
+                        console.log(`[Partial Cache Resume] Generating page: ${page.title}, active: ${activeRequests}, remaining: ${queue.length}`);
+                        
+                        generatePageContent(page, owner, repo)
+                          .then((result: { success: boolean; error?: string } | void) => {
+                            activeRequests--;
+                            
+                            if (result?.success === false) {
+                              if (retries < MAX_RETRIES) {
+                                const retryDelay = RETRY_DELAY_BASE * Math.pow(2, retries);
+                                console.warn(`[Partial Cache Resume] Page ${page.title} failed, retrying in ${retryDelay / 1000}s`);
+                                setTimeout(() => {
+                                  queue.push({ page, retries: retries + 1 });
+                                  if (activeRequests < MAX_CONCURRENT) {
+                                    processQueue();
+                                  }
+                                }, retryDelay);
+                              } else {
+                                console.error(`[Partial Cache Resume] Page ${page.title} failed after max retries`);
+                                failedPages.push(page);
+                              }
+                            }
+                            
+                            // Check if all work is done
+                            if (queue.length === 0 && activeRequests === 0) {
+                              if (failedPages.length > 0) {
+                                console.warn(`[Partial Cache Resume] Completed with ${failedPages.length} failures`);
+                              } else {
+                                console.log('[Partial Cache Resume] All pages generated successfully');
+                              }
+                              setIsLoading(false);
+                              setLoadingMessage(undefined);
+                            } else if (queue.length > 0 && activeRequests < MAX_CONCURRENT) {
+                              processQueue();
+                            }
+                          });
+                      }
+                    }
+                  };
+                  
+                  // Start processing
+                  processQueue();
+                } else {
+                  // No pages to generate (shouldn't happen for partial cache, but handle it)
+                  setIsLoading(false);
+                  setLoadingMessage(undefined);
+                }
+                
+                cacheLoadedSuccessfully.current = false; // Allow checkpoints to be saved
+                return; // Don't call fetchRepositoryStructure for partial cache
               } else {
                 // Complete cache - just display it
                 setIsLoading(false);
+                setIsGenerationStarted(false); // No generation needed for complete cache
                 setEmbeddingError(false); 
                 setLoadingMessage(undefined);
                 cacheLoadedSuccessfully.current = true;
@@ -2349,7 +2597,8 @@ IMPORTANT:
 
     // Clean up function for this effect is not strictly necessary for loadData,
     // but keeping the main unmount cleanup in the other useEffect
-  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView, token, currentToken, tokenChecked]);
+  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView, token, currentToken, tokenChecked, owner, repo]);
+  // Note: progress and wikiStructure deliberately excluded to prevent re-triggering when resuming from cache
 
   // Save wiki to server-side cache when generation is complete
   useEffect(() => {
@@ -2440,8 +2689,8 @@ IMPORTANT:
       </header>
 
       <main className={`flex-1 mx-auto overflow-hidden ${wikiStructure && !isChatPanelCollapsed ? 'w-full px-4' : 'max-w-[90%] xl:max-w-[1400px]'}`}>
-        {isLoading ? (
-          <div className="flex flex-col items-center justify-center p-8 bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese">
+        {isLoading && !isMinimized ? (
+          <div className="flex flex-col items-center justify-center p-8 bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese max-w-2xl mx-auto">
             <div className="relative mb-6">
               <div className="absolute -inset-4 bg-[var(--accent-primary)]/10 rounded-full blur-md animate-pulse"></div>
               <div className="relative flex items-center justify-center">
@@ -2454,6 +2703,16 @@ IMPORTANT:
               {loadingMessage || messages.common?.loading || 'Loading...'}
               {isExporting && (messages.loading?.preparingDownload || ' Please wait while we prepare your download...')}
             </p>
+
+            {/* Long process warning message */}
+            {wikiStructure && (
+              <div className="w-full max-w-md mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-md">
+                <p className="text-xs text-[var(--foreground)] text-center">
+                  {messages.wikiProgress?.longProcessWarning || 
+                    'This process may take several minutes depending on the size of your codebase. Feel free to browse other projects and come back later.'}
+                </p>
+              </div>
+            )}
 
             {/* Progress bar for page generation */}
             {wikiStructure && (
@@ -2475,6 +2734,25 @@ IMPORTANT:
                             .replace('{total}', wikiStructure.pages.length.toString())
                         : `${wikiStructure.pages.length - pagesInProgress.size} of ${wikiStructure.pages.length} pages completed`}
                 </p>
+
+                {/* Minimize button */}
+                <div className="mt-4 flex justify-center">
+                  <button
+                    onClick={() => {
+                      // Just minimize - hides the loading overlay, shows wiki content underneath
+                      // Generation continues in background (component stays mounted)
+                      // No navigation needed - we're already on the wiki page
+                      minimizeProgress();
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-[var(--background)] text-[var(--foreground)] rounded-md hover:bg-[var(--background)]/80 transition-colors border border-[var(--border-color)] text-sm"
+                  >
+                    <FaMinusSquare className="text-sm" />
+                    {messages.wikiProgress?.minimize || 'Minimize'}
+                    <span className="text-xs text-[var(--muted)] ml-1">
+                      ({messages.wikiProgress?.minimizeDescription || 'Run in background'})
+                    </span>
+                  </button>
+                </div>
 
                 {/* Show list of in-progress pages */}
                 {pagesInProgress.size > 0 && (

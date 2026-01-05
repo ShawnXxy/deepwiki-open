@@ -12,8 +12,10 @@
   },
   "loading": {
     "initializing": "Đang khởi tạo wiki...",
+    "fetchingCache": "Đang kiểm tra bộ nhớ đệm wiki...",
     "fetchingStructure": "Đang lấy cấu trúc repository...",
-    "determiningStructure": "Đang xác định cấu trúc wiki...",
+    "determiningStructure": "Đang phân tích mã nguồn và tạo cấu trúc wiki...",
+    "generatingPages": "Đang tạo nội dung wiki...",
     "clearingCache": "Đang xóa bộ nhớ đệm máy chủ...",
     "preparingDownload": "Đang tải! Vui lòng chờ..."
   },
@@ -112,7 +114,24 @@
     "relatedFiles": "Tệp liên quan:",
     "relatedPages": "Trang liên quan:",
     "selectPagePrompt": "Chọn một trang từ thanh điều hướng để xem nội dung của nó",
-    "askAboutRepo": "Hỏi về repository này"
+    "askAboutRepo": "Hỏi về repository này",
+    "pagesCompleted": "{completed} trong số {total} trang đã hoàn thành",
+    "currentlyProcessing": "Hiện đang xử lý:",
+    "andMorePages": "...và {count} trang nữa"
+  },
+  "wikiProgress": {
+    "longProcessWarning": "Quá trình này có thể mất vài phút tùy thuộc vào kích thước cơ sở mã của bạn. Bạn có thể duyệt qua các dự án khác và quay lại sau.",
+    "minimize": "Thu nhỏ",
+    "minimizeDescription": "Chạy nền",
+    "generating": "Đang tạo wiki...",
+    "completed": "Tạo hoàn tất",
+    "pagesCompleted": "{completed} / {total} trang",
+    "restore": "Khôi phục",
+    "confirmClose": "Việc tạo wiki vẫn đang trong tiến trình. Đóng widget này sẽ không dừng việc tạo. Tiếp tục?",
+    "completionTitle": "Tạo Wiki Hoàn Tất!",
+    "completionMessage": "Wiki cho {repo} đã được tạo thành công.",
+    "completionSubtext": "Bạn có muốn xem wiki ngay bây giờ không?",
+    "viewWiki": "Xem Wiki"
   },
   "nav": {
     "wikiProjects": "Danh sách dự án"

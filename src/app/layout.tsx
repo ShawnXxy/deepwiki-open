@@ -2,6 +2,10 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "next-themes";
 import { LanguageProvider } from "@/contexts/LanguageContext";
+import { WikiGenerationProvider } from "@/contexts/WikiGenerationContext";
+import FloatingProgressWidget from "@/components/FloatingProgressWidget";
+import CompletionNotificationModal from "@/components/CompletionNotificationModal";
+import BackgroundGenerationManager from "@/components/BackgroundGenerationManager";
 
 // Using system fonts for better Docker build compatibility (no network fetch needed)
 // System font stacks provide good cross-platform support including CJK characters
@@ -21,7 +25,12 @@ export default function RootLayout({
       <body className="antialiased">
         <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>
           <LanguageProvider>
-            {children}
+            <WikiGenerationProvider>
+              <BackgroundGenerationManager />
+              {children}
+              <FloatingProgressWidget />
+              <CompletionNotificationModal />
+            </WikiGenerationProvider>
           </LanguageProvider>
         </ThemeProvider>
       </body>
