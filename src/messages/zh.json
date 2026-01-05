@@ -12,8 +12,10 @@
   },
   "loading": {
     "initializing": "初始化Wiki生成...",
+    "fetchingCache": "检查Wiki缓存...",
     "fetchingStructure": "获取仓库结构...",
-    "determiningStructure": "验证Wiki结构...",
+    "determiningStructure": "分析代码库并生成Wiki结构...",
+    "generatingPages": "生成Wiki内容...",
     "clearingCache": "清除服务器缓存...",
     "preparingDownload": "请等待，我们正在准备您的下载..."
   },
@@ -112,7 +114,24 @@
     "relatedFiles": "相关文件：",
     "relatedPages": "相关页面：",
     "selectPagePrompt": "从导航中选择一个页面以查看其内容",
-    "askAboutRepo": "询问关于此仓库的问题"
+    "askAboutRepo": "询问关于此仓库的问题",
+    "pagesCompleted": "已完成 {completed} / {total} 页",
+    "currentlyProcessing": "正在处理：",
+    "andMorePages": "...还有 {count} 页"
+  },
+  "wikiProgress": {
+    "longProcessWarning": "此过程可能需要几分钟，具体取决于代码库的大小。您可以浏览其他项目，稍后再回来查看。",
+    "minimize": "最小化",
+    "minimizeDescription": "在后台运行",
+    "generating": "正在生成Wiki...",
+    "completed": "生成完成",
+    "pagesCompleted": "{completed} / {total} 页",
+    "restore": "恢复",
+    "confirmClose": "Wiki生成仍在进行中。关闭此小部件不会停止生成。继续？",
+    "completionTitle": "Wiki生成完成！",
+    "completionMessage": "{repo} 的Wiki已成功生成。",
+    "completionSubtext": "您想现在查看Wiki吗？",
+    "viewWiki": "查看Wiki"
   },
   "nav": {
     "wikiProjects": "项目列表"

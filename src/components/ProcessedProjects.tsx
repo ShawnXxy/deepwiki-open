@@ -3,19 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { FaTimes, FaTh, FaList, FaBookOpen, FaFileAlt } from 'react-icons/fa';
-
-// Interface should match the structure from the API
-interface ProcessedProject {
-  id: string;
-  owner: string;
-  repo: string;
-  name: string;
-  repo_type: string;
-  submittedAt: number;
-  language: string;
-  comprehensive: boolean;
-  branch?: string;  // Branch name ("default" for legacy caches)
-}
+import { ProcessedProject } from '@/hooks/useProcessedProjects';
 
 interface ProcessedProjectsProps {
   showHeader?: boolean;
@@ -23,6 +11,12 @@ interface ProcessedProjectsProps {
   maxItems?: number;
   className?: string;
   messages?: Record<string, Record<string, string>>; // Translation messages with proper typing
+  /** Pre-fetched projects - if provided, component won't fetch its own data */
+  projects?: ProcessedProject[];
+  /** Loading state from parent - only used when projects prop is provided */
+  isLoading?: boolean;
+  /** Callback when a project is deleted - used to update parent state */
+  onProjectDeleted?: (projectId: string) => void;
 }
 
 export default function ProcessedProjects({ 
@@ -30,14 +24,30 @@ export default function ProcessedProjects({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   maxItems, 
   className = "",
-  messages 
+  messages,
+  projects: externalProjects,
+  isLoading: externalIsLoading,
+  onProjectDeleted
 }: ProcessedProjectsProps) {
-  const [projects, setProjects] = useState<ProcessedProject[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [internalProjects, setInternalProjects] = useState<ProcessedProject[]>([]);
+  const [internalIsLoading, setInternalIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
   const [wikiTypeFilter, setWikiTypeFilter] = useState<'all' | 'comprehensive' | 'concise'>('all');
+
+  // Use external projects if provided, otherwise use internal state
+  const projects = externalProjects ?? internalProjects;
+  const isLoading = externalProjects !== undefined ? (externalIsLoading ?? false) : internalIsLoading;
+  
+  // Function to update projects after deletion
+  const removeProject = (projectId: string) => {
+    if (onProjectDeleted) {
+      onProjectDeleted(projectId);
+    } else {
+      setInternalProjects(prev => prev.filter(p => p.id !== projectId));
+    }
+  };
 
   // Default messages fallback
   const defaultMessages = {
@@ -58,9 +68,15 @@ export default function ProcessedProjects({
     return defaultMessages[key as keyof typeof defaultMessages] || key;
   };
 
+  // Only fetch if external projects are not provided
   useEffect(() => {
+    // Skip fetching if projects are provided externally
+    if (externalProjects !== undefined) {
+      return;
+    }
+
     const fetchProjects = async () => {
-      setIsLoading(true);
+      setInternalIsLoading(true);
       setError(null);
       try {
         const response = await fetch('/api/wiki/projects');
@@ -71,19 +87,19 @@ export default function ProcessedProjects({
         if (data.error) {
           throw new Error(data.error);
         }
-        setProjects(data as ProcessedProject[]);
+        setInternalProjects(data as ProcessedProject[]);
       } catch (e: unknown) {
         console.error("Failed to load projects from API:", e);
         const message = e instanceof Error ? e.message : "An unknown error occurred.";
         setError(message);
-        setProjects([]);
+        setInternalProjects([]);
       } finally {
-        setIsLoading(false);
+        setInternalIsLoading(false);
       }
     };
 
     fetchProjects();
-  }, []);
+  }, [externalProjects]);
 
   // Filter projects based on search query and wiki type
   const filteredProjects = useMemo(() => {
@@ -138,7 +154,7 @@ export default function ProcessedProjects({
         const errorBody = await response.json().catch(() => ({ error: response.statusText }));
         throw new Error(errorBody.error || response.statusText);
       }
-      setProjects(prev => prev.filter(p => p.id !== project.id));
+      removeProject(project.id);
     } catch (e: unknown) {
       console.error('Failed to delete project:', e);
       alert(`Failed to delete project: ${e instanceof Error ? e.message : 'Unknown error'}`);

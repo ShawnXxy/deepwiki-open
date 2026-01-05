@@ -42,14 +42,17 @@ import uvicorn
 # Import Azure configuration functions
 from backend.config import is_azure_openai_configured
 
-# Check for Azure OpenAI configuration
+# Check for Azure OpenAI configuration (only log in worker process, not reloader parent)
 use_azure_openai = is_azure_openai_configured()
 
-if use_azure_openai:
-    logger.info("Azure OpenAI configuration detected. Using Azure OpenAI for text generation and embeddings.")
-else:
-    logger.error("Azure OpenAI is not configured. Please set the required environment variables.")
-    logger.error("Required: AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_VERSION")
+# Only log startup messages in the actual worker process, not the reloader parent
+# The reloader parent has __name__ == "__main__", worker has __name__ == "backend.main"
+if __name__ != "__main__":
+    if use_azure_openai:
+        logger.info("Azure OpenAI configuration detected. Using Azure OpenAI for text generation and embeddings.")
+    else:
+        logger.error("Azure OpenAI is not configured. Please set the required environment variables.")
+        logger.error("Required: AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_VERSION")
 
 # Import the app at module level for uvicorn to find it
 from backend.api import app

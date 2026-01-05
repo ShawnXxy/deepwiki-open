@@ -12,8 +12,10 @@
   },
   "loading": {
     "initializing": "Initializing wiki generation...",
+    "fetchingCache": "Checking for cached wiki...",
     "fetchingStructure": "Fetching repository structure...",
-    "determiningStructure": "Determining wiki structure...",
+    "determiningStructure": "Analyzing codebase and generating wiki structure...",
+    "generatingPages": "Generating wiki content...",
     "clearingCache": "Clearing server cache...",
     "preparingDownload": "Please wait while we prepare your download..."
   },
@@ -121,7 +123,28 @@
     "relatedFiles": "Related Files:",
     "relatedPages": "Related Pages:",
     "selectPagePrompt": "Select a page from the navigation to view its content",
-    "askAboutRepo": "Ask questions about this repository"
+    "askAboutRepo": "Ask questions about this repository",
+    "pagesCompleted": "{completed} of {total} pages completed",
+    "currentlyProcessing": "Currently processing:",
+    "andMorePages": "...and {count} more"
+  },
+  "wikiProgress": {
+    "longProcessWarning": "This process may take some time depending on the size of your codebase.",
+    "minimize": "Minimize",
+    "minimizeDescription": "Minimize to view generated content",
+    "generating": "Generating wiki...",
+    "generatingBackground": "Wiki generation running in background",
+    "paused": "Generation paused",
+    "pausedNotice": "Generation paused - click Resume to continue",
+    "completed": "Generation completed",
+    "pagesCompleted": "{completed} / {total} pages",
+    "restore": "Restore",
+    "resume": "Resume Generation",
+    "confirmClose": "Wiki generation is still in progress. Closing this widget will not stop the generation. Continue?",
+    "completionTitle": "Wiki Generation Complete!",
+    "completionMessage": "Wiki for {repo} has been successfully generated.",
+    "completionSubtext": "Would you like to view the wiki now?",
+    "viewWiki": "View Wiki"
   },
   "nav": {
     "wikiProjects": "Wiki Projects"

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
-interface ProcessedProject {
+export interface ProcessedProject {
   id: string;
   owner: string;
   repo: string;
@@ -44,5 +44,10 @@ export function useProcessedProjects() {
     fetchProjects();
   }, []);
 
-  return { projects, isLoading, error };
+  // Helper to remove a project from the list without re-fetching
+  const removeProject = useCallback((projectId: string) => {
+    setProjects(prev => prev.filter(p => p.id !== projectId));
+  }, []);
+
+  return { projects, isLoading, error, removeProject };
 }

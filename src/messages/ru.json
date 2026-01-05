@@ -12,8 +12,10 @@
   },
   "loading": {
     "initializing": "Инициализация генерации wiki...",
+    "fetchingCache": "Проверка кэша wiki...",
     "fetchingStructure": "Получение структуры репозитория...",
-    "determiningStructure": "Определение структуры wiki...",
+    "determiningStructure": "Анализ кода и генерация структуры wiki...",
+    "generatingPages": "Генерация содержимого wiki...",
     "clearingCache": "Очистка кеша сервера...",
     "preparingDownload": "Пожалуйста, подождите, идет подготовка загрузки..."
   },
@@ -121,7 +123,24 @@
     "relatedFiles": "Связанные файлы:",
     "relatedPages": "Связанные страницы:",
     "selectPagePrompt": "Выберите страницу в навигации для просмотра её содержимого",
-    "askAboutRepo": "Задайте вопросы об этом репозитории"
+    "askAboutRepo": "Задать вопросы об этом репозитории",
+    "pagesCompleted": "{completed} из {total} страниц выполнено",
+    "currentlyProcessing": "В настоящее время обрабатывается:",
+    "andMorePages": "...и еще {count}"
+  },
+  "wikiProgress": {
+    "longProcessWarning": "Этот процесс может занять несколько минут в зависимости от размера вашей кодовой базы. Вы можете просматривать другие проекты и вернуться позже.",
+    "minimize": "Свернуть",
+    "minimizeDescription": "Запустить в фоновом режиме",
+    "generating": "Создание вики...",
+    "completed": "Создание завершено",
+    "pagesCompleted": "{completed} / {total} страниц",
+    "restore": "Восстановить",
+    "confirmClose": "Создание вики все еще выполняется. Закрытие этого виджета не остановит создание. Продолжить?",
+    "completionTitle": "Создание вики завершено!",
+    "completionMessage": "Вики для {repo} успешно создана.",
+    "completionSubtext": "Хотите просмотреть вики сейчас?",
+    "viewWiki": "Просмотреть вики"
   },
   "nav": {
     "wikiProjects": "Проекты Wiki"

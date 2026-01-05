@@ -36,6 +36,9 @@ from backend.promptstore.wiki_structure import (
 
 from backend.promptstore.wiki_page import WIKI_PAGE_CONTENT_PROMPT
 
+# Chat system prompt builder
+from backend.promptstore.chat_system import build_chat_system_prompt
+
 __all__ = [
     # RAG
     "RAG_SYSTEM_PROMPT",
@@ -50,4 +53,6 @@ __all__ = [
     "WIKI_STRUCTURE_PROMPT",
     "WIKI_STRUCTURE_CONCISE_PROMPT",
     "WIKI_PAGE_CONTENT_PROMPT",
+    # Chat system prompt builder
+    "build_chat_system_prompt",
 ]

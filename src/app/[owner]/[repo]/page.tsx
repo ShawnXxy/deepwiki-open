@@ -7,6 +7,7 @@ import ModelSelectionModal from '@/components/ModelSelectionModal';
 import ThemeToggle from '@/components/theme-toggle';
 import WikiTreeView from '@/components/WikiTreeView';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useWikiGeneration } from '@/contexts/WikiGenerationContext';
 import { RepoInfo } from '@/types/repoinfo';
 import { processCitations, generateFileUrl } from '@/utils/citationProcessor';
 import { detectCurrentBranch } from '@/utils/branchDetection';
@@ -14,9 +15,9 @@ import getRepoUrl from '@/utils/getRepoUrl';
 import logger from '@/utils/logger';
 import { extractUrlDomain, extractUrlPath } from '@/utils/urlDecoder';
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FaBitbucket, FaBookOpen, FaCog, FaComments, FaDownload, FaExclamationTriangle, FaFileExport, FaFolder, FaGithub, FaGitlab, FaHome, FaSync, FaTimes } from 'react-icons/fa';
+import { FaBitbucket, FaBookOpen, FaCog, FaComments, FaDownload, FaExclamationTriangle, FaFileExport, FaFolder, FaGithub, FaGitlab, FaHome, FaSync, FaTimes, FaMinusSquare } from 'react-icons/fa';
 // Define the WikiSection and WikiStructure types directly in this file
 // since the imported types don't have the sections and rootSections properties
 interface WikiSection {
@@ -190,6 +191,10 @@ export default function RepoWikiPage() {
   // Get route parameters and search params
   const params = useParams();
   const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // Wiki generation context for minimized progress
+  const { progress, setProgress, isMinimized, minimize: minimizeProgress, restore, setShowCompletionNotification, setIsGeneratingInBackground, isGeneratingInBackground } = useWikiGeneration();
 
   // Extract owner and repo from route params
   const owner = params.owner as string;
@@ -199,6 +204,8 @@ export default function RepoWikiPage() {
   // This prevents token exposure in server logs and browser history
   const [token, setToken] = useState<string>('');
   const [tokenChecked, setTokenChecked] = useState<boolean>(false);
+  // Use ref to track token synchronously (avoids React state update race conditions)
+  const tokenRef = useRef<string>('');
   
   useEffect(() => {
     // Try sessionStorage first (secure), fallback to URL params (legacy)
@@ -217,6 +224,7 @@ export default function RepoWikiPage() {
     
     if (storedToken) {
       setToken(storedToken);
+      tokenRef.current = storedToken;
       logger.info('Token loaded from sessionStorage', { tokenLength: storedToken.length });
       // Clear token from URL if it exists (for security)
       if (urlToken) {
@@ -227,6 +235,7 @@ export default function RepoWikiPage() {
     } else if (urlToken) {
       // Legacy support: use URL token but move it to sessionStorage
       setToken(urlToken);
+      tokenRef.current = urlToken;
       sessionStorage.setItem(tokenKey, urlToken);
       logger.info('Token loaded from URL and saved to sessionStorage', { tokenLength: urlToken.length });
       // Remove from URL
@@ -283,10 +292,12 @@ export default function RepoWikiPage() {
 
   // State variables
   const [isLoading, setIsLoading] = useState(true);
+  const [isGenerationStarted, setIsGenerationStarted] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState<string | undefined>(
     messages.loading?.initializing || 'Initializing wiki generation...'
   );
   const [error, setError] = useState<string | null>(null);
+  const [partialCacheMessage, setPartialCacheMessage] = useState<string | null>(null); // Info banner for partial cache
   const [wikiStructure, setWikiStructure] = useState<WikiStructure | undefined>();
   const [currentPageId, setCurrentPageId] = useState<string | undefined>();
   const [generatedPages, setGeneratedPages] = useState<Record<string, WikiPage>>({});
@@ -303,6 +314,7 @@ export default function RepoWikiPage() {
   useEffect(() => {
     if (token && token !== currentToken) {
       setCurrentToken(token);
+      tokenRef.current = token;
     }
   }, [token, currentToken]);
 
@@ -340,6 +352,17 @@ export default function RepoWikiPage() {
   
   // Track if we're resuming from a partial cache
   const [isResumingFromPartial, setIsResumingFromPartial] = useState(false);
+  
+  // Ref to capture latest progress value for use in useEffect without causing re-triggers
+  const progressRef = useRef(progress);
+  useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
+
+  // Sync isComprehensiveView when URL params change (useState only uses initial value once)
+  useEffect(() => {
+    setIsComprehensiveView(isComprehensiveParam);
+  }, [isComprehensiveParam]);
 
   // Create a flag to ensure the effect only runs once
   const effectRan = React.useRef(false);
@@ -356,6 +379,43 @@ export default function RepoWikiPage() {
   // Default branch state
   const [defaultBranch, setDefaultBranch] = useState<string>('main');
 
+  // Show page when user navigates back (clear background flag)
+  useEffect(() => {
+    // When component mounts, clear background flag and paused state
+    if (isGeneratingInBackground) {
+      setIsGeneratingInBackground(false);
+    }
+    
+    // If there's progress for this repo that's paused, clear the paused flag
+    if (progress && 
+        progress.owner === owner && 
+        progress.repo === repo && 
+        progress.isPaused) {
+      console.log('[WikiPage] Clearing paused flag on mount');
+      setProgress({
+        ...progress,
+        isPaused: false,
+      });
+    }
+    
+    // When component unmounts while generating, mark as paused
+    return () => {
+      // Use ref to get latest progress value without adding to dependencies
+      const currentProgress = progressRef.current;
+      if (currentProgress && 
+          currentProgress.isGenerating && 
+          !currentProgress.isPaused &&
+          currentProgress.owner === owner && 
+          currentProgress.repo === repo) {
+        console.log('[WikiPage] Component unmounting during generation - marking as paused');
+        setProgress({
+          ...currentProgress,
+          isPaused: true,
+        });
+      }
+    };
+  }, [isGeneratingInBackground, setIsGeneratingInBackground, setProgress, owner, repo]);
+
   // Memoize repo info to avoid triggering updates in callbacks
 
   // Add useEffect to handle scroll reset
@@ -366,6 +426,97 @@ export default function RepoWikiPage() {
       wikiContent.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [currentPageId]);
+
+  // Track wiki generation progress and update global context
+  // Start tracking as soon as generation begins (when fetchRepositoryStructure is called)
+  // This tracks the entire process: fetching repo, embedding, determining structure, generating pages
+  useEffect(() => {
+    if (isLoading && isGenerationStarted) {
+      // Use clean URL without query params for navigation
+      const wikiUrl = `/${owner}/${repo}`;
+      
+      // Calculate progress based on wiki structure if available
+      let completedPages = 0;
+      let totalPages = 0;
+      
+      if (wikiStructure) {
+        totalPages = wikiStructure.pages.length;
+        // Count pages with actual content (not loading or error)
+        completedPages = wikiStructure.pages.filter(page => {
+          const pageContent = generatedPages[page.id]?.content;
+          return pageContent && pageContent !== 'Loading...' && !pageContent.startsWith('Error');
+        }).length;
+      }
+      
+      // Only update if values actually changed to avoid infinite loop
+      if (!progress || 
+          progress.owner !== owner || 
+          progress.repo !== repo ||
+          progress.completedPages !== completedPages ||
+          progress.totalPages !== totalPages ||
+          !progress.isGenerating ||
+          progress.isPaused) {
+        // When resuming (progress exists for this repo), preserve the comprehensive value
+        // Don't overwrite with isComprehensiveView which may not have synced yet
+        const comprehensiveValue = (progress?.owner === owner && progress?.repo === repo) 
+          ? progress.comprehensive 
+          : isComprehensiveView;
+        
+        setProgress({
+          owner,
+          repo,
+          repoType,
+          repoUrl: effectiveRepoInfo.repoUrl ?? undefined,
+          totalPages,
+          completedPages,
+          isGenerating: true,
+          isPaused: false,
+          currentPageId,
+          wikiUrl,
+          language,
+          branch: effectiveRepoInfo.branch,
+          comprehensive: comprehensiveValue,
+        });
+      }
+    }
+  }, [isLoading, isGenerationStarted, wikiStructure, generatedPages, currentPageId, owner, repo, repoType, language, effectiveRepoInfo.repoUrl, effectiveRepoInfo.branch, searchParams, setProgress, progress]);
+
+  // Handle wiki generation completion
+  useEffect(() => {
+    if (!isLoading && wikiStructure && progress && progress.isGenerating && progress.owner === owner && progress.repo === repo) {
+      // Verify all pages actually have content before marking as complete
+      const allPagesComplete = wikiStructure.pages.every(page => {
+        const pageContent = generatedPages[page.id]?.content;
+        return pageContent && pageContent !== 'Loading...' && !pageContent.startsWith('Error');
+      });
+      
+      if (allPagesComplete) {
+        console.log('All pages complete - marking generation as finished');
+        // Wiki generation completed - update final state
+        setProgress({
+          ...progress,
+          completedPages: wikiStructure.pages.length,
+          isGenerating: false,
+        });
+        
+        // Clear generation started flag
+        setIsGenerationStarted(false);
+        
+        // Show completion notification if minimized
+        if (isMinimized) {
+          setShowCompletionNotification(true);
+        }
+      }
+    }
+  }, [isLoading, wikiStructure, generatedPages, progress, owner, repo, isMinimized, setProgress, setShowCompletionNotification]);
+
+  // Handle restore from minimized state - clear progress when viewing completed wiki
+  useEffect(() => {
+    if (!isMinimized && progress && progress.owner === owner && progress.repo === repo && !progress.isGenerating && !isLoading) {
+      // Clear progress since we're viewing the completed wiki
+      setProgress(null);
+    }
+  }, [isMinimized, progress, owner, repo, isLoading, setProgress]);
 
   // Fetch authentication status on component mount
   useEffect(() => {
@@ -844,7 +995,8 @@ CRITICAL REMINDERS:
   }, [generatedPages, wikiStructure, saveCheckpoint, isResumingFromPartial]);
 
   // Determine the wiki structure from repository data
-  const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string) => {
+  // detectedBranch is passed directly to avoid race condition with effectiveRepoInfo state update
+  const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string, detectedBranch?: string | null) => {
     if (!owner || !repo) {
       setError('Invalid repository information. Owner and repo name are required.');
       setIsLoading(false);
@@ -1037,7 +1189,10 @@ IMPORTANT:
       };
 
       // Add tokens if available - use effectiveToken to handle race condition
-      addTokensToRequestBody(requestBody, effectiveToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, effectiveRepoInfo.branch || undefined, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
+      // Use detectedBranch (passed directly) or effectiveRepoInfo.branch as fallback
+      // This fixes the race condition where effectiveRepoInfo.branch state hasn't updated yet
+      const branchToUse = detectedBranch || effectiveRepoInfo.branch || undefined;
+      addTokensToRequestBody(requestBody, effectiveToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, branchToUse, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
 
       // Use WebSocket for communication
       let responseText = '';
@@ -1498,11 +1653,16 @@ IMPORTANT:
     setGeneratedPages({});
     setPagesInProgress(new Set());
     setError(null);
+    setPartialCacheMessage(null); // Clear partial cache banner on regeneration
     setEmbeddingError(false); // Reset embedding error state
 
     try {
       // Set the request in progress flag
       setRequestInProgress(true);
+
+      // MARK: Wiki generation truly starts here (not from complete cache)
+      // This enables progress tracking from the very beginning
+      setIsGenerationStarted(true);
 
       // Update loading state
       setIsLoading(true);
@@ -1510,6 +1670,9 @@ IMPORTANT:
 
       let fileTreeData = '';
       let readmeContent = '';
+      // Track the detected branch to pass directly to determineWikiStructure
+      // This avoids race condition with effectiveRepoInfo state update
+      let detectedBranchForWiki: string | null = effectiveRepoInfo.branch || null;
 
       if (effectiveRepoInfo.type === 'local' && effectiveRepoInfo.localPath) {
         try {
@@ -1525,6 +1688,7 @@ IMPORTANT:
           readmeContent = data.readme;
           // For local repos, we can't determine the actual branch, so use 'main' as default
           setDefaultBranch('main');
+          detectedBranchForWiki = 'main';
         } catch (err) {
           throw err;
         }
@@ -1571,6 +1735,7 @@ IMPORTANT:
             console.log(`Found default branch: ${defaultBranchLocal}`);
             // Store the default branch in state
             setDefaultBranch(defaultBranchLocal || 'main');
+            detectedBranchForWiki = defaultBranchLocal || 'main';
             // Update effectiveRepoInfo.branch if not explicitly set, so cache uses correct branch name
             if (!effectiveRepoInfo.branch && defaultBranchLocal) {
               setEffectiveRepoInfo(prev => ({ ...prev, branch: defaultBranchLocal }));
@@ -1674,6 +1839,7 @@ IMPORTANT:
           console.log(`Found GitLab default branch: ${defaultBranchLocal}`);
           // Store the default branch in state
           setDefaultBranch(defaultBranchLocal);
+          detectedBranchForWiki = defaultBranchLocal;
           // Update effectiveRepoInfo.branch if not explicitly set, so cache uses correct branch name
           if (!effectiveRepoInfo.branch && defaultBranchLocal) {
             setEffectiveRepoInfo(prev => ({ ...prev, branch: defaultBranchLocal }));
@@ -1751,6 +1917,7 @@ IMPORTANT:
             defaultBranchLocal = projectData.mainbranch.name;
             // Store the default branch in state
             setDefaultBranch(defaultBranchLocal);
+            detectedBranchForWiki = defaultBranchLocal;
 
             const apiUrl = `https://api.bitbucket.org/2.0/repositories/${encodedRepoPath}/src/${defaultBranchLocal}/?recursive=true&per_page=100`;
             try {
@@ -1813,12 +1980,14 @@ IMPORTANT:
         try {
           setLoadingMessage(messages.loading?.fetchingStructure || 'Fetching Azure DevOps repository structure...');
 
-          // Use token directly - currentToken may be stale due to React state update timing
-          const effectiveToken = token || currentToken;
+          // Use tokenRef for synchronous access (avoids React state update race conditions)
+          // Fall back to state values for backward compatibility
+          const effectiveToken = tokenRef.current || token || currentToken;
           console.log('[AzureDevOps] Calling structure API with:', {
             repoUrl: effectiveRepoInfo.repoUrl,
             hasToken: !!effectiveToken,
             tokenLength: effectiveToken?.length || 0,
+            usingTokenRef: !!tokenRef.current,
             usingTokenState: !!token,
             usingCurrentToken: !!currentToken
           });
@@ -1847,6 +2016,7 @@ IMPORTANT:
           // Store the default branch in state (Azure DevOps typically uses 'main' or 'master')
           const detectedBranch = data.default_branch || 'main';
           setDefaultBranch(detectedBranch);
+          detectedBranchForWiki = detectedBranch;
           // Update effectiveRepoInfo.branch if not explicitly set, so cache uses correct branch name
           if (!effectiveRepoInfo.branch && detectedBranch) {
             setEffectiveRepoInfo(prev => ({ ...prev, branch: detectedBranch }));
@@ -1862,7 +2032,8 @@ IMPORTANT:
       }
 
       // Now determine the wiki structure
-      await determineWikiStructure(fileTreeData, readmeContent, owner, repo);
+      // Pass detectedBranchForWiki directly to avoid race condition with effectiveRepoInfo state update
+      await determineWikiStructure(fileTreeData, readmeContent, owner, repo, detectedBranchForWiki);
 
     } catch (error) {
       console.error('Error fetching repository structure:', error);
@@ -2033,6 +2204,8 @@ IMPORTANT:
 
     // Update token if provided
     if (newToken) {
+      // Update token ref synchronously (avoids race conditions)
+      tokenRef.current = newToken;
       // Update current token state
       setCurrentToken(newToken);
       // Also update the token state to trigger dependent useEffects
@@ -2061,6 +2234,7 @@ IMPORTANT:
     setPagesInProgress(new Set());
     setError(null);
     setEmbeddingError(false); // Reset embedding error state
+    setIsGenerationStarted(false); // Will be set when fetchRepositoryStructure is called
     setIsLoading(true); // Set loading state for refresh
     setLoadingMessage(messages.loading?.initializing || 'Initializing wiki generation...');
 
@@ -2087,6 +2261,19 @@ IMPORTANT:
     if (!tokenChecked) {
       logger.debug('Waiting for token check to complete before wiki init');
       return;
+    }
+
+    // Clear paused state if resuming (user navigated back to this page)
+    const currentProgress = progressRef.current;
+    if (currentProgress && 
+        currentProgress.owner === owner && 
+        currentProgress.repo === repo && 
+        currentProgress.isPaused) {
+      console.log('[WikiPage] Clearing paused state for resumed wiki');
+      setProgress({
+        ...currentProgress,
+        isPaused: false,
+      });
     }
 
     if (effectRan.current === false) {
@@ -2276,12 +2463,114 @@ IMPORTANT:
                 console.log('Partial cache detected - will resume generation for missing pages');
                 setIsResumingFromPartial(true);
                 cacheLoadedSuccessfully.current = false; // Allow checkpoints to be saved
-                // Don't set isLoading to false - continue to fetch and generate missing pages
+                
+                // For Azure DevOps without a token, display partial cache but don't try to resume
+                const effectiveTokenForPartial = token || currentToken;
+                if (effectiveRepoInfo.type === 'azuredevops' && !effectiveTokenForPartial) {
+                  logger.info('Azure DevOps partial cache displayed without token - cannot resume generation', {
+                    pagesWithContent,
+                    totalPages
+                  });
+                  setIsLoading(false);
+                  setEmbeddingError(false);
+                  setLoadingMessage(undefined);
+                  // Show informative banner (not blocking error) so wiki content is still displayed
+                  setPartialCacheMessage(`Partial wiki displayed (${pagesWithContent}/${totalPages} pages). To generate remaining pages, please provide a Personal Access Token (PAT) via the Settings button.`);
+                  cacheLoadedSuccessfully.current = true; // Treat as successfully loaded (partial)
+                  return; // Display partial cache without trying to resume
+                }
+                
+                // Don't set isLoading to false - continue to generate missing pages
                 setLoadingMessage(`Resuming wiki generation (${pagesWithContent}/${totalPages} pages cached)...`);
-                // Continue to fetchRepositoryStructure to generate missing pages
+                
+                // Identify pages that need to be generated
+                const pagesToGenerate = cachedStructure.pages.filter((page: WikiPage) => {
+                  const cachedPage = cachedData.generated_pages[page.id];
+                  return !cachedPage || !cachedPage.content || cachedPage.content === 'Loading...' || cachedPage.content.startsWith('Error');
+                });
+                
+                console.log(`[Partial Cache Resume] ${pagesToGenerate.length} pages need to be generated`);
+                
+                // Mark generation as started for progress tracking (partial cache needs generation)
+                setIsGenerationStarted(true);
+                
+                // Start generating missing pages using the existing generation queue
+                if (pagesToGenerate.length > 0) {
+                  // Use the existing page generation logic (which will be triggered by the normal flow)
+                  // Just need to ensure the pages are marked for generation
+                  console.log('[Partial Cache Resume] Missing pages will be generated:', pagesToGenerate.map((p: WikiPage) => p.title));
+                  
+                  // Mark pages as in progress for progress bar display
+                  setPagesInProgress(new Set(pagesToGenerate.map((p: WikiPage) => p.id)));
+                  
+                  // Process pages with controlled concurrency (same as normal flow)
+                  const MAX_CONCURRENT = 1;
+                  const MAX_RETRIES = 2;
+                  const RETRY_DELAY_BASE = 5000;
+                  
+                  const queue: { page: WikiPage; retries: number }[] = pagesToGenerate.map((p: WikiPage) => ({ page: p, retries: 0 }));
+                  let activeRequests = 0;
+                  const failedPages: WikiPage[] = [];
+                  
+                  const processQueue = () => {
+                    while (queue.length > 0 && activeRequests < MAX_CONCURRENT) {
+                      const item = queue.shift();
+                      if (item) {
+                        const { page, retries } = item;
+                        activeRequests++;
+                        console.log(`[Partial Cache Resume] Generating page: ${page.title}, active: ${activeRequests}, remaining: ${queue.length}`);
+                        
+                        generatePageContent(page, owner, repo)
+                          .then((result: { success: boolean; error?: string } | void) => {
+                            activeRequests--;
+                            
+                            if (result?.success === false) {
+                              if (retries < MAX_RETRIES) {
+                                const retryDelay = RETRY_DELAY_BASE * Math.pow(2, retries);
+                                console.warn(`[Partial Cache Resume] Page ${page.title} failed, retrying in ${retryDelay / 1000}s`);
+                                setTimeout(() => {
+                                  queue.push({ page, retries: retries + 1 });
+                                  if (activeRequests < MAX_CONCURRENT) {
+                                    processQueue();
+                                  }
+                                }, retryDelay);
+                              } else {
+                                console.error(`[Partial Cache Resume] Page ${page.title} failed after max retries`);
+                                failedPages.push(page);
+                              }
+                            }
+                            
+                            // Check if all work is done
+                            if (queue.length === 0 && activeRequests === 0) {
+                              if (failedPages.length > 0) {
+                                console.warn(`[Partial Cache Resume] Completed with ${failedPages.length} failures`);
+                              } else {
+                                console.log('[Partial Cache Resume] All pages generated successfully');
+                              }
+                              setIsLoading(false);
+                              setLoadingMessage(undefined);
+                            } else if (queue.length > 0 && activeRequests < MAX_CONCURRENT) {
+                              processQueue();
+                            }
+                          });
+                      }
+                    }
+                  };
+                  
+                  // Start processing
+                  processQueue();
+                } else {
+                  // No pages to generate (shouldn't happen for partial cache, but handle it)
+                  setIsLoading(false);
+                  setLoadingMessage(undefined);
+                }
+                
+                cacheLoadedSuccessfully.current = false; // Allow checkpoints to be saved
+                return; // Don't call fetchRepositoryStructure for partial cache
               } else {
                 // Complete cache - just display it
                 setIsLoading(false);
+                setIsGenerationStarted(false); // No generation needed for complete cache
                 setEmbeddingError(false); 
                 setLoadingMessage(undefined);
                 cacheLoadedSuccessfully.current = true;
@@ -2301,12 +2590,13 @@ IMPORTANT:
 
         // If we reached here, either there was no cache, it was invalid, or an error occurred
         // For Azure DevOps, we need a token to fetch from the API
-        // Check both token (from sessionStorage/URL) and currentToken (may be updated via settings)
-        const effectiveToken = token || currentToken;
+        // Use tokenRef for synchronous access (avoids React state update race conditions)
+        const effectiveToken = tokenRef.current || token || currentToken;
         if (effectiveRepoInfo.type === 'azuredevops' && !effectiveToken) {
           logger.warn('Azure DevOps repo requires PAT but no token available', { 
             owner: effectiveRepoInfo.owner, 
             repo: effectiveRepoInfo.repo,
+            hasTokenRef: !!tokenRef.current,
             hasToken: !!token,
             hasCurrentToken: !!currentToken
           });
@@ -2330,7 +2620,8 @@ IMPORTANT:
 
     // Clean up function for this effect is not strictly necessary for loadData,
     // but keeping the main unmount cleanup in the other useEffect
-  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView, token, currentToken, tokenChecked]);
+  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView, token, currentToken, tokenChecked, owner, repo]);
+  // Note: progress and wikiStructure deliberately excluded to prevent re-triggering when resuming from cache
 
   // Save wiki to server-side cache when generation is complete
   useEffect(() => {
@@ -2421,8 +2712,8 @@ IMPORTANT:
       </header>
 
       <main className={`flex-1 mx-auto overflow-hidden ${wikiStructure && !isChatPanelCollapsed ? 'w-full px-4' : 'max-w-[90%] xl:max-w-[1400px]'}`}>
-        {isLoading ? (
-          <div className="flex flex-col items-center justify-center p-8 bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese">
+        {isLoading && !isMinimized ? (
+          <div className="flex flex-col items-center justify-center p-8 bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese max-w-2xl mx-auto">
             <div className="relative mb-6">
               <div className="absolute -inset-4 bg-[var(--accent-primary)]/10 rounded-full blur-md animate-pulse"></div>
               <div className="relative flex items-center justify-center">
@@ -2435,6 +2726,16 @@ IMPORTANT:
               {loadingMessage || messages.common?.loading || 'Loading...'}
               {isExporting && (messages.loading?.preparingDownload || ' Please wait while we prepare your download...')}
             </p>
+
+            {/* Long process warning message */}
+            {wikiStructure && (
+              <div className="w-full max-w-md mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-md">
+                <p className="text-xs text-[var(--foreground)] text-center">
+                  {messages.wikiProgress?.longProcessWarning || 
+                    'This process may take several minutes depending on the size of your codebase. Feel free to browse other projects and come back later.'}
+                </p>
+              </div>
+            )}
 
             {/* Progress bar for page generation */}
             {wikiStructure && (
@@ -2456,6 +2757,25 @@ IMPORTANT:
                             .replace('{total}', wikiStructure.pages.length.toString())
                         : `${wikiStructure.pages.length - pagesInProgress.size} of ${wikiStructure.pages.length} pages completed`}
                 </p>
+
+                {/* Minimize button */}
+                <div className="mt-4 flex justify-center">
+                  <button
+                    onClick={() => {
+                      // Just minimize - hides the loading overlay, shows wiki content underneath
+                      // Generation continues in background (component stays mounted)
+                      // No navigation needed - we're already on the wiki page
+                      minimizeProgress();
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-[var(--background)] text-[var(--foreground)] rounded-md hover:bg-[var(--background)]/80 transition-colors border border-[var(--border-color)] text-sm"
+                  >
+                    <FaMinusSquare className="text-sm" />
+                    {messages.wikiProgress?.minimize || 'Minimize'}
+                    <span className="text-xs text-[var(--muted)] ml-1">
+                      ({messages.wikiProgress?.minimizeDescription || 'Run in background'})
+                    </span>
+                  </button>
+                </div>
 
                 {/* Show list of in-progress pages */}
                 {pagesInProgress.size > 0 && (
@@ -2519,8 +2839,26 @@ IMPORTANT:
           </div>
         ) : wikiStructure ? (
           <div className="h-full flex flex-col lg:flex-row gap-4 w-full overflow-hidden">
+            {/* Partial Cache Info Banner */}
+            {partialCacheMessage && (
+              <div className="absolute top-0 left-0 right-0 z-10 bg-amber-500/10 border-b border-amber-500/30 px-4 py-3">
+                <div className="flex items-center justify-between max-w-7xl mx-auto">
+                  <div className="flex items-center text-amber-600 dark:text-amber-400 text-sm">
+                    <FaExclamationTriangle className="mr-2 flex-shrink-0" />
+                    <span>{partialCacheMessage}</span>
+                  </div>
+                  <button
+                    onClick={() => setIsModelSelectionModalOpen(true)}
+                    className="ml-4 px-3 py-1 text-xs bg-amber-500/20 hover:bg-amber-500/30 text-amber-700 dark:text-amber-300 rounded-md border border-amber-500/30 transition-colors flex-shrink-0"
+                  >
+                    <FaCog className="inline mr-1" />
+                    Settings
+                  </button>
+                </div>
+              </div>
+            )}
             {/* Wiki Section (Left side - 2/3 on large screens) */}
-            <div className={`h-full flex flex-col lg:flex-row gap-4 overflow-hidden bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese transition-all duration-300 ${isChatPanelCollapsed ? 'w-full' : 'w-full lg:w-2/3'}`}>
+            <div className={`h-full flex flex-col lg:flex-row gap-4 overflow-hidden bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese transition-all duration-300 ${isChatPanelCollapsed ? 'w-full' : 'w-full lg:w-2/3'} ${partialCacheMessage ? 'mt-12' : ''}`}>
               {/* Wiki Navigation */}
               <div className="h-full w-full lg:w-[280px] xl:w-[320px] flex-shrink-0 bg-[var(--background)]/50 rounded-lg rounded-r-none p-5 border-b lg:border-b-0 lg:border-r border-[var(--border-color)] overflow-y-auto">
                 <h3 className="text-lg font-bold text-[var(--foreground)] mb-3 font-serif">{wikiStructure.title}</h3>

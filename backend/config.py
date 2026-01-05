@@ -23,6 +23,9 @@ _infra_config: Optional[Dict[str, Any]] = None
 # Cached client classes (populated lazily)
 _client_classes: Optional[Dict[str, Any]] = None
 
+# Cached Azure AI client instance (singleton)
+_azure_ai_client: Optional[Any] = None
+
 
 def get_infra_config() -> Dict[str, Any]:
     """
@@ -195,6 +198,31 @@ def get_client_classes() -> Dict[str, Any]:
             "AzureAIClient": AzureAIClient,
         }
     return _client_classes
+
+
+def get_azure_ai_client(model: Optional[str] = None) -> Any:
+    """
+    Get a shared Azure AI client instance (singleton pattern).
+    
+    This avoids creating multiple client instances, reducing initialization
+    overhead and log spam.
+    
+    Args:
+        model: Optional model name (used to get initialize_kwargs)
+        
+    Returns:
+        Cached AzureAIClient instance
+    """
+    global _azure_ai_client
+    if _azure_ai_client is None:
+        from backend.clients.azureai_client import AzureAIClient
+        # Get deployment name and config
+        deployment_name = get_azure_deployment_name(model)
+        model_config = get_model_config("azure", deployment_name)
+        initialize_kwargs = model_config.get("initialize_kwargs", {})
+        _azure_ai_client = AzureAIClient(**initialize_kwargs)
+        logger.info("[Config] Created shared AzureAIClient instance")
+    return _azure_ai_client
 
 
 def replace_env_placeholders(
