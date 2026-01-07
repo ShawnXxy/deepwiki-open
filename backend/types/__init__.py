@@ -36,6 +36,20 @@ from .converter import (
     to_dict,
 )
 
+from .git_types import (
+    # Git types
+    RepoType,
+    GitCredentials,
+    GitReference,
+    GitRepository,
+    GitSource,
+    WikiCacheIdentifier,
+    
+    # Helper functions
+    parse_github_url,
+    create_git_source_from_params,
+)
+
 __all__ = [
     # Infra config
     'ManagedIdentityConfig',
@@ -65,4 +79,14 @@ __all__ = [
     # Converter utilities
     'from_dict',
     'to_dict',
+    
+    # Git types
+    'RepoType',
+    'GitCredentials',
+    'GitReference',
+    'GitRepository',
+    'GitSource',
+    'WikiCacheIdentifier',
+    'parse_github_url',
+    'create_git_source_from_params',
 ]

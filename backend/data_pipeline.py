@@ -81,26 +81,100 @@ def count_tokens(text: str, embedder_type: str = None, is_ollama_embedder: bool 
         # Rough approximation: 4 characters per token
         return len(text) // 4
 
-def download_repo(repo_url: str, local_path: str, type: str = "github", 
-                   access_token: str = None, branch: str = None) -> str:
+def detect_default_branch(local_path: str) -> str:
     """
-    Downloads a Git repository (GitHub, GitLab, or Bitbucket) to a specified 
+    Detect the default branch of a cloned repository.
+    
+    Args:
+        local_path: Path to the cloned repository
+        
+    Returns:
+        str: Name of the default branch (e.g., 'main', 'master')
+    """
+    try:
+        result = subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            cwd=local_path,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        # Output format: refs/remotes/origin/main
+        output = result.stdout.decode("utf-8").strip()
+        branch = output.split("/")[-1]
+        logger.debug(f"Detected default branch: {branch}")
+        return branch
+    except subprocess.CalledProcessError:
+        # Fallback to main/master
+        logger.warning("Could not detect default branch, trying main/master")
+        for fallback in ['main', 'master']:
+            try:
+                subprocess.run(
+                    ["git", "rev-parse", "--verify", f"origin/{fallback}"],
+                    cwd=local_path,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                logger.info(f"Using fallback branch: {fallback}")
+                return fallback
+            except subprocess.CalledProcessError:
+                continue
+        # Last resort
+        return 'main'
+
+def download_repo(repo_url: str = None, local_path: str = None, type: str = "github", 
+                   access_token: str = None, branch: str = None, git_source=None) -> str:
+    """
+    Downloads a Git repository (GitHub, GitLab, Bitbucket, or Azure DevOps) to a specified 
     local path.
+    
+    Supports both legacy parameter-based API and new GitSource type-based API.
 
     Args:
-        repo_type(str): Type of repository
-        repo_url (str): The URL of the Git repository to clone.
-        local_path (str): The local directory where the repository will be 
-                         cloned.
-        type (str): The type of repository (github, gitlab, bitbucket, 
-                   azuredevops).
+        repo_url (str, optional): The URL of the Git repository to clone. Required if git_source not provided.
+        local_path (str, optional): The local directory where the repository will be 
+                         cloned. Required if git_source not provided.
+        type (str): The type of repository (github, gitlab, bitbucket, azuredevops). Default: github
         access_token (str, optional): Access token for private repositories.
         branch (str, optional): Specific branch to clone. If None, uses 
                                default branch with fallback logic.
+        git_source (GitSource, optional): GitSource object containing all git parameters.
+                                         If provided, overrides individual parameters.
 
     Returns:
         str: The output message from the `git` command.
+        
+    Examples:
+        # Legacy API (for backward compatibility)
+        download_repo("https://github.com/owner/repo", "/path", "github", "token123", "main")
+        
+        # New API using GitSource
+        from backend.types import create_git_source_from_params
+        git_src = create_git_source_from_params("https://github.com/owner/repo", "github", 
+                                                access_token="token123", branch="main")
+        download_repo(git_source=git_src, local_path="/path")
     """
+    # If git_source provided, extract parameters from it
+    if git_source is not None:
+        from backend.types import GitSource
+        if not isinstance(git_source, GitSource):
+            raise TypeError(f"git_source must be GitSource type, got {type(git_source)}")
+            
+        repo_url = git_source.repository.url
+        type = git_source.repository.repo_type
+        access_token = git_source.credentials.access_token if git_source.credentials else None
+        branch = git_source.reference.branch if git_source.reference else None
+        # If local_path not explicitly provided, use from GitSource
+        if local_path is None:
+            local_path = git_source.repository.local_path
+    
+    # Validate required parameters
+    if not repo_url:
+        raise ValueError("repo_url must be provided either directly or via git_source")
+    if not local_path:
+        raise ValueError("local_path must be provided either directly or via git_source")
+    
     try:
         # Check if Git is installed
         logger.info(f"Preparing to clone repository to {local_path}")
@@ -1044,8 +1118,33 @@ class DatabaseManager:
             # Path consistency: local and blob use same relative structure
             # Local: ~/.adalflow/databases/{owner}_{repo}_{branch}.pkl
             # Blob:  databases/{owner}_{repo}_{branch}.pkl (same structure, different root)
-            # Use 'default' for None/empty branch to maintain backwards compatibility
-            branch_suffix = branch.strip() if branch and branch.strip() else 'default'
+            
+            # Normalize branch: detect actual branch instead of using 'default'
+            if not branch or not branch.strip():
+                # Check if database already exists for main/master
+                for candidate_branch in ['main', 'master']:
+                    candidate_path = os.path.join(root_path, f"databases/{repo_name}_{candidate_branch}.pkl")
+                    if os.path.exists(candidate_path):
+                        logger.info(f"Found existing database for branch '{candidate_branch}', reusing it")
+                        branch = candidate_branch
+                        break
+                
+                # If no existing database found, try to detect from repo
+                if not branch or not branch.strip():
+                    if os.path.exists(save_repo_dir) and os.path.exists(os.path.join(save_repo_dir, ".git")):
+                        try:
+                            detected_branch = detect_default_branch(save_repo_dir)
+                            logger.info(f"Detected default branch from repo: {detected_branch}")
+                            branch = detected_branch
+                        except Exception as e:
+                            logger.warning(f"Could not detect default branch: {e}, using 'main'")
+                            branch = 'main'
+                    else:
+                        # Default to main if repo doesn't exist yet
+                        branch = 'main'
+                        logger.info("Repo not cloned yet, defaulting to 'main' branch")
+            
+            branch_suffix = branch.strip() if branch and branch.strip() else 'main'
             db_relative_path = f"databases/{repo_name}_{branch_suffix}.pkl"
             save_db_file = os.path.join(root_path, db_relative_path)
             blob_db_path = db_relative_path  # Same relative path for blob

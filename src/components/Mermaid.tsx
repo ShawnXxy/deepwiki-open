@@ -146,6 +146,44 @@ const sanitizeMermaidContent = (content: string): string => {
   const isFlowchart = /^\s*(graph|flowchart)\s+(TB|TD|BT|RL|LR)/im.test(sanitized);
   const isSequenceDiagram = /^\s*sequenceDiagram/im.test(sanitized);
 
+  // Fix sequence diagram issues
+  if (isSequenceDiagram) {
+    // Extract all participant declarations
+    const participantRegex = /^\s*participant\s+(\w+)(?:\s+as\s+.+)?$/gim;
+    const declaredParticipants = new Set<string>();
+    let match;
+    while ((match = participantRegex.exec(sanitized)) !== null) {
+      declaredParticipants.add(match[1]);
+    }
+
+    // Find all used participants in messages
+    const messageRegex = /^\s*(\w+)\s*(->>?|-->>?|-\)|\)\)|->x|-->x)\s*[+-]?(\w+)/gim;
+    const usedParticipants = new Set<string>();
+    let msgMatch;
+    const tempContent = sanitized;
+    while ((msgMatch = messageRegex.exec(tempContent)) !== null) {
+      usedParticipants.add(msgMatch[1]); // From participant
+      usedParticipants.add(msgMatch[3]); // To participant
+    }
+
+    // Add missing participant declarations at the top
+    const missingParticipants = Array.from(usedParticipants).filter(p => !declaredParticipants.has(p));
+    if (missingParticipants.length > 0) {
+      const sequenceDiagramLine = sanitized.match(/^(\s*sequenceDiagram\s*)$/im);
+      if (sequenceDiagramLine && sequenceDiagramLine.index !== undefined) {
+        const insertPos = sequenceDiagramLine.index + sequenceDiagramLine[0].length;
+        const declarations = missingParticipants.map(p => `\n    participant ${p}`).join('');
+        sanitized = sanitized.slice(0, insertPos) + declarations + sanitized.slice(insertPos);
+      }
+    }
+
+    // Fix invalid arrow syntax like )|  - should be -) for async
+    sanitized = sanitized.replace(/(\w+)\s*\)\|\s*(\w+)/g, '$1 -) $2');
+    
+    // Fix PS syntax error - likely meant -) for async or ->> for sync
+    sanitized = sanitized.replace(/(\w+)\s*PS\s*(\w+)/g, '$1 -) $2');
+  }
+
   // Convert sequence arrows to flowchart arrows when misused
   if (isFlowchart && !isSequenceDiagram) {
     sanitized = sanitized

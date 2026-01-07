@@ -12,6 +12,7 @@ import asyncio
 # Configure logging
 from backend.tools.logger import setup_logging, log_frontend_message
 from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
+from backend.types import WikiCacheIdentifier
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -410,6 +411,8 @@ os.makedirs(WIKI_CACHE_DIR, exist_ok=True)
 def get_wiki_cache_filename(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True, branch: Optional[str] = None) -> str:
     """Generates the filename for a given wiki cache (new format with branch suffix).
     
+    DEPRECATED: Use WikiCacheIdentifier.get_cache_filename() instead.
+    
     Args:
         owner: Repository owner
         repo: Repository name
@@ -418,14 +421,21 @@ def get_wiki_cache_filename(owner: str, repo: str, repo_type: str, language: str
         comprehensive: Whether this is comprehensive or concise wiki
         branch: Branch name (optional, defaults to 'default' if not specified)
     """
-    mode = 'comprehensive' if comprehensive else 'concise'
-    # Use 'default' for None/empty branch to maintain backwards compatibility
-    branch_suffix = branch.strip() if branch and branch.strip() else 'default'
-    return f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}_{mode}_{branch_suffix}.json"
+    cache_id = WikiCacheIdentifier(
+        owner=owner,
+        repo=repo,
+        repo_type=repo_type,
+        language=language,
+        comprehensive=comprehensive,
+        branch=branch
+    )
+    return cache_id.get_cache_filename()
 
 
 def get_wiki_cache_filename_legacy(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True) -> str:
     """Generates the legacy filename for wiki cache (without branch suffix).
+    
+    DEPRECATED: Use WikiCacheIdentifier.get_cache_filename_legacy() instead.
     
     Used for backward compatibility with existing caches created before branch support.
     
@@ -436,8 +446,15 @@ def get_wiki_cache_filename_legacy(owner: str, repo: str, repo_type: str, langua
         language: Language code
         comprehensive: Whether this is comprehensive or concise wiki
     """
-    mode = 'comprehensive' if comprehensive else 'concise'
-    return f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}_{mode}.json"
+    cache_id = WikiCacheIdentifier(
+        owner=owner,
+        repo=repo,
+        repo_type=repo_type,
+        language=language,
+        comprehensive=comprehensive,
+        branch=None  # Legacy doesn't include branch
+    )
+    return cache_id.get_cache_filename_legacy()
 
 
 def get_wiki_cache_path(owner: str, repo: str, repo_type: str, language: str, comprehensive: bool = True, branch: Optional[str] = None) -> str:
