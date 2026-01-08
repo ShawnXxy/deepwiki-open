@@ -1217,41 +1217,14 @@ IMPORTANT:
         // Create a new WebSocket connection
         const ws = new WebSocket(wsUrl);
 
-        // Create a promise that resolves when the WebSocket connection is complete
+        // Set up all event handlers BEFORE waiting for connection
+        // This prevents race conditions where messages arrive before handlers are attached
         await new Promise<void>((resolve, reject) => {
-          // Set up event handlers
-          ws.onopen = () => {
-            console.log('WebSocket connection established for wiki structure');
-            // Send the request as JSON
-            ws.send(JSON.stringify(requestBody));
-            resolve();
-          };
+          let connectionTimeout: NodeJS.Timeout | null = null;
 
-          ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-            reject(new Error('WebSocket connection failed'));
-          };
-
-          // If the connection doesn't open within 5 seconds, fall back to HTTP
-          const timeout = setTimeout(() => {
-            reject(new Error('WebSocket connection timeout'));
-          }, 5000);
-
-          // Clear the timeout if the connection opens successfully
-          ws.onopen = () => {
-            clearTimeout(timeout);
-            console.log('WebSocket connection established for wiki structure');
-            // Send the request as JSON
-            ws.send(JSON.stringify(requestBody));
-            resolve();
-          };
-        });
-
-        // Create a promise that resolves when the WebSocket response is complete
-        await new Promise<void>((resolve, reject) => {
           // Handle incoming messages
           ws.onmessage = (event) => {
-            // Filter out keepalive messages (HTML comments used to keep connection alive during embedding)
+            // Filter out keepalive messages
             const data = event.data;
             if (data && !data.startsWith('<!-- keepalive')) {
               responseText += data;
@@ -1261,14 +1234,33 @@ IMPORTANT:
           // Handle WebSocket close
           ws.onclose = () => {
             console.log('WebSocket connection closed for wiki structure');
+            console.log('Total response length:', responseText.length);
+            if (connectionTimeout) clearTimeout(connectionTimeout);
             resolve();
           };
 
           // Handle WebSocket errors
           ws.onerror = (error) => {
-            console.error('WebSocket error during message reception:', error);
-            reject(new Error('WebSocket error during message reception'));
+            console.error('WebSocket error:', error);
+            if (connectionTimeout) clearTimeout(connectionTimeout);
+            reject(new Error('WebSocket error'));
           };
+
+          // Handle WebSocket open
+          ws.onopen = () => {
+            console.log('WebSocket connection established for wiki structure');
+            if (connectionTimeout) clearTimeout(connectionTimeout);
+            // Send the request as JSON
+            ws.send(JSON.stringify(requestBody));
+            // Don't resolve here - wait for onclose
+          };
+
+          // Set connection timeout
+          connectionTimeout = setTimeout(() => {
+            console.warn('WebSocket connection timeout');
+            ws.close();
+            reject(new Error('WebSocket connection timeout'));
+          }, 30000); // 30 second timeout for the entire operation
         });
       } catch (wsError) {
         console.error('WebSocket error, falling back to HTTP:', wsError);
@@ -1312,8 +1304,14 @@ IMPORTANT:
          throw new Error('The specified Ollama embedding model was not found. Please ensure the model is installed locally or select a different embedding model in the configuration.');
        }
 
-        // Clean up markdown delimiters
+      // Clean up markdown delimiters
       responseText = responseText.replace(/^```(?:xml)?\s*/i, '').replace(/```\s*$/i, '');
+
+      // Check if response is empty
+      if (!responseText || responseText.trim().length === 0) {
+        console.error('Empty response received from backend');
+        throw new Error('No response received from the backend. The server may have encountered an error during wiki structure generation. Please check the backend logs for details.');
+      }
 
       // Log the response for debugging
       console.log('Wiki structure response length:', responseText.length);
@@ -1324,7 +1322,7 @@ IMPORTANT:
       const xmlMatch = responseText.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
       if (!xmlMatch) {
         console.error('Full response text:', responseText);
-        throw new Error('No valid XML found in response');
+        throw new Error('No valid XML found in response. The response may be incomplete or malformed.');
       }
 
       let xmlText = xmlMatch[0];
@@ -1814,8 +1812,14 @@ IMPORTANT:
 
         const headers = createGitlabHeaders(currentToken);
 
-        /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-        const filesData: any[] = [];
+        interface GitLabFile {
+          id: string;
+          name: string;
+          type: 'tree' | 'blob';
+          path: string;
+          mode: string;
+        }
+        const filesData: GitLabFile[] = [];
 
         try {
           // Step 1: Get project info to determine default branch

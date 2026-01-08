@@ -433,10 +433,10 @@ def get_blob_storage_client() -> Optional[AzureBlobStorageClient]:
     
     try:
         infra = get_infra_config()
-        blob_config = infra.get("azure_blob_storage", {})
+        blob_config = infra.azure_blob_storage
         
-        account_name = blob_config.get("account_name")
-        container_name = blob_config.get("container_name", "deepwiki-data")
+        account_name = blob_config.account_name
+        container_name = blob_config.container_name
         
         if not account_name:
             logger.warning("⚠️ [BlobStorage] No account_name in config")
@@ -490,16 +490,16 @@ def is_blob_storage_configured() -> bool:
         bool: True if blob storage should be used, False for local storage
     """
     infra = get_infra_config()
-    blob_config = infra.get("azure_blob_storage", {})
+    blob_config = infra.azure_blob_storage
     
-    # Check if enabled (defaults to True if not specified for backward compat)
-    enabled = blob_config.get("enabled", True)
+    # Check if enabled
+    enabled = blob_config.enabled
     if not enabled:
         logger.debug("📦 [Storage] Mode: LOCAL (blob disabled in config)")
         return False
     
     # Check if account_name is configured
-    has_account = bool(blob_config.get("account_name"))
+    has_account = bool(blob_config.account_name)
     if has_account:
         logger.debug("📦 [Storage] Mode: BLOB (enabled and configured)")
     else:
@@ -517,13 +517,13 @@ def get_storage_mode() -> Tuple[str, Optional[str]]:
         - reason: Explanation for the mode
     """
     infra = get_infra_config()
-    blob_config = infra.get("azure_blob_storage", {})
+    blob_config = infra.azure_blob_storage
     
-    enabled = blob_config.get("enabled", True)
+    enabled = blob_config.enabled
     if not enabled:
         return ("local", "Blob storage disabled in config")
     
-    account_name = blob_config.get("account_name")
+    account_name = blob_config.account_name
     if not account_name:
         return ("local", "No blob account_name configured")
     

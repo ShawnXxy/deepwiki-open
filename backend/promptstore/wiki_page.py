@@ -79,6 +79,10 @@ Based on the content of the relevant source files:
          - Add notes for clarification: "Note over A,B: Description", "Note right of A: Detail"
          - Use autonumber directive to add sequence numbers to messages
          - NEVER use flowchart-style labels like A--|label|-->B. Always use a colon for labels: A->>B: My Label
+         - CRITICAL: ALWAYS declare participants before using them. Using undeclared participants will cause parse errors.
+         - CRITICAL: Participant names must be simple identifiers (letters, numbers, underscores). Avoid special characters.
+         - CRITICAL: Use activate/deactivate correctly: send message with + suffix, return with - suffix
+         - CRITICAL: Test your diagram mentally - ensure every participant used is declared at the top
 
 4.  **Tables:**
     *   Use Markdown tables to summarize information such as:

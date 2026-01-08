@@ -1,7 +1,6 @@
 """
-Configuration module for DeepWiki.
-This module handles loading and managing configuration for Azure OpenAI services.
-All configuration is read from infra.json - no .env file needed.
+Configuration module for DeepWiki using type-safe classes.
+Provides type-safe access to configuration files using Pydantic models.
 """
 
 import os
@@ -9,225 +8,53 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import List, Union, Dict, Any, Optional
+from typing import Optional, Dict, Any
+
+from backend.types.config_types import (
+    InfraConfig,
+    EmbedderConfig,
+    GeneratorConfig,
+    FileFiltersConfig,
+    RepositoryConfig,
+    LanguageConfig,
+)
+from backend.types.converter import from_dict
 
 logger = logging.getLogger(__name__)
 
-# NOTE: AzureAIClient is imported lazily in get_client_classes() to avoid circular imports
-# The import chain: config.py -> clients/azureai_client.py -> clients/__init__.py
-#                   -> clients/blob_client.py -> config.py (circular!)
+# ============================================================================
+# Cached Configuration Objects
+# ============================================================================
 
-# Infrastructure configuration (loaded later via load_json_config)
-_infra_config: Optional[Dict[str, Any]] = None
-
-# Cached client classes (populated lazily)
+_infra_config: Optional[InfraConfig] = None
+_embedder_config: Optional[EmbedderConfig] = None
+_generator_config: Optional[GeneratorConfig] = None
+_file_filters_config: Optional[FileFiltersConfig] = None
+_repository_config: Optional[RepositoryConfig] = None
+_lang_config: Optional[LanguageConfig] = None
 _client_classes: Optional[Dict[str, Any]] = None
-
-# Cached Azure AI client instance (singleton)
 _azure_ai_client: Optional[Any] = None
 
-
-def get_infra_config() -> Dict[str, Any]:
-    """
-    Get the infrastructure configuration from infra.json.
-    Loads the config on first access and caches it.
-    
-    Returns:
-        Dict containing infrastructure configuration
-    """
-    global _infra_config
-    if _infra_config is None:
-        _infra_config = load_json_config("infra.json")
-    return _infra_config
-
-
-def get_managed_identity_client_id() -> Optional[str]:
-    """
-    Get the managed identity client ID from infra.json.
-    
-    Returns:
-        The client ID string or None if not configured
-    """
-    infra = get_infra_config()
-    return infra.get("managed_identity", {}).get("client_id")
-
-
-def get_azure_openai_config() -> Dict[str, str]:
-    """
-    Get Azure OpenAI configuration for text generation from infra.json.
-    
-    Returns:
-        Dict containing endpoint, api_version, deployment
-    """
-    infra = get_infra_config()
-    azure_config = infra.get("azure_openai", {})
-    return {
-        "endpoint": azure_config.get("endpoint", ""),
-        "api_version": azure_config.get("api_version", "2024-12-01-preview"),
-        "deployment": azure_config.get("deployment", "")
-    }
-
-
-def get_azure_openai_embedding_config_from_infra() -> Dict[str, str]:
-    """
-    Get Azure OpenAI embedding configuration from infra.json.
-    
-    Returns:
-        Dict containing endpoint, api_version, deployment
-    """
-    infra = get_infra_config()
-    embedding_config = infra.get("azure_openai_embedding", {})
-    # Fall back to main azure_openai config if embedding-specific not set
-    azure_config = infra.get("azure_openai", {})
-    return {
-        "endpoint": embedding_config.get("endpoint") or azure_config.get("endpoint", ""),
-        "api_version": embedding_config.get("api_version") or azure_config.get("api_version", "2024-12-01-preview"),
-        "deployment": embedding_config.get("deployment", "text-embedding-3-large")
-    }
-
-
-def is_azure_openai_configured() -> bool:
-    """
-    Check if Azure OpenAI is configured in infra.json.
-    
-    Returns:
-        bool: True if Azure OpenAI is properly configured
-    """
-    azure_config = get_azure_openai_config()
-    
-    # Check for basic Azure OpenAI configuration
-    has_basic_config = bool(
-        azure_config.get("endpoint") and 
-        azure_config.get("api_version")
-    )
-    
-    # Check for Azure endpoint pattern
-    endpoint = azure_config.get("endpoint", "")
-    has_azure_pattern = ".openai.azure.com" in endpoint
-    
-    # Check for API key in environment (for local dev)
-    has_api_key = bool(os.environ.get("AZURE_OPENAI_API_KEY"))
-    
-    # Check for MSI client ID in infra.json (for production)
-    has_msi_config = bool(get_managed_identity_client_id())
-    
-    # Either API key or MSI config is sufficient
-    return has_basic_config and has_azure_pattern and (has_api_key or has_msi_config)
-
-
-def get_azure_openai_text_config() -> Dict[str, Any]:
-    """
-    Get Azure OpenAI configuration for text generation from infra.json.
-    Uses MSI authentication.
-    
-    Returns:
-        Dict containing azure_endpoint, api_version, and managed_identity_client_id
-    """
-    azure_config = get_azure_openai_config()
-    return {
-        "azure_endpoint": azure_config.get("endpoint"),
-        "api_version": azure_config.get("api_version", "2024-12-01-preview"),
-        "managed_identity_client_id": get_managed_identity_client_id()
-    }
-
-
-def get_azure_deployment_name(model_name: str = None) -> str:
-    """
-    Get the Azure OpenAI deployment name from infra.json.
-    
-    Always returns the deployment from infra.json, ignoring any passed model_name.
-    This ensures consistent use of the configured deployment.
-    
-    Args:
-        model_name: Ignored - always uses infra.json deployment
-    
-    Returns:
-        The deployment name from infra.json for Azure OpenAI API calls
-    """
-    azure_config = get_azure_openai_config()
-    deployment = azure_config.get("deployment", "o4-mini")
-    if model_name and model_name != deployment:
-        logger.info(f"Ignoring requested model '{model_name}', using infra.json deployment: {deployment}")
-    return deployment
-
-
-def get_azure_openai_embedding_config() -> Dict[str, Any]:
-    """
-    Get Azure OpenAI configuration for embeddings from infra.json.
-    Uses MSI authentication.
-    
-    Returns:
-        Dict containing azure_endpoint, api_version, and managed_identity_client_id
-    """
-    embedding_config = get_azure_openai_embedding_config_from_infra()
-    return {
-        "azure_endpoint": embedding_config.get("endpoint"),
-        "api_version": embedding_config.get("api_version", "2024-12-01-preview"),
-        "managed_identity_client_id": get_managed_identity_client_id()
-    }
-
+# ============================================================================
+# Environment Configuration
+# ============================================================================
 
 # Wiki authentication settings
 raw_auth_mode = os.environ.get('DEEPWIKI_AUTH_MODE', 'False')
 WIKI_AUTH_MODE = raw_auth_mode.lower() in ['true', '1', 't']
 WIKI_AUTH_CODE = os.environ.get('DEEPWIKI_AUTH_CODE', '')
 
-# Configuration directory resolution:
-# - DEEPWIKI_CONFIG_DIR env var: Override config path (used by Docker/Azure)
-# - Default: backend/config/ (for local terminal development)
-#
-# Environment-specific configs:
-# - Local terminal: backend/config/ (direct, blob/appinsights enabled per infra.json)
-# - Local Docker: backend/config/.local/ (mounted, blob/appinsights disabled)
-# - Azure Cloud: backend/config/.cloud/ (copied into image, blob/appinsights enabled)
+# Configuration directory
 CONFIG_DIR = os.environ.get('DEEPWIKI_CONFIG_DIR', None)
 
 
-def get_client_classes() -> Dict[str, Any]:
-    """
-    Get the client class mapping. Imports AzureAIClient lazily to avoid circular imports.
-    
-    Returns:
-        Dict mapping class name strings to actual class objects
-    """
-    global _client_classes
-    if _client_classes is None:
-        # Lazy import to avoid circular dependency
-        from backend.clients.azureai_client import AzureAIClient
-        _client_classes = {
-            "AzureAIClient": AzureAIClient,
-        }
-    return _client_classes
-
-
-def get_azure_ai_client(model: Optional[str] = None) -> Any:
-    """
-    Get a shared Azure AI client instance (singleton pattern).
-    
-    This avoids creating multiple client instances, reducing initialization
-    overhead and log spam.
-    
-    Args:
-        model: Optional model name (used to get initialize_kwargs)
-        
-    Returns:
-        Cached AzureAIClient instance
-    """
-    global _azure_ai_client
-    if _azure_ai_client is None:
-        from backend.clients.azureai_client import AzureAIClient
-        # Get deployment name and config
-        deployment_name = get_azure_deployment_name(model)
-        model_config = get_model_config("azure", deployment_name)
-        initialize_kwargs = model_config.get("initialize_kwargs", {})
-        _azure_ai_client = AzureAIClient(**initialize_kwargs)
-        logger.info("[Config] Created shared AzureAIClient instance")
-    return _azure_ai_client
-
+# ============================================================================
+# Utility Functions
+# ============================================================================
 
 def replace_env_placeholders(
-    config: Union[Dict[str, Any], List[Any], str, Any]
-) -> Union[Dict[str, Any], List[Any], str, Any]:
+    config: Any
+) -> Any:
     """
     Recursively replace placeholders like "${ENV_VAR}" in string values
     within a nested configuration structure (dicts, lists, strings)
@@ -257,7 +84,7 @@ def replace_env_placeholders(
         return config
 
 
-def load_json_config(filename):
+def load_json_config(filename: str) -> Dict[str, Any]:
     """Load JSON configuration file from config directory."""
     try:
         if CONFIG_DIR:
@@ -280,282 +107,392 @@ def load_json_config(filename):
         return {}
 
 
-def load_generator_config():
-    """Load generator model configuration for Azure OpenAI.
-    Injects model and temperature from infra.json."""
-    generator_config = load_json_config("generator.json")
-    
-    # Inject model and temperature from infra.json
-    azure_config = get_azure_openai_config()
-    if "generator" in generator_config:
-        if "model_kwargs" not in generator_config["generator"]:
-            generator_config["generator"]["model_kwargs"] = {}
-        # Set model and temperature from infra.json
-        generator_config["generator"]["model_kwargs"]["model"] = azure_config.get("deployment", "")
-        if "temperature" in azure_config:
-            generator_config["generator"]["model_kwargs"]["temperature"] = azure_config["temperature"]
+# ============================================================================
+# Infrastructure Configuration Loaders
+# ============================================================================
 
-    # Get client classes lazily to avoid circular imports
-    client_classes = get_client_classes()
-    
-    # Add client class for Azure provider (legacy support)
-    if "providers" in generator_config:
-        for provider_id, provider_config in generator_config["providers"].items():
-            if provider_id == "azure":
-                provider_config["model_client"] = client_classes.get("AzureAIClient")
-            elif provider_config.get("client_class") in client_classes:
-                provider_config["model_client"] = client_classes[provider_config["client_class"]]
-
-    return generator_config
-
-
-def load_embedder_config():
-    """Load embedder configuration for Azure OpenAI.
-    Injects model, dimensions, and initialize_kwargs from infra.json."""
-    embedder_config = load_json_config("embedder.json")
-    
-    # Inject model and dimensions from infra.json
-    embedding_config = get_azure_openai_embedding_config_from_infra()
-    
-    # Get initialize_kwargs for Azure OpenAI client
-    initialize_kwargs = get_azure_openai_embedding_config()
-    
-    # Get client classes lazily to avoid circular imports
-    client_classes = get_client_classes()
-    
-    # Process embedder configurations
-    for key in ["embedder", "embedder_azure"]:
-        if key in embedder_config:
-            if "model_kwargs" not in embedder_config[key]:
-                embedder_config[key]["model_kwargs"] = {}
-            # Set model and dimensions from infra.json
-            embedder_config[key]["model_kwargs"]["model"] = embedding_config.get("deployment", "text-embedding-3-large")
-            if "dimensions" in embedding_config:
-                embedder_config[key]["model_kwargs"]["dimensions"] = embedding_config["dimensions"]
-            
-            # Add initialize_kwargs for Azure OpenAI client
-            embedder_config[key]["initialize_kwargs"] = initialize_kwargs
-            
-            # Process client classes
-            if "client_class" in embedder_config[key]:
-                class_name = embedder_config[key]["client_class"]
-                if class_name in client_classes:
-                    embedder_config[key]["model_client"] = client_classes[class_name]
-
-    return embedder_config
-
-
-def get_embedder_config():
+def get_infra_config() -> InfraConfig:
     """
-    Get the current embedder configuration for Azure OpenAI.
-
-    Returns:
-        dict: The embedder configuration with model_client resolved
-    """
-    return configs.get("embedder", {})
-
-
-def get_embedder_type() -> str:
-    """
-    Get the current embedder type.
-
-    Returns:
-        str: Always returns 'azure' as only Azure OpenAI is supported
-    """
-    return 'azure'
-
-
-def is_ollama_embedder() -> bool:
-    """
-    Check if the current embedder is Ollama.
+    Get the infrastructure configuration from infra.json.
+    Loads the config on first access and caches it.
     
     Returns:
-        bool: Always returns False as Ollama is not supported
+        InfraConfig object with type-safe access to configuration
     """
-    return False
+    global _infra_config
+    if _infra_config is None:
+        config_dict = load_json_config("infra.json")
+        if config_dict:
+            try:
+                _infra_config = from_dict(InfraConfig, config_dict)
+                logger.info("Successfully loaded and validated infra.json")
+            except Exception as e:
+                logger.error(f"Failed to parse infra.json: {e}")
+                raise
+        else:
+            raise ValueError("infra.json is required but could not be loaded")
+    return _infra_config
 
 
-def load_repo_config():
-    """Load repository and file filters configuration from repo.json.
-    
-    The repo.json file is the single source of truth for file filtering.
-    See backend/config/repo.json for the complete filter lists.
+def get_managed_identity_client_id() -> Optional[str]:
+    """Get the managed identity client ID from infra.json."""
+    infra = get_infra_config()
+    return infra.managed_identity.client_id
+
+
+def get_azure_openai_config() -> Dict[str, str]:
     """
-    return load_json_config("repo.json")
-
-
-# Minimal fallback defaults if repo.json is missing or malformed
-# The authoritative source is backend/config/repo.json
-_FALLBACK_EXCLUDED_DIRS: List[str] = [
-    "./.venv/", "./venv/", "./node_modules/", "./.git/", "./__pycache__/",
-    "./dist/", "./build/", "./.idea/", "./.vscode/"
-]
-
-_FALLBACK_EXCLUDED_FILES: List[str] = [
-    "*.lock", ".DS_Store", "*.env", "*.pyc", "*.exe", "*.dll", "*.so"
-]
-
-
-def get_file_filters_config() -> Dict[str, List[str]]:
-    """
-    Get file filters configuration from repo.json.
-    
-    This is the single source of truth for file filtering.
-    Falls back to minimal defaults only if repo.json is missing.
+    Get Azure OpenAI configuration for text generation.
     
     Returns:
-        Dict containing excluded_dirs and excluded_files lists
+        Dict containing endpoint, api_version, deployment
     """
-    repo_config = load_repo_config()
-    file_filters = repo_config.get("file_filters", {}) if repo_config else {}
-
-    excluded_dirs = file_filters.get("excluded_dirs")
-    excluded_files = file_filters.get("excluded_files")
-
-    # Only use fallbacks if repo.json doesn't have the config
-    if excluded_dirs is None:
-        logger.warning("excluded_dirs not found in repo.json, using fallback defaults")
-        excluded_dirs = _FALLBACK_EXCLUDED_DIRS
-    if excluded_files is None:
-        logger.warning("excluded_files not found in repo.json, using fallback defaults")
-        excluded_files = _FALLBACK_EXCLUDED_FILES
-
+    infra = get_infra_config()
     return {
-        "excluded_dirs": excluded_dirs,
-        "excluded_files": excluded_files
+        "endpoint": infra.azure_openai.endpoint,
+        "api_version": infra.azure_openai.api_version,
+        "deployment": infra.azure_openai.deployment
     }
 
 
-def load_lang_config():
-    """Load language configuration."""
-    default_config = {
-        "supported_languages": {
-            "en": "English",
-            "ja": "Japanese (日本語)",
-            "zh": "Mandarin Chinese (中文)",
-            "zh-tw": "Traditional Chinese (繁體中文)",
-            "es": "Spanish (Español)",
-            "kr": "Korean (한국어)",
-            "vi": "Vietnamese (Tiếng Việt)",
-            "pt-br": "Brazilian Portuguese (Português Brasileiro)",
-            "fr": "Français (French)",
-            "ru": "Русский (Russian)"
-        },
-        "default": "en"
-    }
-
-    loaded_config = load_json_config("lang.json")
-
-    if not loaded_config:
-        return default_config
-
-    if "supported_languages" not in loaded_config or "default" not in loaded_config:
-        logger.warning(
-            "Language configuration file 'lang.json' is malformed. "
-            "Using default language configuration."
-        )
-        return default_config
-
-    return loaded_config
-
-
-# Initialize empty configuration
-configs = {}
-
-# Load all configuration files
-generator_config = load_generator_config()
-embedder_config = load_embedder_config()
-repo_config = load_repo_config()
-lang_config = load_lang_config()
-
-# Validate Azure OpenAI configuration
-if not is_azure_openai_configured():
-    logger.warning(
-        "Azure OpenAI is not properly configured. Please set the following:\n"
-        "- AZURE_OPENAI_API_KEY\n"
-        "- AZURE_OPENAI_ENDPOINT\n"
-        "- AZURE_OPENAI_VERSION\n"
-        "- AZURE_OPENAI_EMBEDDING_ENDPOINT (or use AZURE_OPENAI_ENDPOINT)\n"
-        "- AZURE_OPENAI_EMBEDDING_API_KEY (or use AZURE_OPENAI_API_KEY)\n"
-    )
-
-# Set default provider to Azure
-configs["default_provider"] = "azure"
-logger.info("Using Azure OpenAI as default provider")
-
-# Store generator config
-if generator_config:
-    configs["generator"] = generator_config.get("generator", {})
-
-# Update embedder configuration for Azure
-if embedder_config:
-    if "embedder_azure" in embedder_config:
-        logger.info("Using embedder_azure configuration from config file")
-        configs["embedder"] = embedder_config["embedder_azure"]
-    elif "embedder" in embedder_config:
-        configs["embedder"] = embedder_config["embedder"]
-    else:
-        # Create default Azure OpenAI embedder configuration
-        azure_config = get_azure_openai_embedding_config()
-        embedding_infra = get_azure_openai_embedding_config_from_infra()
-        # Get client class lazily to avoid circular imports
-        client_classes = get_client_classes()
-        configs["embedder"] = {
-            "client_class": "AzureAIClient",
-            "model_client": client_classes.get("AzureAIClient"),
-            "batch_size": 10,
-            "model_kwargs": {
-                "model": embedding_infra.get("deployment", "text-embedding-3-large"),
-                "dimensions": 3072,
-                "encoding_format": "float"
-            },
-            "initialize_kwargs": azure_config
-        }
-    logger.info("Using Azure OpenAI for embeddings")
+def get_azure_openai_embedding_config_from_infra() -> Dict[str, str]:
+    """
+    Get Azure OpenAI embedding configuration from infra.json.
     
-    # Copy retriever and text_splitter configurations
-    for key in ["retriever", "text_splitter"]:
-        if key in embedder_config:
-            configs[key] = embedder_config[key]
-
-# Update repository configuration
-if repo_config:
-    for key in ["file_filters", "repository"]:
-        if key in repo_config:
-            configs[key] = repo_config[key]
-
-# Update language configuration
-if lang_config:
-    configs["lang_config"] = lang_config
+    Returns:
+        Dict containing endpoint, api_version, deployment
+    """
+    infra = get_infra_config()
+    return {
+        "endpoint": infra.azure_openai_embedding.endpoint,
+        "api_version": infra.azure_openai_embedding.api_version,
+        "deployment": infra.azure_openai_embedding.deployment
+    }
 
 
-def get_model_config(provider=None, model=None):
+def is_azure_openai_configured() -> bool:
+    """
+    Check if Azure OpenAI is configured in infra.json.
+    
+    Returns:
+        bool: True if Azure OpenAI is properly configured
+    """
+    try:
+        infra = get_infra_config()
+        
+        # Check for basic Azure OpenAI configuration
+        has_basic_config = bool(
+            infra.azure_openai.endpoint and 
+            infra.azure_openai.api_version
+        )
+        
+        # Check for Azure endpoint pattern
+        has_azure_pattern = ".openai.azure.com" in infra.azure_openai.endpoint
+        
+        # Check for API key in environment (for local dev)
+        has_api_key = bool(os.environ.get("AZURE_OPENAI_API_KEY"))
+        
+        # Check for MSI client ID in infra.json (for production)
+        has_msi_config = bool(infra.managed_identity.client_id)
+        
+        # Either API key or MSI config is sufficient
+        return has_basic_config and has_azure_pattern and (has_api_key or has_msi_config)
+    except Exception:
+        return False
+
+
+def get_azure_openai_text_config() -> Dict[str, Any]:
+    """
+    Get Azure OpenAI configuration for text generation with MSI authentication.
+    
+    Returns:
+        Dict containing azure_endpoint, api_version, and managed_identity_client_id
+    """
+    infra = get_infra_config()
+    return {
+        "azure_endpoint": infra.azure_openai.endpoint,
+        "api_version": infra.azure_openai.api_version,
+        "managed_identity_client_id": infra.managed_identity.client_id
+    }
+
+
+def get_azure_deployment_name(model_name: str = None) -> str:
+    """
+    Get the Azure OpenAI deployment name from infra.json.
+    
+    Always returns the deployment from infra.json, ignoring any passed model_name.
+    
+    Args:
+        model_name: Ignored - always uses infra.json deployment
+    
+    Returns:
+        The deployment name from infra.json
+    """
+    infra = get_infra_config()
+    deployment = infra.azure_openai.deployment
+    if model_name and model_name != deployment:
+        logger.info(f"Ignoring requested model '{model_name}', using infra.json deployment: {deployment}")
+    return deployment
+
+
+def get_azure_openai_embedding_config() -> Dict[str, Any]:
+    """
+    Get Azure OpenAI configuration for embeddings with MSI authentication.
+    
+    Returns:
+        Dict containing azure_endpoint, api_version, and managed_identity_client_id
+    """
+    infra = get_infra_config()
+    return {
+        "azure_endpoint": infra.azure_openai_embedding.endpoint,
+        "api_version": infra.azure_openai_embedding.api_version,
+        "managed_identity_client_id": infra.managed_identity.client_id
+    }
+
+
+# ============================================================================
+# Embedder Configuration
+# ============================================================================
+
+def get_embedder_config_obj() -> EmbedderConfig:
+    """
+    Get the complete embedder configuration.
+    Loads on first access, injects values from infra config, and caches.
+    """
+    global _embedder_config
+    if _embedder_config is None:
+        config_dict = load_json_config("embedder.json")
+        if config_dict:
+            try:
+                _embedder_config = from_dict(EmbedderConfig, config_dict)
+                
+                # Inject values from infra.json
+                infra = get_infra_config()
+                _embedder_config.embedder.model_kwargs.model = infra.azure_openai_embedding.deployment
+                _embedder_config.embedder.model_kwargs.dimensions = infra.azure_openai_embedding.dimensions
+                _embedder_config.embedder.initialize_kwargs = get_azure_openai_embedding_config()
+                
+                logger.info("Successfully loaded and validated embedder.json")
+            except Exception as e:
+                logger.error(f"Failed to parse embedder.json: {e}")
+                raise
+    return _embedder_config
+
+
+def get_embedder_config() -> Dict[str, Any]:
+    """Get the embedder configuration as a dictionary (for backward compatibility)."""
+    config = get_embedder_config_obj()
+    # Exclude None values to prevent passing invalid params to embedder (e.g., temperature=None)
+    return config.embedder.model_dump(exclude_none=True)
+
+
+def get_retriever_config() -> Dict[str, Any]:
+    """Get the retriever configuration."""
+    config = get_embedder_config_obj()
+    return config.retriever.model_dump()
+
+
+def get_text_splitter_config() -> Dict[str, Any]:
+    """Get the text splitter configuration."""
+    config = get_embedder_config_obj()
+    return config.text_splitter.model_dump()
+
+
+# ============================================================================
+# Generator Configuration
+# ============================================================================
+
+def get_generator_full_config() -> GeneratorConfig:
+    """
+    Get the complete generator configuration.
+    Loads on first access and caches.
+    """
+    global _generator_config
+    if _generator_config is None:
+        config_dict = load_json_config("generator.json")
+        if config_dict:
+            try:
+                # Extract the 'generator' section from the JSON
+                generator_data = config_dict.get("generator", {})
+                _generator_config = from_dict(GeneratorConfig, generator_data)
+                
+                # Inject values from infra.json
+                infra = get_infra_config()
+                _generator_config.model_kwargs.model = infra.azure_openai.deployment
+                _generator_config.model_kwargs.temperature = infra.azure_openai.temperature
+                _generator_config.initialize_kwargs = get_azure_openai_text_config()
+                
+                logger.info("Successfully loaded and validated generator.json")
+            except Exception as e:
+                logger.error(f"Failed to parse generator.json: {e}")
+                raise
+    return _generator_config
+
+
+def get_generator_config() -> Dict[str, Any]:
+    """Get the generator configuration as a dictionary (for backward compatibility)."""
+    config = get_generator_full_config()
+    # Exclude None values to keep the dict clean
+    return config.model_dump(exclude_none=True)
+
+
+# ============================================================================
+# Repository Configuration
+# ============================================================================
+
+def get_file_filters_config_obj() -> FileFiltersConfig:
+    """
+    Get the file filters configuration.
+    Loads on first access and caches.
+    """
+    global _file_filters_config
+    if _file_filters_config is None:
+        config_dict = load_json_config("repo.json")
+        if config_dict:
+            try:
+                file_filters_data = config_dict.get("file_filters", {})
+                _file_filters_config = from_dict(FileFiltersConfig, file_filters_data)
+                logger.info("Successfully loaded and validated file_filters from repo.json")
+            except Exception as e:
+                logger.error(f"Failed to parse file_filters from repo.json: {e}")
+                raise
+    return _file_filters_config
+
+
+def get_repository_config_obj() -> RepositoryConfig:
+    """
+    Get the repository constraints configuration.
+    Loads on first access and caches.
+    """
+    global _repository_config
+    if _repository_config is None:
+        config_dict = load_json_config("repo.json")
+        if config_dict:
+            try:
+                repository_data = config_dict.get("repository", {})
+                _repository_config = from_dict(RepositoryConfig, repository_data)
+                logger.info("Successfully loaded and validated repository from repo.json")
+            except Exception as e:
+                logger.error(f"Failed to parse repository from repo.json: {e}")
+                raise
+    return _repository_config
+
+
+def get_file_filters_config() -> Dict[str, Any]:
+    """Get file filters configuration."""
+    config = get_file_filters_config_obj()
+    return {
+        "excluded_dirs": config.excluded_dirs,
+        "excluded_files": config.excluded_files
+    }
+
+
+def get_repository_config() -> Dict[str, Any]:
+    """Get repository constraints configuration."""
+    config = get_repository_config_obj()
+    return config.model_dump()
+
+
+# ============================================================================
+# Language Configuration
+# ============================================================================
+
+def get_lang_full_config() -> LanguageConfig:
+    """
+    Get the complete language configuration.
+    Loads on first access and caches.
+    """
+    global _lang_config
+    if _lang_config is None:
+        config_dict = load_json_config("lang.json")
+        if config_dict:
+            try:
+                _lang_config = from_dict(LanguageConfig, config_dict)
+                logger.info("Successfully loaded and validated lang.json")
+            except Exception as e:
+                logger.error(f"Failed to parse lang.json: {e}")
+                raise
+    return _lang_config
+
+
+def get_lang_config() -> Dict[str, Any]:
+    """Get language configuration as a dictionary (for backward compatibility)."""
+    config = get_lang_full_config()
+    return config.model_dump()
+
+
+def get_supported_languages() -> Dict[str, str]:
+    """Get supported languages mapping."""
+    config = get_lang_full_config()
+    return config.supported_languages
+
+
+def get_default_language() -> str:
+    """Get default language code."""
+    config = get_lang_full_config()
+    return config.default
+
+
+# ============================================================================
+# Client Management
+# ============================================================================
+
+def get_client_classes() -> Dict[str, Any]:
+    """
+    Get the client class mapping. Imports AzureAIClient lazily to avoid circular imports.
+    
+    Returns:
+        Dict mapping class name strings to actual class objects
+    """
+    global _client_classes
+    if _client_classes is None:
+        from backend.clients.azureai_client import AzureAIClient
+        _client_classes = {
+            "AzureAIClient": AzureAIClient,
+        }
+    return _client_classes
+
+
+def get_azure_ai_client(model: Optional[str] = None) -> Any:
+    """
+    Get a shared Azure AI client instance (singleton pattern).
+    
+    Args:
+        model: Optional model name (used to get initialize_kwargs)
+        
+    Returns:
+        Cached AzureAIClient instance
+    """
+    global _azure_ai_client
+    if _azure_ai_client is None:
+        from backend.clients.azureai_client import AzureAIClient
+        deployment_name = get_azure_deployment_name(model)
+        initialize_kwargs = get_azure_openai_text_config()
+        _azure_ai_client = AzureAIClient(**initialize_kwargs)
+        logger.info("[Config] Created shared AzureAIClient instance")
+    return _azure_ai_client
+
+
+def get_model_config(provider: str = None, model: str = None) -> Dict[str, Any]:
     """
     Get configuration for Azure OpenAI model.
 
     Parameters:
-        provider (str): Model provider (ignored, always uses 'azure')
-        model (str): Model name (ignored, always uses deployment from infra.json)
+        provider: Model provider (ignored, always uses 'azure')
+        model: Model name (ignored, always uses deployment from infra.json)
 
     Returns:
         dict: Configuration containing model_client, model and other parameters
     """
-    # Get Azure config from infra.json
-    azure_config = get_azure_openai_config()
-
-    # Always use model from infra.json - ignore passed model parameter
-    deployment = azure_config.get("deployment", "o4-mini")
-
-    # Get temperature from infra.json
-    temperature = azure_config.get("temperature", 1.0)
+    infra = get_infra_config()
+    deployment = infra.azure_openai.deployment
+    temperature = infra.azure_openai.temperature
 
     logger.info(f"Using Azure OpenAI deployment from infra.json: {deployment}")
 
-    # Get client class lazily to avoid circular imports
     client_classes = get_client_classes()
 
-    # Prepare Azure configuration
-    result = {
+    return {
         "model_client": client_classes.get("AzureAIClient"),
         "initialize_kwargs": get_azure_openai_text_config(),
         "model_kwargs": {
@@ -564,4 +501,77 @@ def get_model_config(provider=None, model=None):
         }
     }
 
-    return result
+
+# ============================================================================
+# Legacy Support - configs dictionary
+# ============================================================================
+
+def get_configs_dict() -> Dict[str, Any]:
+    """
+    Get all configurations as a dictionary (for backward compatibility).
+    This maintains the same structure as the original config.py.
+    """
+    configs = {
+        "default_provider": "azure",
+        "generator": get_generator_config(),
+        "embedder": get_embedder_config(),
+        "retriever": get_retriever_config(),
+        "text_splitter": get_text_splitter_config(),
+        "file_filters": get_file_filters_config(),
+        "repository": get_repository_config(),
+        "lang_config": get_lang_config(),
+    }
+    
+    # Add model_client to embedder config
+    client_classes = get_client_classes()
+    configs["embedder"]["model_client"] = client_classes.get("AzureAIClient")
+    
+    return configs
+
+
+# For backward compatibility, expose a configs dictionary
+# This allows existing code to work without modification
+configs = get_configs_dict()
+
+
+# ============================================================================
+# Legacy Function Aliases
+# ============================================================================
+
+def get_embedder_type() -> str:
+    """Always returns 'azure' as only Azure OpenAI is supported."""
+    return 'azure'
+
+
+def is_ollama_embedder() -> bool:
+    """Always returns False as Ollama is not supported."""
+    return False
+
+
+def load_generator_config() -> Dict[str, Any]:
+    """Legacy function - use get_generator_config() instead."""
+    # Return in old format for backward compatibility
+    return {"generator": get_generator_config()}
+
+
+def load_embedder_config() -> Dict[str, Any]:
+    """Legacy function - use get_embedder_config() instead."""
+    return {
+        "embedder": get_embedder_config(),
+        "retriever": get_retriever_config(),
+        "text_splitter": get_text_splitter_config()
+    }
+
+
+def load_repo_config() -> Dict[str, Any]:
+    """Legacy function - use get_file_filters_config() and get_repository_config() instead."""
+    # Return in old format for backward compatibility
+    return {
+        "file_filters": get_file_filters_config_obj().model_dump(),
+        "repository": get_repository_config_obj().model_dump()
+    }
+
+
+def load_lang_config() -> Dict[str, Any]:
+    """Legacy function - use get_lang_config() instead."""
+    return get_lang_config()
