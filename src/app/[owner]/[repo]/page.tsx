@@ -3029,8 +3029,8 @@ IMPORTANT:
 
             {/* Chat Panel (Right side - 1/3 on large screens) */}
             <div className={`h-full flex-shrink-0 transition-all duration-300 ${isChatPanelCollapsed ? 'hidden lg:block lg:w-12' : 'w-full lg:w-1/3 min-w-[300px]'}`}>
-              {isChatPanelCollapsed ? (
-                /* Collapsed state - just show expand button */
+              {/* Collapsed state - just show expand button */}
+              {isChatPanelCollapsed && (
                 <div className="hidden lg:flex h-full items-start pt-4">
                   <button
                     onClick={() => setIsChatPanelCollapsed(false)}
@@ -3041,38 +3041,38 @@ IMPORTANT:
                     <FaComments className="text-lg" />
                   </button>
                 </div>
-              ) : (
-                /* Expanded state - show full chat panel */
-                <div className="h-full bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese flex flex-col overflow-hidden">
-                  {/* Chat Header */}
-                  <div className="flex items-center justify-between p-3 border-b border-[var(--border-color)] bg-[var(--background)]/50">
-                    <h3 className="text-sm font-semibold text-[var(--foreground)] font-serif flex items-center gap-2">
-                      <FaComments className="text-[var(--accent-primary)]" />
-                      {messages.ask?.title || 'Ask about this repository'}
-                    </h3>
-                    <button
-                      onClick={() => setIsChatPanelCollapsed(true)}
-                      className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors p-1.5 rounded-md hover:bg-[var(--background)]"
-                      aria-label="Collapse chat"
-                      title="Collapse chat"
-                    >
-                      <FaTimes className="text-sm" />
-                    </button>
-                  </div>
-                  {/* Chat Content */}
-                  <div className="flex-1 overflow-y-auto p-4">
-                    <Ask
-                      repoInfo={effectiveRepoInfo}
-                      provider={selectedProviderState}
-                      model={selectedModelState}
-                      isCustomModel={isCustomSelectedModelState}
-                      customModel={customSelectedModelState}
-                      language={language}
-                      onRef={(ref) => (askComponentRef.current = ref)}
-                    />
-                  </div>
-                </div>
               )}
+              
+              {/* Chat panel - always rendered but hidden when collapsed to preserve state */}
+              <div className={`h-full bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese flex flex-col overflow-hidden ${isChatPanelCollapsed ? 'hidden' : ''}`}>
+                {/* Chat Header */}
+                <div className="flex items-center justify-between p-3 border-b border-[var(--border-color)] bg-[var(--background)]/50">
+                  <h3 className="text-sm font-semibold text-[var(--foreground)] font-serif flex items-center gap-2">
+                    <FaComments className="text-[var(--accent-primary)]" />
+                    {messages.ask?.title || 'Ask about this repository'}
+                  </h3>
+                  <button
+                    onClick={() => setIsChatPanelCollapsed(true)}
+                    className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors p-1.5 rounded-md hover:bg-[var(--background)]"
+                    aria-label="Collapse chat"
+                    title="Collapse chat"
+                  >
+                    <FaTimes className="text-sm" />
+                  </button>
+                </div>
+                {/* Chat Content */}
+                <div className="flex-1 overflow-y-auto p-4">
+                  <Ask
+                    repoInfo={effectiveRepoInfo}
+                    provider={selectedProviderState}
+                    model={selectedModelState}
+                    isCustomModel={isCustomSelectedModelState}
+                    customModel={customSelectedModelState}
+                    language={language}
+                    onRef={(ref) => (askComponentRef.current = ref)}
+                  />
+                </div>
+              </div>
             </div>
 
             {/* Mobile Chat Toggle Button - only shown on small screens when chat is collapsed */}
