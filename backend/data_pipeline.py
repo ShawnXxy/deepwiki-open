@@ -12,6 +12,7 @@ from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
 from backend.config import configs, get_file_filters_config
 from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
+from backend.types import FileFilter
 from urllib.parse import urlparse, urlunparse, quote
 import requests
 from requests.exceptions import RequestException
@@ -342,129 +343,53 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
                        ".jsx", ".tsx", ".html", ".css", ".php", ".swift", ".cs"]
     doc_extensions = [".md", ".txt", ".rst", ".json", ".yaml", ".yml"]
 
-    # Determine filtering mode: inclusion or exclusion
-    use_inclusion_mode = (included_dirs is not None and len(included_dirs) > 0) or (included_files is not None and len(included_files) > 0)
-
-    if use_inclusion_mode:
+    # Initialize FileFilter with inclusion/exclusion rules
+    if (included_dirs is not None and len(included_dirs) > 0) or (included_files is not None and len(included_files) > 0):
         # Inclusion mode: only process specified directories and files
-        final_included_dirs = set(included_dirs) if included_dirs else set()
-        final_included_files = set(included_files) if included_files else set()
-
+        file_filter = FileFilter(
+            included_dirs=set(included_dirs) if included_dirs else set(),
+            included_patterns=set(included_files) if included_files else set(),
+            max_file_size_mb=10
+        )
         logger.info(f"Using inclusion mode")
-        logger.info(f"Included directories: {list(final_included_dirs)}")
-        logger.info(f"Included files: {list(final_included_files)}")
-
-        # Convert to lists for processing
-        included_dirs = list(final_included_dirs)
-        included_files = list(final_included_files)
-        excluded_dirs = []
-        excluded_files = []
+        logger.info(f"Included directories: {list(file_filter.included_dirs)}")
+        logger.info(f"Included patterns: {list(file_filter.included_patterns)}")
     else:
         # Exclusion mode: load filters from repo.json (single source of truth)
         file_filters = get_file_filters_config()
         final_excluded_dirs = set(file_filters["excluded_dirs"])
-        final_excluded_files = set(file_filters["excluded_files"])
+        final_excluded_patterns = set(file_filters["excluded_files"])
 
         # Add any explicitly provided excluded directories and files
         if excluded_dirs is not None:
             final_excluded_dirs.update(excluded_dirs)
-
         if excluded_files is not None:
-            final_excluded_files.update(excluded_files)
+            final_excluded_patterns.update(excluded_files)
 
-        # Convert back to lists for compatibility
-        excluded_dirs = list(final_excluded_dirs)
-        excluded_files = list(final_excluded_files)
-        included_dirs = []
-        included_files = []
-
+        file_filter = FileFilter(
+            excluded_dirs=final_excluded_dirs,
+            excluded_patterns=final_excluded_patterns,
+            max_file_size_mb=10
+        )
         logger.info(f"Using exclusion mode")
-        logger.info(f"Excluded directories: {excluded_dirs}")
-        logger.info(f"Excluded files: {excluded_files}")
+        logger.info(f"Excluded directories: {list(file_filter.excluded_dirs)}")
+        logger.info(f"Excluded patterns: {list(file_filter.excluded_patterns)}")
 
     logger.info(f"Reading documents from {path}")
-
-    def should_process_file(file_path: str, use_inclusion: bool, included_dirs: List[str], included_files: List[str],
-                           excluded_dirs: List[str], excluded_files: List[str]) -> bool:
-        """
-        Determine if a file should be processed based on inclusion/exclusion rules.
-
-        Args:
-            file_path (str): The file path to check
-            use_inclusion (bool): Whether to use inclusion mode
-            included_dirs (List[str]): List of directories to include
-            included_files (List[str]): List of files to include
-            excluded_dirs (List[str]): List of directories to exclude
-            excluded_files (List[str]): List of files to exclude
-
-        Returns:
-            bool: True if the file should be processed, False otherwise
-        """
-        file_path_parts = os.path.normpath(file_path).split(os.sep)
-        file_name = os.path.basename(file_path)
-
-        if use_inclusion:
-            # Inclusion mode: file must be in included directories or match included files
-            is_included = False
-
-            # Check if file is in an included directory
-            if included_dirs:
-                for included in included_dirs:
-                    clean_included = included.strip("./").rstrip("/")
-                    if clean_included in file_path_parts:
-                        is_included = True
-                        break
-
-            # Check if file matches included file patterns
-            if not is_included and included_files:
-                for included_file in included_files:
-                    if file_name == included_file or file_name.endswith(included_file):
-                        is_included = True
-                        break
-
-            # If no inclusion rules are specified for a category, allow all files from that category
-            if not included_dirs and not included_files:
-                is_included = True
-            elif not included_dirs and included_files:
-                # Only file patterns specified, allow all directories
-                pass  # is_included is already set based on file patterns
-            elif included_dirs and not included_files:
-                # Only directory patterns specified, allow all files in included directories
-                pass  # is_included is already set based on directory patterns
-
-            return is_included
-        else:
-            # Exclusion mode: file must not be in excluded directories or match excluded files
-            is_excluded = False
-
-            # Check if file is in an excluded directory
-            for excluded in excluded_dirs:
-                clean_excluded = excluded.strip("./").rstrip("/")
-                if clean_excluded in file_path_parts:
-                    is_excluded = True
-                    break
-
-            # Check if file matches excluded file patterns
-            if not is_excluded:
-                for excluded_file in excluded_files:
-                    if file_name == excluded_file:
-                        is_excluded = True
-                        break
-
-            return not is_excluded
 
     # Process code files first
     for ext in code_extensions:
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
         for file_path in files:
             # Check if file should be processed based on inclusion/exclusion rules
-            if not should_process_file(file_path, use_inclusion_mode, included_dirs, included_files, excluded_dirs, excluded_files):
+            relative_path = os.path.relpath(file_path, path)
+            file_size = os.path.getsize(file_path)
+            if not file_filter.should_process_file(relative_path, file_size):
                 continue
 
             try:
                 # Use safe_read_file for automatic encoding detection
                 content = safe_read_file(file_path)
-                relative_path = os.path.relpath(file_path, path)
 
                 # Determine if this is an implementation file
                 is_implementation = (
@@ -499,13 +424,14 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
         for file_path in files:
             # Check if file should be processed based on inclusion/exclusion rules
-            if not should_process_file(file_path, use_inclusion_mode, included_dirs, included_files, excluded_dirs, excluded_files):
+            relative_path = os.path.relpath(file_path, path)
+            file_size = os.path.getsize(file_path)
+            if not file_filter.should_process_file(relative_path, file_size):
                 continue
 
             try:
                 # Use safe_read_file for automatic encoding detection
                 content = safe_read_file(file_path)
-                relative_path = os.path.relpath(file_path, path)
 
                 # Check token count
                 token_count = count_tokens(content, embedder_type)

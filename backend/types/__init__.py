@@ -50,6 +50,15 @@ from .git_types import (
     create_git_source_from_params,
 )
 
+from .processor_types import (
+    # Processing types
+    FileFilter,
+    ProcessedFile,
+    FileProcessingStats,
+    DocumentChunk,
+    RepositoryMetadata,
+)
+
 __all__ = [
     # Infra config
     'ManagedIdentityConfig',
@@ -89,4 +98,11 @@ __all__ = [
     'WikiCacheIdentifier',
     'parse_github_url',
     'create_git_source_from_params',
+    
+    # Processing types
+    'FileFilter',
+    'ProcessedFile',
+    'FileProcessingStats',
+    'DocumentChunk',
+    'RepositoryMetadata',
 ]

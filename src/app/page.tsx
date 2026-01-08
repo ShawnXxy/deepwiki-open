@@ -53,7 +53,7 @@ export default function Home() {
     // Split the key by dots to access nested properties
     const keys = key.split('.');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let value: any = messages;
+    let value: unknown = messages;
 
     // Navigate through the nested properties
     for (const k of keys) {

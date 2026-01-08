@@ -1812,8 +1812,14 @@ IMPORTANT:
 
         const headers = createGitlabHeaders(currentToken);
 
-        /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-        const filesData: any[] = [];
+        interface GitLabFile {
+          id: string;
+          name: string;
+          type: 'tree' | 'blob';
+          path: string;
+          mode: string;
+        }
+        const filesData: GitLabFile[] = [];
 
         try {
           // Step 1: Get project info to determine default branch

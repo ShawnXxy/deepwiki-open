@@ -4,7 +4,7 @@ These classes provide strong typing and validation for git repository sources.
 """
 
 from typing import Optional, Literal
-from pydantic import BaseModel, Field, validator, HttpUrl
+from pydantic import BaseModel, Field, validator
 from urllib.parse import urlparse
 
 
@@ -60,7 +60,7 @@ class GitRepository(BaseModel):
         # Basic URL validation
         try:
             parsed = urlparse(v)
-            if not parsed.scheme in ['http', 'https']:
+            if parsed.scheme not in ['http', 'https']:
                 raise ValueError("Repository URL must use http or https protocol")
             if not parsed.netloc:
                 raise ValueError("Repository URL must have a valid domain")
@@ -180,7 +180,7 @@ def parse_github_url(url: str) -> tuple[Optional[str], Optional[str]]:
             owner = path_parts[0]
             repo = path_parts[1].replace('.git', '')
             return owner, repo
-    except:
+    except Exception:
         pass
     
     return None, None
