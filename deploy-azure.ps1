@@ -15,8 +15,6 @@ $APP_NAME = "orcascodewiki"
 # Managed Identity (from your infra.json)
 $MSI_NAME = "mid-deepwiki-ea"
 
-# Storage Account (for blob storage firewall configuration)
-$STORAGE_ACCOUNT_NAME = "amldwstorage"
 # Storage account name from infra.json
 $STORAGE_ACCOUNT_NAME = "amldwstorage"
 
@@ -103,9 +101,10 @@ Write-Host "   Using local Docker build (faster with .dockerignore)..." -Foregro
 Write-Host "   Logging into ACR..." -ForegroundColor Gray
 az acr login --name $ACR_NAME
 
-# Build locally (respects .dockerignore properly)
-Write-Host "   Building Docker image locally..." -ForegroundColor Gray
-docker build -t "${ACR_LOGIN_SERVER}/codewiki:latest" -f Dockerfile .
+# Build locally with --no-cache to ensure latest code is included
+# Docker layer caching can cause stale code to be deployed if layers haven't changed
+Write-Host "   Building Docker image locally (--no-cache for fresh build)..." -ForegroundColor Gray
+docker build --no-cache -t "${ACR_LOGIN_SERVER}/codewiki:latest" -f Dockerfile .
 
 # Push to ACR
 Write-Host "   Pushing to ACR..." -ForegroundColor Gray
@@ -165,14 +164,20 @@ Write-Host "🚀 Step 5: Deploying Container App..." -ForegroundColor Cyan
 $ACR_USERNAME = az acr credential show --name $ACR_NAME --query username -o tsv
 $ACR_PASSWORD = az acr credential show --name $ACR_NAME --query "passwords[0].value" -o tsv
 
+# Generate deployment timestamp to force new revision even if image digest is same
+$DEPLOY_TIMESTAMP = Get-Date -Format 'yyyyMMddHHmmss'
+
 # Check if app exists
 $appExists = az containerapp show --name $APP_NAME --resource-group $RESOURCE_GROUP 2>$null
 if ($appExists) {
-    Write-Host "   Updating existing app..." -ForegroundColor Yellow
+    Write-Host "   Updating existing app (timestamp: $DEPLOY_TIMESTAMP)..." -ForegroundColor Yellow
+    # Include DEPLOY_TIMESTAMP env var to force a new revision
+    # This ensures Container Apps creates a new revision even if image digest hasn't changed
     az containerapp update `
         --name $APP_NAME `
         --resource-group $RESOURCE_GROUP `
-        --image "$ACR_LOGIN_SERVER/codewiki:latest"
+        --image "$ACR_LOGIN_SERVER/codewiki:latest" `
+        --set-env-vars "DEPLOY_TIMESTAMP=$DEPLOY_TIMESTAMP"
 } else {
     Write-Host "   Creating new app..." -ForegroundColor Yellow
     # Using D4 dedicated workload profile with 4 CPU / 16GB RAM
@@ -193,8 +198,26 @@ if ($appExists) {
         --registry-server $ACR_LOGIN_SERVER `
         --registry-username $ACR_USERNAME `
         --registry-password $ACR_PASSWORD `
-        --env-vars "PORT=8001" "NODE_ENV=production" "LOG_LEVEL=INFO"
+        --env-vars "PORT=8001" "NODE_ENV=production" "LOG_LEVEL=INFO" "DEPLOY_TIMESTAMP=$DEPLOY_TIMESTAMP"
 }
+
+# Verify deployment - check that a new revision was created
+Write-Host "   Verifying deployment..." -ForegroundColor Gray
+$latestRevision = az containerapp show `
+    --name $APP_NAME `
+    --resource-group $RESOURCE_GROUP `
+    --query "properties.latestRevisionName" -o tsv
+
+$revisionInfo = az containerapp revision show `
+    --name $APP_NAME `
+    --resource-group $RESOURCE_GROUP `
+    --revision $latestRevision `
+    --query "{name:name, created:properties.createdTime, active:properties.active, replicas:properties.replicas}" -o json | ConvertFrom-Json
+
+Write-Host "   Latest revision: $($revisionInfo.name)" -ForegroundColor Gray
+Write-Host "   Created: $($revisionInfo.created)" -ForegroundColor Gray
+Write-Host "   Active: $($revisionInfo.active)" -ForegroundColor Gray
+Write-Host "   Replicas: $($revisionInfo.replicas)" -ForegroundColor Gray
 
 Write-Host "✅ Container App deployed" -ForegroundColor Green
 
@@ -224,11 +247,11 @@ $MSI_CLIENT_ID = az identity show `
     --resource-group $RESOURCE_GROUP `
     --query clientId -o tsv
 
-# Update environment variable with MSI Client ID
+# Update environment variable with MSI Client ID (preserve DEPLOY_TIMESTAMP)
 az containerapp update `
     --name $APP_NAME `
     --resource-group $RESOURCE_GROUP `
-    --set-env-vars "AZURE_CLIENT_ID=$MSI_CLIENT_ID"
+    --set-env-vars "AZURE_CLIENT_ID=$MSI_CLIENT_ID" "DEPLOY_TIMESTAMP=$DEPLOY_TIMESTAMP"
 
 Write-Host "✅ Managed Identity configured" -ForegroundColor Green
 
