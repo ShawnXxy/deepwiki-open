@@ -28,6 +28,29 @@ interface Message {
   content: string;
 }
 
+interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  isStreaming?: boolean;
+  isDeepResearch?: boolean;
+  researchData?: {
+    iterations: ResearchIteration[];
+    finalConclusion?: string;
+    isThinkingExpanded?: boolean;
+  };
+}
+
+interface ResearchIteration {
+  id: string;
+  iteration: number;
+  title: string;
+  content: string;
+  type: 'plan' | 'update' | 'conclusion';
+  isComplete: boolean;
+}
+
 interface ResearchStage {
   title: string;
   content: string;
@@ -58,6 +81,9 @@ const Ask: React.FC<AskProps> = ({
   const [response, setResponse] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [deepResearch, setDeepResearch] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
+  const [currentIterationIndex, setCurrentIterationIndex] = useState<Record<string, number>>({});
 
   // Model selection state
   const [selectedProvider, setSelectedProvider] = useState(provider);
@@ -80,6 +106,11 @@ const Ask: React.FC<AskProps> = ({
   const responseRef = useRef<HTMLDivElement>(null);
   const providerRef = useRef(provider);
   const modelRef = useRef(model);
+  
+  // Track the current assistant message ID for deep research updates
+  const currentAssistantMessageIdRef = useRef<string | null>(null);
+  // Accumulate all iteration content across continueResearch calls
+  const allIterationsContentRef = useRef<string[]>([]);
 
   // Focus input on component mount
   useEffect(() => {
@@ -163,13 +194,122 @@ const Ask: React.FC<AskProps> = ({
     setQuestion('');
     setResponse('');
     setConversationHistory([]);
+    setChatMessages([]);
+    setExpandedThinking({});
+    setCurrentIterationIndex({});
     setResearchIteration(0);
     setResearchComplete(false);
     setResearchStages([]);
     setCurrentStageIndex(0);
+    currentAssistantMessageIdRef.current = null;
+    allIterationsContentRef.current = [];
     if (inputRef.current) {
       inputRef.current.focus();
     }
+  };
+
+  // Toggle thinking section expansion for a message
+  const toggleThinking = (messageId: string) => {
+    setExpandedThinking(prev => ({
+      ...prev,
+      [messageId]: !prev[messageId]
+    }));
+  };
+
+  // Navigate to a specific iteration in a message's thinking section
+  const navigateIteration = (messageId: string, direction: 'prev' | 'next', totalIterations: number) => {
+    setCurrentIterationIndex(prev => {
+      const current = prev[messageId] || 0;
+      if (direction === 'prev' && current > 0) {
+        return { ...prev, [messageId]: current - 1 };
+      }
+      if (direction === 'next' && current < totalIterations - 1) {
+        return { ...prev, [messageId]: current + 1 };
+      }
+      return prev;
+    });
+  };
+
+  // Extract final conclusion from content
+  const extractFinalConclusion = (content: string): string | null => {
+    const conclusionMatch = content.match(/## Final Conclusion([\s\S]*?)$/);
+    if (conclusionMatch) {
+      return '## Final Conclusion' + conclusionMatch[1];
+    }
+    // Also check for regular conclusion
+    const regularConclusionMatch = content.match(/## Conclusion([\s\S]*?)$/);
+    if (regularConclusionMatch && !content.includes('Next Steps')) {
+      return '## Conclusion' + regularConclusionMatch[1];
+    }
+    return null;
+  };
+
+  // Parse research content into iterations from accumulated content array
+  const parseResearchIterationsFromArray = (iterationContents: string[]): ResearchIteration[] => {
+    const iterations: ResearchIteration[] = [];
+    
+    iterationContents.forEach((content, idx) => {
+      let type: 'plan' | 'update' | 'conclusion' = 'update';
+      let title = `Research Update ${idx + 1}`;
+      
+      if (content.includes('## Research Plan')) {
+        type = 'plan';
+        title = 'Research Plan';
+      } else if (content.includes('## Final Conclusion')) {
+        type = 'conclusion';
+        title = 'Final Conclusion';
+      } else {
+        // Extract iteration number from "## Research Update X"
+        const updateMatch = content.match(/## Research Update (\d+)/);
+        if (updateMatch) {
+          title = `Research Update ${updateMatch[1]}`;
+        }
+      }
+      
+      iterations.push({
+        id: `iteration-${idx}`,
+        iteration: idx,
+        title,
+        content,
+        type,
+        isComplete: true
+      });
+    });
+    
+    return iterations;
+  };
+
+  // Legacy parse function for backward compatibility
+  const parseResearchIterations = (content: string, iteration: number): ResearchIteration[] => {
+    const iterations: ResearchIteration[] = [];
+    
+    // Check for research plan
+    if (content.includes('## Research Plan')) {
+      iterations.push({
+        id: `plan-${Date.now()}`,
+        iteration: 0,
+        title: 'Research Plan',
+        content: content,
+        type: 'plan',
+        isComplete: true
+      });
+    }
+    
+    // Check for research updates
+    for (let i = 1; i <= iteration; i++) {
+      if (content.includes(`## Research Update ${i}`) || (i === 1 && content.includes('## Research Update'))) {
+        iterations.push({
+          id: `update-${i}-${Date.now()}`,
+          iteration: i,
+          title: `Research Update ${i}`,
+          content: content,
+          type: 'update',
+          isComplete: true
+        });
+      }
+    }
+    
+    return iterations;
   };
   const downloadresponse = () =>{
   const blob = new Blob([response], { type: 'text/markdown' });
@@ -296,6 +436,9 @@ const Ask: React.FC<AskProps> = ({
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     setIsLoading(true);
+    
+    // Get the current assistant message ID
+    const assistantMessageId = currentAssistantMessageIdRef.current;
 
     try {
       // Store the current response for use in the history
@@ -357,6 +500,30 @@ const Ask: React.FC<AskProps> = ({
           fullResponse += message;
           setResponse(fullResponse);
 
+          // Update chat message with accumulated iterations
+          if (deepResearch && assistantMessageId) {
+            // Build iterations from all accumulated content plus current streaming
+            const iterationsContent = [...allIterationsContentRef.current, fullResponse];
+            const iterations = parseResearchIterationsFromArray(iterationsContent);
+            const conclusion = extractFinalConclusion(fullResponse);
+            
+            console.log('[Deep Research] continueResearch streaming - accumulated:', allIterationsContentRef.current.length, 'current iteration:', newIteration, 'parsed iterations:', iterations.length);
+            
+            setChatMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { 
+                    ...msg, 
+                    content: fullResponse,
+                    researchData: {
+                      iterations,
+                      finalConclusion: conclusion || undefined,
+                      isThinkingExpanded: true
+                    }
+                  }
+                : msg
+            ));
+          }
+
           // Extract research stage if this is a deep research response
           if (deepResearch) {
             const stage = extractResearchStage(fullResponse, newIteration);
@@ -385,10 +552,13 @@ const Ask: React.FC<AskProps> = ({
         (error: Event) => {
           console.error('WebSocket error:', error);
           // Fallback to HTTP if WebSocket fails or is unavailable
-          fallbackToHttp(requestBody);
+          fallbackToHttp(requestBody, assistantMessageId || undefined);
         },
         // Close handler
         () => {
+          // Store this iteration's content
+          allIterationsContentRef.current = [...allIterationsContentRef.current, fullResponse];
+          
           // Check if research is complete when the WebSocket closes
           const isComplete = checkIfResearchComplete(fullResponse);
 
@@ -400,9 +570,39 @@ const Ask: React.FC<AskProps> = ({
             const completionNote = "\n\n## Final Conclusion\nAfter multiple iterations of deep research, we've gathered significant insights about this topic. This concludes our investigation process, having reached the maximum number of research iterations. The findings presented across all iterations collectively form our comprehensive answer to the original question.";
             fullResponse += completionNote;
             setResponse(fullResponse);
+            
+            // Update the stored content with the completion note
+            allIterationsContentRef.current[allIterationsContentRef.current.length - 1] = fullResponse;
             setResearchComplete(true);
           } else {
             setResearchComplete(isComplete);
+          }
+          
+          // Final update to chat message
+          if (assistantMessageId) {
+            const iterationsContent = allIterationsContentRef.current;
+            const iterations = parseResearchIterationsFromArray(iterationsContent);
+            const conclusion = extractFinalConclusion(fullResponse);
+            
+            setChatMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { 
+                    ...msg, 
+                    isStreaming: !isComplete && !forceComplete,
+                    content: fullResponse,
+                    researchData: {
+                      iterations,
+                      finalConclusion: conclusion || undefined,
+                      isThinkingExpanded: !conclusion // Collapse if we have conclusion
+                    }
+                  }
+                : msg
+            ));
+            
+            // Collapse thinking when research is complete
+            if (isComplete || forceComplete) {
+              setExpandedThinking(prev => ({ ...prev, [assistantMessageId]: false }));
+            }
           }
 
           setIsLoading(false);
@@ -420,7 +620,7 @@ const Ask: React.FC<AskProps> = ({
   };
 
   // Fallback to HTTP if WebSocket fails
-  const fallbackToHttp = async (requestBody: ChatCompletionRequest) => {
+  const fallbackToHttp = async (requestBody: ChatCompletionRequest, assistantMessageId?: string) => {
     try {
       // Make the API call using HTTP
       const apiResponse = await fetch(`/api/chat/stream`, {
@@ -452,6 +652,15 @@ const Ask: React.FC<AskProps> = ({
         const chunk = decoder.decode(value, { stream: true });
         fullResponse += chunk;
         setResponse(fullResponse);
+        
+        // Update chat message if we have an ID
+        if (assistantMessageId) {
+          setChatMessages(prev => prev.map(msg => 
+            msg.id === assistantMessageId 
+              ? { ...msg, content: fullResponse }
+              : msg
+          ));
+        }
 
         // Extract research stage if this is a deep research response
         if (deepResearch) {
@@ -472,6 +681,15 @@ const Ask: React.FC<AskProps> = ({
         }
       }
 
+      // Mark message as done streaming
+      if (assistantMessageId) {
+        setChatMessages(prev => prev.map(msg => 
+          msg.id === assistantMessageId 
+            ? { ...msg, isStreaming: false }
+            : msg
+        ));
+      }
+
       // Check if research is complete
       const isComplete = checkIfResearchComplete(fullResponse);
 
@@ -483,6 +701,13 @@ const Ask: React.FC<AskProps> = ({
         const completionNote = "\n\n## Final Conclusion\nAfter multiple iterations of deep research, we've gathered significant insights about this topic. This concludes our investigation process, having reached the maximum number of research iterations. The findings presented across all iterations collectively form our comprehensive answer to the original question.";
         fullResponse += completionNote;
         setResponse(fullResponse);
+        if (assistantMessageId) {
+          setChatMessages(prev => prev.map(msg => 
+            msg.id === assistantMessageId 
+              ? { ...msg, content: fullResponse }
+              : msg
+          ));
+        }
         setResearchComplete(true);
       } else {
         setResearchComplete(isComplete);
@@ -490,6 +715,13 @@ const Ask: React.FC<AskProps> = ({
     } catch (error) {
       console.error('Error during HTTP fallback:', error);
       setResponse(prev => prev + '\n\nError: Failed to get a response. Please try again.');
+      if (assistantMessageId) {
+        setChatMessages(prev => prev.map(msg => 
+          msg.id === assistantMessageId 
+            ? { ...msg, content: msg.content + '\n\nError: Failed to get a response. Please try again.', isStreaming: false }
+            : msg
+        ));
+      }
       setResearchComplete(true);
     } finally {
       setIsLoading(false);
@@ -556,16 +788,56 @@ const Ask: React.FC<AskProps> = ({
 
   // Handle confirm and send request
   const handleConfirmAsk = async () => {
+    const currentQuestion = question;
+    setQuestion(''); // Clear input immediately
     setIsLoading(true);
     setResponse('');
     setResearchIteration(0);
     setResearchComplete(false);
+    
+    // Reset iteration tracking for new deep research
+    allIterationsContentRef.current = [];
+
+    // Add user message to chat
+    const userMessage: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: deepResearch ? `[DEEP RESEARCH] ${currentQuestion}` : currentQuestion,
+      timestamp: new Date(),
+      isDeepResearch: deepResearch
+    };
+    
+    // Add assistant placeholder message for streaming
+    const assistantMessageId = `assistant-${Date.now()}`;
+    const assistantMessage: ChatMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date(),
+      isStreaming: true,
+      isDeepResearch: deepResearch,
+      researchData: deepResearch ? {
+        iterations: [],
+        finalConclusion: undefined,
+        isThinkingExpanded: true
+      } : undefined
+    };
+    
+    setChatMessages(prev => [...prev, userMessage, assistantMessage]);
+    
+    // Store the assistant message ID for deep research updates
+    currentAssistantMessageIdRef.current = assistantMessageId;
+    
+    // Initialize thinking as expanded for new deep research
+    if (deepResearch) {
+      setExpandedThinking(prev => ({ ...prev, [assistantMessageId]: true }));
+    }
 
     try {
       // Create initial message
       const initialMessage: Message = {
         role: 'user',
-        content: deepResearch ? `[DEEP RESEARCH] ${question}` : question
+        content: deepResearch ? `[DEEP RESEARCH] ${currentQuestion}` : currentQuestion
       };
 
       // Set initial conversation history
@@ -596,6 +868,7 @@ const Ask: React.FC<AskProps> = ({
       closeWebSocket(webSocketRef.current);
 
       let fullResponse = '';
+      let accumulatedIterations: ResearchIteration[] = [];
 
       // Create a new WebSocket connection (returns null in cloud environments)
       const ws = createChatWebSocket(
@@ -604,6 +877,36 @@ const Ask: React.FC<AskProps> = ({
         (message: string) => {
           fullResponse += message;
           setResponse(fullResponse);
+          
+          // For deep research, track iterations and final conclusion
+          if (deepResearch) {
+            // Build iterations from current streaming content
+            const iterationsContent = [fullResponse];
+            const iterations = parseResearchIterationsFromArray(iterationsContent);
+            const conclusion = extractFinalConclusion(fullResponse);
+            accumulatedIterations = iterations;
+            
+            setChatMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { 
+                    ...msg, 
+                    content: fullResponse,
+                    researchData: {
+                      iterations: iterations,
+                      finalConclusion: conclusion || undefined,
+                      isThinkingExpanded: true
+                    }
+                  }
+                : msg
+            ));
+          } else {
+            // Update the assistant message with streaming content
+            setChatMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { ...msg, content: fullResponse }
+                : msg
+            ));
+          }
 
           // Extract research stage if this is a deep research response
           if (deepResearch) {
@@ -619,13 +922,41 @@ const Ask: React.FC<AskProps> = ({
         (error: Event) => {
           console.error('WebSocket error:', error);
           // Fallback to HTTP if WebSocket fails or is unavailable
-          fallbackToHttp(requestBody);
+          fallbackToHttp(requestBody, assistantMessageId);
         },
         // Close handler
         () => {
-          // If deep research is enabled, check if we should continue
+          // For deep research, store this iteration's content and finalize the message
           if (deepResearch) {
+            // Store first iteration content
+            allIterationsContentRef.current = [fullResponse];
+            
+            const iterations = parseResearchIterationsFromArray([fullResponse]);
+            const conclusion = extractFinalConclusion(fullResponse);
             const isComplete = checkIfResearchComplete(fullResponse);
+            
+            console.log('[Deep Research] handleConfirmAsk close - first iteration stored, isComplete:', isComplete, 'iterations:', iterations.length);
+            
+            setChatMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { 
+                    ...msg, 
+                    isStreaming: !isComplete,
+                    content: fullResponse,
+                    researchData: {
+                      iterations,
+                      finalConclusion: conclusion || undefined,
+                      isThinkingExpanded: !conclusion // Collapse if we have conclusion
+                    }
+                  }
+                : msg
+            ));
+            
+            // Collapse thinking when research is complete
+            if (conclusion) {
+              setExpandedThinking(prev => ({ ...prev, [assistantMessageId]: false }));
+            }
+            
             setResearchComplete(isComplete);
 
             // If not complete, start the research process
@@ -633,6 +964,13 @@ const Ask: React.FC<AskProps> = ({
               setResearchIteration(1);
               // The continueResearch function will be triggered by the useEffect
             }
+          } else {
+            // Mark message as done streaming
+            setChatMessages(prev => prev.map(msg => 
+              msg.id === assistantMessageId 
+                ? { ...msg, isStreaming: false }
+                : msg
+            ));
           }
 
           setIsLoading(false);
@@ -644,6 +982,11 @@ const Ask: React.FC<AskProps> = ({
     } catch (error) {
       console.error('Error during API call:', error);
       setResponse(prev => prev + '\n\nError: Failed to get a response. Please try again.');
+      setChatMessages(prev => prev.map(msg => 
+        msg.id === assistantMessageId 
+          ? { ...msg, content: msg.content + '\n\nError: Failed to get a response. Please try again.', isStreaming: false }
+          : msg
+      ));
       setResearchComplete(true);
       setIsLoading(false);
     }
@@ -662,183 +1005,229 @@ const Ask: React.FC<AskProps> = ({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto p-4">
-        {/* Model selection button hidden - users cannot change the model */}
-
-        {/* Response area - moved to top */}
-        {response && (
-          <div className="mb-4">
-            <div
-              ref={responseRef}
-              className="max-h-none"
-            >
-              <Markdown content={processCitations(response, repoInfo, detectCurrentBranch(repoInfo, 'main') ?? 'main')} />
-            </div>
-
-            {/* Research navigation and clear button */}
-            <div className="py-2 flex justify-between items-center border-t border-gray-200 dark:border-gray-700 mt-4">
-              {/* Research navigation */}
-              {deepResearch && researchStages.length > 1 && (
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => navigateToPreviousStage()}
-                    disabled={currentStageIndex === 0}
-                    className={`p-1 rounded-md ${currentStageIndex === 0 ? 'text-gray-400 dark:text-gray-600' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                    aria-label="Previous stage"
-                  >
-                    <FaChevronLeft size={12} />
-                  </button>
-
-                  <div className="text-xs text-gray-600 dark:text-gray-400">
-                    {currentStageIndex + 1} / {researchStages.length}
-                  </div>
-
-                  <button
-                    onClick={() => navigateToNextStage()}
-                    disabled={currentStageIndex === researchStages.length - 1}
-                    className={`p-1 rounded-md ${currentStageIndex === researchStages.length - 1 ? 'text-gray-400 dark:text-gray-600' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                    aria-label="Next stage"
-                  >
-                    <FaChevronRight size={12} />
-                  </button>
-
-                  <div className="text-xs text-gray-600 dark:text-gray-400 ml-2">
-                    {researchStages[currentStageIndex]?.title || `Stage ${currentStageIndex + 1}`}
+      <div ref={responseRef} className="flex-1 overflow-y-auto p-4">
+        {/* Chat messages */}
+        {chatMessages.length > 0 ? (
+          <div className="space-y-4">
+            {chatMessages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                <div
+                  className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                    msg.role === 'user'
+                      ? 'bg-[var(--accent-primary)] text-white rounded-br-md'
+                      : 'bg-[var(--card-bg)] border border-[var(--border-color)] rounded-bl-md'
+                  }`}
+                >
+                  {msg.role === 'user' ? (
+                    <div className="text-sm whitespace-pre-wrap">
+                      {msg.isDeepResearch && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-700 text-white mr-2 mb-1">
+                          🔬 Deep Research
+                        </span>
+                      )}
+                      {msg.content.replace('[DEEP RESEARCH] ', '')}
+                    </div>
+                  ) : (
+                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                      {/* Deep Research UI */}
+                      {msg.isDeepResearch && msg.researchData ? (
+                        <div className="space-y-3">
+                          {/* Thinking Process - Collapsible Section */}
+                          {(msg.researchData.iterations.length > 0 || msg.isStreaming) && (
+                            <div className="border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden">
+                              {/* Thinking Header - Click to expand/collapse */}
+                              <button
+                                onClick={() => toggleThinking(msg.id)}
+                                className="w-full flex items-center justify-between px-3 py-2 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-2 h-2 rounded-full ${msg.isStreaming ? 'bg-purple-500 animate-pulse' : 'bg-green-500'}`}></div>
+                                  <span className="text-xs font-medium text-purple-700 dark:text-purple-300">
+                                    {msg.isStreaming ? 'Thinking...' : 'Research Process'}
+                                  </span>
+                                  {msg.researchData.iterations.length > 0 && (
+                                    <span className="text-xs text-purple-500 dark:text-purple-400">
+                                      ({msg.researchData.iterations.length} {msg.researchData.iterations.length === 1 ? 'step' : 'steps'})
+                                    </span>
+                                  )}
+                                </div>
+                                <svg 
+                                  className={`w-4 h-4 text-purple-500 transition-transform ${expandedThinking[msg.id] ? 'rotate-180' : ''}`} 
+                                  fill="none" 
+                                  viewBox="0 0 24 24" 
+                                  stroke="currentColor"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+                              
+                              {/* Thinking Content - Expandable */}
+                              {expandedThinking[msg.id] && (
+                                <div className="max-h-64 overflow-y-auto">
+                                  {msg.researchData.iterations.length > 0 ? (
+                                    <div className="relative">
+                                      {/* Iteration Navigation */}
+                                      {msg.researchData.iterations.length > 1 && (
+                                        <div className="sticky top-0 z-10 flex items-center justify-between px-3 py-2 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm border-b border-purple-100 dark:border-purple-800">
+                                          <button
+                                            onClick={() => navigateIteration(msg.id, 'prev', msg.researchData!.iterations.length)}
+                                            disabled={(currentIterationIndex[msg.id] || 0) === 0}
+                                            className={`p-1 rounded ${(currentIterationIndex[msg.id] || 0) === 0 ? 'text-gray-300 dark:text-gray-600' : 'text-purple-600 hover:bg-purple-100 dark:hover:bg-purple-900'}`}
+                                            title="Previous iteration"
+                                            aria-label="Previous iteration"
+                                          >
+                                            <FaChevronLeft size={12} />
+                                          </button>
+                                          <div className="flex items-center gap-2">
+                                            {msg.researchData.iterations.map((_, idx) => (
+                                              <div
+                                                key={idx}
+                                                className={`w-2 h-2 rounded-full transition-colors ${
+                                                  idx === (currentIterationIndex[msg.id] || 0)
+                                                    ? 'bg-purple-600'
+                                                    : 'bg-purple-200 dark:bg-purple-700'
+                                                }`}
+                                              />
+                                            ))}
+                                          </div>
+                                          <button
+                                            onClick={() => navigateIteration(msg.id, 'next', msg.researchData!.iterations.length)}
+                                            disabled={(currentIterationIndex[msg.id] || 0) === msg.researchData!.iterations.length - 1}
+                                            className={`p-1 rounded ${(currentIterationIndex[msg.id] || 0) === msg.researchData!.iterations.length - 1 ? 'text-gray-300 dark:text-gray-600' : 'text-purple-600 hover:bg-purple-100 dark:hover:bg-purple-900'}`}
+                                            title="Next iteration"
+                                            aria-label="Next iteration"
+                                          >
+                                            <FaChevronRight size={12} />
+                                          </button>
+                                        </div>
+                                      )}
+                                      
+                                      {/* Current Iteration Content */}
+                                      <div className="p-3">
+                                        <div className="text-xs font-medium text-purple-600 dark:text-purple-400 mb-2">
+                                          {msg.researchData.iterations[currentIterationIndex[msg.id] || 0]?.title || 'Research Plan'}
+                                        </div>
+                                        <div className="text-xs text-gray-600 dark:text-gray-300 prose prose-xs max-w-none">
+                                          <Markdown 
+                                            content={processCitations(
+                                              msg.researchData.iterations[currentIterationIndex[msg.id] || 0]?.content || '', 
+                                              repoInfo, 
+                                              detectCurrentBranch(repoInfo, 'main') ?? 'main'
+                                            )} 
+                                          />
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ) : msg.isStreaming ? (
+                                    <div className="p-3">
+                                      <div className="flex items-center gap-2 text-xs text-purple-600 dark:text-purple-400">
+                                        <div className="animate-spin w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full"></div>
+                                        <span>Analyzing codebase and planning research...</span>
+                                      </div>
+                                      {msg.content && (
+                                        <div className="mt-2 text-xs text-gray-600 dark:text-gray-300 prose prose-xs max-w-none">
+                                          <Markdown content={processCitations(msg.content, repoInfo, detectCurrentBranch(repoInfo, 'main') ?? 'main')} />
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          
+                          {/* Final Conclusion - Main Response */}
+                          {msg.researchData.finalConclusion ? (
+                            <div className="pt-2">
+                              <Markdown content={processCitations(msg.researchData.finalConclusion, repoInfo, detectCurrentBranch(repoInfo, 'main') ?? 'main')} />
+                            </div>
+                          ) : !msg.isStreaming && msg.researchData.iterations.length > 0 ? (
+                            // Show the last iteration's content as the conclusion if no explicit conclusion found
+                            <div className="pt-2">
+                              <Markdown content={processCitations(
+                                msg.researchData.iterations[msg.researchData.iterations.length - 1]?.content || msg.content, 
+                                repoInfo, 
+                                detectCurrentBranch(repoInfo, 'main') ?? 'main'
+                              )} />
+                            </div>
+                          ) : !msg.isStreaming && msg.content && !msg.researchData.iterations.length ? (
+                            // Fallback: show full content if no iterations parsed
+                            <Markdown content={processCitations(msg.content, repoInfo, detectCurrentBranch(repoInfo, 'main') ?? 'main')} />
+                          ) : msg.isStreaming && !expandedThinking[msg.id] ? (
+                            // Show streaming indicator when thinking is collapsed
+                            <div className="flex items-center gap-2 text-xs text-gray-500">
+                              <div className="animate-pulse flex space-x-1">
+                                <div className="h-1.5 w-1.5 bg-purple-600 rounded-full"></div>
+                                <div className="h-1.5 w-1.5 bg-purple-600 rounded-full"></div>
+                                <div className="h-1.5 w-1.5 bg-purple-600 rounded-full"></div>
+                              </div>
+                              <span>Researching...</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : msg.content ? (
+                        /* Regular (non-deep-research) response */
+                        <Markdown content={processCitations(msg.content, repoInfo, detectCurrentBranch(repoInfo, 'main') ?? 'main')} />
+                      ) : msg.isStreaming ? (
+                        <div className="flex items-center space-x-2">
+                          <div className="animate-pulse flex space-x-1">
+                            <div className="h-2 w-2 bg-purple-600 rounded-full"></div>
+                            <div className="h-2 w-2 bg-purple-600 rounded-full"></div>
+                            <div className="h-2 w-2 bg-purple-600 rounded-full"></div>
+                          </div>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">Thinking...</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                  {/* Timestamp */}
+                  <div className={`text-xs mt-1 ${msg.role === 'user' ? 'text-white/70' : 'text-gray-400'}`}>
+                    {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {msg.isStreaming && <span className="ml-2 italic">typing...</span>}
                   </div>
                 </div>
-              )}
-
-              <div className="flex items-center space-x-2">
-                {/* Download button */}
-                <button
-                  onClick={downloadresponse}
-                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 px-2 py-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700 flex items-center gap-1"
-                  title="Download response as markdown file"
-                >
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  Download
-                </button>
-
-                {/* Clear button */}
-                <button
-                  id="ask-clear-conversation"
-                  onClick={clearConversation}
-                  className="text-xs text-gray-500 dark:text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 px-2 py-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-700"
-                >
-                  Clear conversation
-                </button>
               </div>
-            </div>
-          </div>
-        )}
+            ))}
 
-        {/* Loading indicator */}
-        {isLoading && !response && (
-          <div className="py-4">
-            <div className="flex items-center space-x-2">
-              <div className="animate-pulse flex space-x-1">
-                <div className="h-2 w-2 bg-purple-600 rounded-full"></div>
-                <div className="h-2 w-2 bg-purple-600 rounded-full"></div>
-                <div className="h-2 w-2 bg-purple-600 rounded-full"></div>
-              </div>
-              <span className="text-xs text-gray-500 dark:text-gray-400">
-                {deepResearch
-                  ? (researchIteration === 0
-                    ? "Planning research approach..."
-                    : `Research iteration ${researchIteration} in progress...`)
-                  : "Thinking..."}
-              </span>
-            </div>
-            {deepResearch && (
-              <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 pl-5">
-                <div className="flex flex-col space-y-1">
-                  {researchIteration === 0 && (
-                    <>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-blue-500 rounded-full mr-2"></div>
-                        <span>Creating research plan...</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                        <span>Identifying key areas to investigate...</span>
-                      </div>
-                    </>
-                  )}
-                  {researchIteration === 1 && (
-                    <>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-blue-500 rounded-full mr-2"></div>
-                        <span>Exploring first research area in depth...</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                        <span>Analyzing code patterns and structures...</span>
-                      </div>
-                    </>
-                  )}
-                  {researchIteration === 2 && (
-                    <>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-amber-500 rounded-full mr-2"></div>
-                        <span>Investigating remaining questions...</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-purple-500 rounded-full mr-2"></div>
-                        <span>Connecting findings from previous iterations...</span>
-                      </div>
-                    </>
-                  )}
-                  {researchIteration === 3 && (
-                    <>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-indigo-500 rounded-full mr-2"></div>
-                        <span>Exploring deeper connections...</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-blue-500 rounded-full mr-2"></div>
-                        <span>Analyzing complex patterns...</span>
-                      </div>
-                    </>
-                  )}
-                  {researchIteration === 4 && (
-                    <>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-teal-500 rounded-full mr-2"></div>
-                        <span>Refining research conclusions...</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-cyan-500 rounded-full mr-2"></div>
-                        <span>Addressing remaining edge cases...</span>
-                      </div>
-                    </>
-                  )}
-                  {researchIteration >= 5 && (
-                    <>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-purple-500 rounded-full mr-2"></div>
-                        <span>Finalizing comprehensive answer...</span>
-                      </div>
-                      <div className="flex items-center">
-                        <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-                        <span>Synthesizing all research findings...</span>
-                      </div>
-                    </>
-                  )}
+            {/* Action buttons when there are messages */}
+            {chatMessages.some(m => m.role === 'assistant' && m.content) && (
+              <div className="flex justify-center pt-2">
+                <div className="flex items-center space-x-2">
+                  {/* Download button */}
+                  <button
+                    onClick={downloadresponse}
+                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 px-3 py-1.5 rounded-full bg-[var(--card-bg)] border border-[var(--border-color)] hover:border-green-500 flex items-center gap-1 transition-colors"
+                    title="Download response as markdown file"
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Download
+                  </button>
+
+                  {/* Clear button */}
+                  <button
+                    id="ask-clear-conversation"
+                    onClick={clearConversation}
+                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 px-3 py-1.5 rounded-full bg-[var(--card-bg)] border border-[var(--border-color)] hover:border-red-500 transition-colors"
+                  >
+                    Clear chat
+                  </button>
                 </div>
               </div>
             )}
           </div>
-        )}
-
-        {/* Empty state when no response */}
-        {!response && !isLoading && (
-          <div className="flex flex-col items-center justify-center py-8 text-[var(--muted)]">
-            <svg className="w-12 h-12 mb-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        ) : (
+          /* Empty state when no messages */
+          <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]">
+            <svg className="w-16 h-16 mb-4 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
             </svg>
-            <p className="text-sm">Ask a question about this codebase</p>
+            <p className="text-base font-medium">Ask a question about this codebase</p>
+            <p className="text-sm opacity-70 mt-1">Your conversation will appear here</p>
           </div>
         )}
       </div>
