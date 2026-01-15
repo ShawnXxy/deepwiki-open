@@ -26,6 +26,10 @@ azure-identity = ">=1.12.0"
 azure-core = ">=1.24.0"
 azure-storage-blob = ">=12.19.0"
 azure-monitor-opentelemetry = ">=1.6.0"
+azure-mgmt-resource = ">=23.0.0"
+azure-mgmt-msi = ">=7.0.0"
+azure-ai-ml = ">=1.12.0"
+azureml-core = ">=1.55.0"
 
 
 [build-system]

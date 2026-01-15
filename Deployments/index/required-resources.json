@@ -1,0 +1,112 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "DeepWiki Required Resources Index",
+    "description": "Index of must-have resources for DeepWiki deployment",
+    "version": "1.0.0",
+    "deploymentOrder": [
+        {
+            "step": 1,
+            "name": "Resource Group",
+            "description": "Create or verify Azure Resource Group",
+            "type": "infrastructure",
+            "required": true
+        },
+        {
+            "step": 2,
+            "name": "User Managed Identity",
+            "description": "User-Assigned Managed Identity for all Azure services",
+            "template": "templates/UMI.Template.json",
+            "parameters": "parameters/UMI.Parameters.json",
+            "configKeys": ["dri_copilot_identity_name"],
+            "required": true,
+            "outputs": ["managedIdentityId", "managedIdentityPrincipalId", "managedIdentityClientId"]
+        },
+        {
+            "step": 3,
+            "name": "Storage Account",
+            "description": "Azure Blob Storage for wiki cache and embeddings",
+            "template": "templates/STORAGE.Template.json",
+            "parameters": "parameters/STORAGE.Parameters.json",
+            "configKeys": ["storage_account_name"],
+            "required": true,
+            "outputs": ["storageAccountId", "primaryBlobEndpoint"]
+        },
+        {
+            "step": 4,
+            "name": "Azure OpenAI",
+            "description": "Azure OpenAI Service with LLM and embedding models",
+            "template": "templates/AOAI.Template.json",
+            "parameters": "parameters/AOAI.Parameters.json",
+            "configKeys": ["open_ai_resource_name", "is_creating_open_ai_endpoint"],
+            "conditional": "is_creating_open_ai_endpoint",
+            "required": true
+        },
+        {
+            "step": 5,
+            "name": "Application Insights",
+            "description": "Application Insights and Log Analytics for monitoring",
+            "template": "templates/APPINSIGHT.Template.json",
+            "parameters": "parameters/APPINSIGHT.Parameters.json",
+            "configKeys": ["application_insights_name", "log_analytics_workspace_name"],
+            "required": true,
+            "outputs": ["applicationInsightsConnectionString"]
+        },
+        {
+            "step": 6,
+            "name": "App Service",
+            "description": "Azure App Service (Linux Container Mode) with network restrictions",
+            "template": "templates/WEB.Template.json",
+            "parameters": "parameters/WEB.Parameters.json",
+            "configKeys": ["app_service_plan_name", "app_service_name", "app_service_plan_sku"],
+            "required": true,
+            "dependsOn": ["User Managed Identity", "Application Insights"],
+            "outputs": ["appServiceUrl"],
+            "networkRestrictions": [
+                {"name": "AzureTrafficManager", "priority": 200, "action": "Allow"},
+                {"name": "CorpNetPublic", "priority": 400, "action": "Allow"},
+                {"name": "CorpNetSAW", "priority": 401, "action": "Allow"},
+                {"name": "Deny all", "priority": 2147483647, "action": "Deny"}
+            ]
+        },
+        {
+            "step": 7,
+            "name": "Role Assignments",
+            "description": "RBAC role assignments for Managed Identity",
+            "template": "templates/RBAC.Template.json",
+            "parameters": "parameters/RBAC.Parameters.json",
+            "required": true,
+            "dependsOn": ["User Managed Identity", "Storage Account", "Azure OpenAI", "Application Insights"],
+            "roles": [
+                {"role": "Cognitive Services OpenAI User", "scope": "Azure OpenAI"},
+                {"role": "Storage Blob Data Contributor", "scope": "Storage Account"},
+                {"role": "Monitoring Metrics Publisher", "scope": "Application Insights"}
+            ]
+        },
+        {
+            "step": 8,
+            "name": "Network Security Perimeter",
+            "description": "NSP with enforced mode for Storage Account",
+            "template": "templates/NSP.Template.json",
+            "associationTemplate": "templates/NSP.Associations.Template.json",
+            "configKeys": ["nsp_name", "nsp_profile_name", "nsp_access_mode_for_storage"],
+            "conditional": "nsp_name",
+            "required": false,
+            "dependsOn": ["Storage Account"],
+            "protectedServices": ["Storage Account"]
+        }
+    ],
+    "roleAssignmentDefinitions": {
+        "cognitiveServicesOpenAIUser": {
+            "roleId": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",
+            "description": "Read access to Azure OpenAI models"
+        },
+        "storageBlobDataContributor": {
+            "roleId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+            "description": "Read, write, and delete Azure Storage blobs"
+        },
+        "monitoringMetricsPublisher": {
+            "roleId": "3913510d-42f4-4e42-8a64-420c390055eb",
+            "description": "Enables publishing metrics against Azure resources"
+        }
+    }
+}

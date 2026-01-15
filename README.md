@@ -13,21 +13,62 @@
 
 ### Prerequisites
 
+#### 1. Development Env
+
 - **Python 3.10+**
 - **Node.js 18+**
+- **Docker**
+
+#### 2. Azure Resources Deployment
+
+##### Option A: Automatic deployment leverage ARM (Recommended)
+
+1. locate folder "Deployments"
+1. Modify "config.py" to fill in your preferred resource name
+1. Run "deploy_required.ipynb" for each required resource
+
+
+##### Option B Manual deployment (Depercated)
+<details>
+
+Below are required resources you will need to manually created in Azure.
 - **Azure OpenAI Service** with deployed models:
   - Text generation model (e.g., `o4-mini`, `gpt-4o`)
   - Embedding model (e.g., `text-embedding-3-large`)
 - **Azure Storage Blob container**
 - **Managed Identity (MSI)** 
   - configured with access **Cognitive Services OpenAI User** to Azure OpenAI
-  - configured with access **Storage Blob Data Contributor** to Azure Application Insight
+  - configured with access **Storage Blob Data Contributor** to Azure blob
   - configured with access **Monitoring Metrics Publisher** to Azure Application Insight
 - **Application Insight** if you would like to emit logs to Azure 
 
+</details>
+
+#### 3. Security Requirements [**IMPORTANT**]
+
+1. Public access should be disabled for below resources:
+  - blob storage
+  - keyvault, if any
+
+  Instead, create a NSP (Network Security Perimeter) assosciate to above resources those who disable public access. And add below rules in NSP:
+  - inbound
+    - allow your subscriptions
+    - allow service tag "MicrosoftPublicIPSpace"
+  - outbound
+    - allow * FQDNs
+
+2. For Web App, 
+- create identity provider following: [Quickstart: Add app authentication to your web app running on Azure App Service](https://learn.microsoft.com/en-us/azure/app-service/scenario-secure-app-authentication-app-service?tabs=workforce-configuration)
+- Create Network Access rule to allow CorpNet using service tag "CorpNetPublic"
+
+>Note: <br>
+> Some of above security values are ONLY available in production tenant if deploying in Portal.
+> However, you may want to try using ARM to pass in those values using API, which should be accepted.
+
 ### Configure infra.json
 
-Edit `backend/config/infra.json` with your Azure details:
+
+Once you have Azure resources ready, edit `backend/config/infra.json` with your Azure details:
 
 ```json
 {
@@ -62,9 +103,9 @@ Edit `backend/config/infra.json` with your Azure details:
 > Keep `azure_application_insights` and `azure_blob_storage` disabled if testing local.
 > These would be auto enabled when deployed to Azure cloud.
 
-Then you have two options to continue setup.
+Then you have two options to continue setup in LOCAL.
 
-### 🐳 Option 1: Docker test in local environment
+### 🐳 Option A: Docker test in local environment
 
 Test the containerized application locally before deploying to Azure:
 
@@ -102,7 +143,7 @@ docker stop codewiki-local
 docker exec -it codewiki-local bash
 ```
 
-### Option 2: manual setup in local
+### Option B: manual setup in local
 
 #### Step 1: Install Dependencies
 
@@ -143,9 +184,20 @@ npm run dev
 
 ## How to deploy to Azure cloud
 
-- locate deploy-azure.ps1 under root
+### Using Web App (Recommended)
+- locate publish-web.ps1 under root
+- Ensure have the detailed Azure Resources names ready and filled in `config.py`
+- Run the script, which will build docker image and pull to ACR used for the web app service created during deployment steps
+
+### Using Container App (Depercated due to security)
+
+<details>
+
+- locate publish-container.ps1 under root
 - fill the `Configuration` section
 - Run the script, which will create an Azure Container Registry, pull images, setup container env, and upload code.
+
+</details>
 
 ### Docker Architecture
 

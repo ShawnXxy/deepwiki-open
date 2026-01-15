@@ -1,28 +1,28 @@
 {
   "managed_identity": {
-    "name": "mid-deepwiki-ea",
-    "client_id": "6e58add9-816c-4307-b9bd-bb7ce616d486"
+    "name": "mid-orcas-deepwiki",
+    "client_id": "6de9d24d-f0d1-433f-9387-5a9192aebbc6"
   },
   "azure_openai": {
-    "endpoint": "https://aoai-orcas-je.openai.azure.com",
+    "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
     "api_version": "2024-12-01-preview",
     "deployment": "o4-mini",
     "temperature": 1.0
   },
   "azure_openai_embedding": {
-    "endpoint": "https://aoai-orcas-je.openai.azure.com",
+    "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
     "api_version": "2024-12-01-preview",
     "deployment": "text-embedding-3-large",
     "dimensions": 3072
   },
   "azure_blob_storage": {
     "enabled": false,
-    "account_name": "amldwstorage",
+    "account_name": "bloborcasdeepwiki",
     "container_name": "deepwiki-data"
   },
   "azure_application_insights": {
     "enabled": false,
-    "name": "amldwappinsights",
-    "connection_string": "InstrumentationKey=5aa146ef-02ec-407e-87fb-19bf529e0eef;IngestionEndpoint=https://eastasia-0.in.applicationinsights.azure.com/;LiveEndpoint=https://eastasia.livediagnostics.monitor.azure.com/;ApplicationId=5b213001-0909-459b-a223-716a194a09bb"
+    "name": "appinsite-orcas-deepwiki-ea",
+    "connection_string": "InstrumentationKey=657bc505-bcd9-42cb-9a07-950883f91bbb;IngestionEndpoint=https://eastasia-0.in.applicationinsights.azure.com/;LiveEndpoint=https://eastasia.livediagnostics.monitor.azure.com/;ApplicationId=9c50f5e7-a29b-4776-8c21-aedfb94b0ff3"
   }
 }

@@ -1,0 +1,33 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "value": "{{location}}"
+        },
+        "tenantId": {
+            "value": "{{tenant_id}}"
+        },
+        "machineLearningWorkspaceName": {
+            "value": "{{machine_learning_workspace_name}}"
+        },
+        "deepWikiIdentityName": {
+            "value": "{{dri_copilot_identity_name}}"
+        },
+        "openAiResourceName": {
+            "value": "{{open_ai_resource_name}}"
+        },
+        "deploymentIdentityPrincipalId": {
+            "value": "{{deployment_identity_principal_id}}"
+        },
+        "deploymentIdentityPrincipalType": {
+            "value": "User"
+        },
+        "isOpenAiResourceManagedByDeepWiki": {
+            "value": {{is_creating_open_ai_endpoint}}
+        },
+        "resourceTags": {
+            "value": {{resource_tags}}
+        }
+    }
+}

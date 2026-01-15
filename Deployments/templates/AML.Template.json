@@ -1,0 +1,748 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "defaultValue": "eastus",
+            "type": "string",
+            "metadata": {
+                "description": "Location of the Azure Open AI endpoint."
+            }
+        },
+        "tenantId": {
+            "defaultValue": "72f988bf-86f1-41af-91ab-2d7cd011db47",
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the tenant ID of the Azure Machine Learning workspace (default to Microsoft)."
+            }
+        },
+        "machineLearningWorkspaceName": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of the Azure Machine Learning workspace."
+            }
+        },
+        "machineLearningWorkspaceSubComponentsNamePrefix": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name prefix for AML-related components (lower case, no space, one word, no numbers)."
+            }
+        },
+        "deepWikiIdentityName": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of user assigned identity that represents the Azure Machine Learning workspace and all its components."
+            }
+        },
+        "openAiResourceName": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of Azure Open AI endpoint."
+            }
+        },
+        "deploymentIdentityPrincipalId": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the object id (in AAD) of the user or identity doing the deployment."
+            }
+        },
+        "deploymentIdentityPrincipalType": {
+            "allowedValues": [
+                "User",
+                "ServicePrincipal"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the type of the principal doing the deployment."
+            }
+        },
+        "isOpenAiResourceManagedByDeepWiki": {
+            "defaultValue": true,
+            "type": "bool",
+            "metadata": {
+                "description": "Specifies whether the Azure Open AI resource is managed by DeepWiki."
+            }
+        },
+        "isCreatingVnetForAzureML": {
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "Specifies whether to create a VNet for Azure ML."
+            }
+        },
+        "isEnablingDiskEncryptionForAzureML": {
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "Specifies whether to enable disk encryption for Azure ML. This will adjust the hbi_workspace setting accordingly."
+            }
+        },
+        "resourceTags": {
+            "defaultValue": {},
+            "type": "object",
+            "metadata": {
+                "description": "Tags to assign to given resources"
+            }
+        },
+        "deepWikiProcessingFailure": {
+            "defaultValue": "DeepWikiProcessingFailure",
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Processing Failure Alert on AML"
+            }
+        },
+        "emailAliases": {
+            "type": "array",
+            "defaultValue": [],
+            "metadata": {
+                "description": "List of email aliases for alerts"
+            }
+        }
+    },
+    "variables": {
+        "machineLearningWorkspaceId": "[resourceId('Microsoft.MachineLearningServices/workspaces', parameters('machineLearningWorkspaceName'))]",
+        "machineLearningManagedNetwork": "[if(parameters('isCreatingVnetForAzureML'), json('{ \"isolationMode\": \"AllowInternetOutbound\", \"status\": { \"status\": \"Inactive\", \"sparkReady\": false } }'), json('null'))]",
+
+        "deepWikiIdentityId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('deepWikiIdentityName'))]",
+
+        "containerRegistryName": "[format('cr{0}', parameters('machineLearningWorkspaceSubComponentsNamePrefix'))]",
+        "containerRegistryId": "[resourceId('Microsoft.ContainerRegistry/registries', format('cr{0}', parameters('machineLearningWorkspaceSubComponentsNamePrefix')))]",
+
+        "storageAccountName": "[concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'storage')]",
+        "storageAccountId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+        "storageNetworkAcls": "[if(parameters('isCreatingVnetForAzureML'), json('{ \"defaultAction\": \"Deny\", \"bypass\": \"AzureServices\" }'), json('null'))]",
+
+        "keyVaultName": "[concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'keyvault')]",
+        "keyVaultId": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+
+        "logAnalyticsName": "[concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'loganalytics')]",
+        "logAnalyticsId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName'))]",
+
+        "applicationInsightsName": "[concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'appinsights')]",
+        "applicationInsightId": "[resourceId('Microsoft.Insights/components', variables('applicationInsightsName'))]",
+        "actionGroupName": "[concat('DeepWikiAlerts-ActionGroup-', variables('applicationInsightsName'))]",
+
+        "openAiResourceId": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAiResourceName'))]",
+
+        "storageAccountContributorRoleId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+        "storageAccountFileDataPrivilegedContributorRoleId": "69566ab7-960f-475b-8e7c-b3118f30c6bd",
+        "containerRegistryAcrPullRoleId": "7f951dda-4ed3-4680-a7ca-43fe172d538d",
+        "containerRegistryAcrPushRoleId": "8311e382-0749-4cb8-b61a-304f252e45ec",
+        "azureMLDataScientistRoleId": "f6c7c914-8db3-469d-8ca1-694a8f32e121",
+        "contributorRoleId": "b24988ac-6180-42a0-ab88-20f7382dd24c",
+        "cognitiveServicesUserRoleId": "a97b65f3-24c7-4388-baec-2e87135dc908",
+        "keyVaultAdministratorRoleId": "00482a5a-887f-4fb3-b363-3b7fe8e74483",
+        "keyVaultSecretsOfficerRoleId": "b86a8fe4-44ce-4948-aee5-eccb2c155cd7",
+        "keyVaultCertificateUserRoleId": "db79e9a7-68ee-4b58-9aeb-b90e7c24fcba",
+        "KeyVaultCryptoUserId": "12338af0-0e69-4776-bea7-57ae8d297424",
+        "MonitoringReaderRoleId": "43d0d8ad-25c7-4714-9337-8ba259a9fe05",
+        "azureAiEnterpriseNetworkConnectionApproverRoleId": "b556d68e-0be0-4f35-a333-ad7ee1ce17ea"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+            "apiVersion": "2023-07-31-preview",
+            "name": "[parameters('deepWikiIdentityName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]"
+        },
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2023-01-01",
+            "name": "[variables('storageAccountName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "sku": {
+                "name": "Standard_LRS",
+                "tier": "Standard"
+            },
+            "kind": "StorageV2",
+            "properties": {
+                "defaultToOAuthAuthentication": true,
+                "allowBlobPublicAccess": false,
+                "supportsHttpsTrafficOnly": true,
+                "allowSharedKeyAccess": false,
+                "minimumTlsVersion": "TLS1_2",
+                "accessTier": "Hot",
+                "networkAcls": "[variables('storageNetworkAcls')]"
+            }
+        },
+        {
+            "type": "Microsoft.Storage/storageAccounts/blobServices",
+            "apiVersion": "2023-01-01",
+            "name": "[concat(variables('storageAccountName'), '/default')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+            ],
+            "properties": {
+                "containerDeleteRetentionPolicy": {
+                    "enabled": true,
+                    "days": 28
+                },
+                "deleteRetentionPolicy": {
+                    "allowPermanentDelete": false,
+                    "enabled": true,
+                    "days": 28
+                }
+            }
+        },
+        {
+            "type": "Microsoft.ContainerRegistry/registries",
+            "apiVersion": "2022-12-01",
+            "name": "[variables('containerRegistryName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "sku": {
+                "name": "Premium"
+            },
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[variables('deepWikiIdentityId')]": {}
+                }
+            },
+            "dependsOn": [
+                "[variables('deepWikiIdentityId')]"
+            ]
+        },
+        {
+            "name": "[variables('logAnalyticsName')]",
+            "type": "Microsoft.OperationalInsights/workspaces",
+            "apiVersion": "2021-12-01-preview",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "properties": {
+                "sku": {
+                    "name": "pergb2018"
+                },
+                "retentionInDays": 365,
+                "features": {
+                    "enableLogAccessUsingOnlyResourcePermissions": true
+                },
+                "workspaceCapping": {
+                    "dailyQuotaGb": -1
+                },
+                "publicNetworkAccessForIngestion": "Enabled",
+                "publicNetworkAccessForQuery": "Enabled"
+            }
+        },
+        {
+            "type": "Microsoft.Insights/components",
+            "apiVersion": "2020-02-02",
+            "name": "[variables('applicationInsightsName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "dependsOn": [
+                "[variables('logAnalyticsId')]"
+            ],
+            "kind": "web",
+            "properties": {
+                "Application_Type": "web",
+                "RetentionInDays": 365,
+                "WorkspaceResourceId": "[variables('logAnalyticsId')]",
+                "IngestionMode": "LogAnalytics",
+                "publicNetworkAccessForIngestion": "Enabled",
+                "publicNetworkAccessForQuery": "Enabled",
+                "SamplingPercentage": 100
+            }
+        },
+        {
+            "type": "Microsoft.KeyVault/vaults",
+            "apiVersion": "2022-07-01",
+            "name": "[variables('keyVaultName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "properties": {
+                "enabledForTemplateDeployment": true,
+                "accessPolicies": [],
+                "tenantId": "[parameters('tenantId')]",
+                "enableRbacAuthorization": true,
+                "sku": {
+                    "name": "standard",
+                    "family": "A"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.MachineLearningServices/workspaces",
+            "apiVersion": "2023-04-01",
+            "name": "[parameters('machineLearningWorkspaceName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[variables('deepWikiIdentityId')]": {}
+                }
+            },
+            "properties": {
+                "friendlyName": "[parameters('machineLearningWorkspaceName')]",
+                "storageAccount": "[variables('storageAccountId')]",
+                "keyVault": "[variables('keyVaultId')]",
+                "applicationInsights": "[variables('applicationInsightId')]",
+                "containerRegistry": "[variables('containerRegistryId')]",
+                "hbiWorkspace" : "[parameters('isEnablingDiskEncryptionForAzureML')]",
+                "primaryUserAssignedIdentity": "[variables('deepWikiIdentityId')]",
+                "managedNetwork": "[variables('machineLearningManagedNetwork')]"
+            },
+            "dependsOn": [
+                "[variables('deepWikiIdentityId')]",
+                "[variables('storageAccountId')]",
+                "[variables('containerRegistryId')]",
+                "[variables('applicationInsightId')]",
+                "[variables('keyVaultId')]"
+            ]
+        },
+        {
+            "type": "Microsoft.Insights/diagnosticSettings",
+            "name": "[concat(variables('storageAccountName'), '-diagnostics')]",
+            "apiVersion": "2021-05-01-preview",
+            "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]",
+            "dependsOn": [
+                "[variables('storageAccountId')]"
+            ],
+            "properties": {
+                "workspaceId": "[variables('logAnalyticsId')]",
+                "logs": [
+                    {
+                        "category": "StorageRead",
+                        "enabled": true,
+                        "retentionPolicy": {
+                            "enabled": false,
+                            "days": 0
+                        }
+                    },
+                    {
+                        "category": "StorageWrite",
+                        "enabled": true,
+                        "retentionPolicy": {
+                            "enabled": false,
+                            "days": 0
+                        }
+                    },
+                    {
+                        "category": "StorageDelete",
+                        "enabled": true,
+                        "retentionPolicy": {
+                            "enabled": false,
+                            "days": 0
+                        }
+                    }
+                ],
+                "metrics": [
+                    {
+                        "category": "AllMetrics",
+                        "enabled": true,
+                        "retentionPolicy": {
+                            "enabled": false,
+                            "days": 0
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "Microsoft.Insights/diagnosticSettings",
+            "name": "[concat(variables('keyVaultName'), '-diagnostics')]",
+            "apiVersion": "2021-05-01-preview",
+            "scope": "[variables('keyVaultId')]",
+            "dependsOn": [
+                "[variables('keyVaultId')]"
+            ],
+            "properties": {
+                "workspaceId": "[variables('logAnalyticsId')]",
+                "logs": [
+                    {
+                        "category": "AuditEvent",
+                        "enabled": true,
+                        "retentionPolicy": {
+                            "enabled": false,
+                            "days": 0
+                        }
+                    }
+                ],
+                "metrics": [
+                    {
+                        "category": "AllMetrics",
+                        "enabled": true,
+                        "retentionPolicy": {
+                            "enabled": false,
+                            "days": 0
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "Microsoft.Insights/diagnosticSettings",
+            "apiVersion": "2021-05-01-preview",
+            "name": "[concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), '-diagnostics')]",
+            "scope": "[variables('machineLearningWorkspaceId')]",
+            "dependsOn": [
+                "[variables('machineLearningWorkspaceId')]",
+                "[variables('logAnalyticsId')]"
+            ],
+            "properties": {
+                "workspaceId": "[variables('logAnalyticsId')]",
+                "logs": [
+                    {
+                        "categoryGroup": "allLogs",
+                        "enabled": true,
+                        "retentionPolicy": {
+                            "enabled": false,
+                            "days": 0
+                        }
+                    },
+                    {
+                        "categoryGroup": "audit",
+                        "enabled": true,
+                        "retentionPolicy": {
+                            "enabled": false,
+                            "days": 0
+                        }
+                    }
+                ],
+                "metrics": [
+                    {
+                        "category": "AllMetrics",
+                        "enabled": true,
+                        "retentionPolicy": {
+                            "enabled": false,
+                            "days": 0
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "condition": "[not(empty(parameters('emailAliases')))]",
+            "type": "Microsoft.Insights/actionGroups",
+            "apiVersion": "2022-06-01",
+            "name": "[variables('actionGroupName')]",
+            "location": "Global",
+            "properties": {
+                "groupShortName": "BotAlerts",
+                "enabled": true,
+                "copy": [
+                    {
+                        "name": "emailReceivers",
+                        "count": "[length(parameters('emailAliases'))]",
+                        "input": {
+                            "name": "[concat('emailReceiver', copyIndex('emailReceivers'))]",
+                            "emailAddress": "[parameters('emailAliases')[copyIndex('emailReceivers')]]"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "condition": "[not(empty(parameters('emailAliases')))]",
+            "type": "Microsoft.Insights/scheduledQueryRules",
+            "apiVersion": "2023-03-15-preview",
+            "name": "[parameters('deepWikiProcessingFailure')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"
+            ],
+            "properties": {
+                "displayName": "[parameters('deepWikiProcessingFailure')]",
+                "description": "Alert when Azure ML jobs fail",
+                "severity": 3,
+                "enabled": true,
+                "evaluationFrequency": "PT2H",
+                "windowSize": "PT4H",
+                "scopes": [
+                    "[variables('logAnalyticsId')]"
+                ],
+                "targetResourceTypes": [
+                    "Microsoft.OperationalInsights/workspaces"
+                ],
+                "criteria": {
+                    "allOf": [
+                        {
+                            "query": "AmlComputeJobEvent\n| where EventType == \"JobFailed\"\n| project TimeGenerated, WorkspaceName, ExperimentName, JobName, ExecutionState, JobErrorMessage",
+                            "timeAggregation": "Count",
+                            "operator": "GreaterThan",
+                            "threshold": 0,
+                            "failingPeriods": {
+                                "numberOfEvaluationPeriods": 1,
+                                "minFailingPeriodsToAlert": 1
+                            },
+                        "dimensions": []
+                        }
+                    ]
+                },
+                "autoMitigate": true,
+                "actions": {
+                    "actionGroups": ["[resourceId('Microsoft.Insights/actionGroups', variables('actionGroupName'))]"],
+                    "customProperties": {},
+                    "actionProperties": {}
+                }
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, parameters('machineLearningWorkspaceName'), parameters('deepWikiIdentityName'), variables('azureMLDataScientistRoleId')))]",
+            "scope": "[variables('machineLearningWorkspaceId')]",
+            "dependsOn": [
+                "[variables('machineLearningWorkspaceId')]",
+                "[variables('deepWikiIdentityId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('azureMLDataScientistRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('deepWikiIdentityName'), variables('storageAccountContributorRoleId')))]",
+            "scope": "[variables('storageAccountId')]",
+            "dependsOn": [
+                "[variables('storageAccountId')]",
+                "[variables('deepWikiIdentityId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('storageAccountContributorRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('deepWikiIdentityName'), variables('storageAccountFileDataPrivilegedContributorRoleId')))]",
+            "scope": "[variables('storageAccountId')]",
+            "dependsOn": [
+                "[variables('storageAccountId')]",
+                "[variables('deepWikiIdentityId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('storageAccountFileDataPrivilegedContributorRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('deploymentIdentityPrincipalId'), variables('storageAccountContributorRoleId')))]",
+            "scope": "[variables('storageAccountId')]",
+            "dependsOn": [
+                "[variables('storageAccountId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('storageAccountContributorRoleId'))]",
+                "principalId": "[parameters('deploymentIdentityPrincipalId')]",
+                "principalType": "[parameters('deploymentIdentityPrincipalType')]"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('deploymentIdentityPrincipalId'), variables('storageAccountFileDataPrivilegedContributorRoleId')))]",
+            "scope": "[variables('storageAccountId')]",
+            "dependsOn": [
+                "[variables('storageAccountId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('storageAccountFileDataPrivilegedContributorRoleId'))]",
+                "principalId": "[parameters('deploymentIdentityPrincipalId')]",
+                "principalType": "[parameters('deploymentIdentityPrincipalType')]"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('containerRegistryName'), parameters('deepWikiIdentityName'), variables('containerRegistryAcrPushRoleId')))]",
+            "scope": "[variables('containerRegistryId')]",
+            "dependsOn": [
+                "[variables('containerRegistryId')]",
+                "[variables('deepWikiIdentityId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('containerRegistryAcrPushRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('containerRegistryName'), parameters('deepWikiIdentityName'), variables('containerRegistryAcrPullRoleId')))]",
+            "scope": "[variables('containerRegistryId')]",
+            "dependsOn": [
+                "[variables('containerRegistryId')]",
+                "[variables('deepWikiIdentityId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('containerRegistryAcrPullRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "condition": "[parameters('isOpenAiResourceManagedByDeepWiki')]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, parameters('openAiResourceName'), parameters('deploymentIdentityPrincipalId'), variables('cognitiveServicesUserRoleId')))]",
+            "scope": "[variables('openAiResourceId')]",
+            "dependsOn": [],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('cognitiveServicesUserRoleId'))]",
+                "principalId": "[parameters('deploymentIdentityPrincipalId')]",
+                "principalType": "[parameters('deploymentIdentityPrincipalType')]"
+            }
+        },
+        {
+            "condition": "[parameters('isOpenAiResourceManagedByDeepWiki')]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('openAiResourceId'), parameters('deepWikiIdentityName'), variables('cognitiveServicesUserRoleId')))]",
+            "scope": "[variables('openAiResourceId')]",
+            "dependsOn": [
+                "[variables('deepWikiIdentityId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('cognitiveServicesUserRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, resourceGroup().name, parameters('deploymentIdentityPrincipalId'), variables('contributorRoleId')))]",
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('contributorRoleId'))]",
+                "principalId": "[parameters('deploymentIdentityPrincipalId')]",
+                "principalType": "[parameters('deploymentIdentityPrincipalType')]"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat('v2', resourceGroup().id, resourceGroup().name, parameters('deepWikiIdentityName'), variables('keyVaultSecretsOfficerRoleId')))]",
+            "scope": "[variables('keyVaultId')]",
+            "dependsOn": [
+                "[variables('deepWikiIdentityId')]",
+                "[variables('keyVaultId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('keyVaultSecretsOfficerRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat('v2', resourceGroup().id, resourceGroup().name, parameters('deepWikiIdentityName'), variables('keyVaultCertificateUserRoleId')))]",
+            "scope": "[variables('keyVaultId')]",
+            "dependsOn": [
+                "[variables('deepWikiIdentityId')]",
+                "[variables('keyVaultId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('keyVaultCertificateUserRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat('v2', resourceGroup().id, resourceGroup().name, parameters('deploymentIdentityPrincipalId'), variables('keyVaultAdministratorRoleId')))]",
+            "scope": "[variables('keyVaultId')]",
+            "dependsOn": [
+                "[variables('keyVaultId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('keyVaultAdministratorRoleId'))]",
+                "principalId": "[parameters('deploymentIdentityPrincipalId')]",
+                "principalType": "[parameters('deploymentIdentityPrincipalType')]"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat('v2', resourceGroup().id, resourceGroup().name, parameters('deepWikiIdentityName'), variables('KeyVaultCryptoUserId')))]",
+            "scope": "[variables('keyVaultId')]",
+            "dependsOn": [
+                "[variables('deepWikiIdentityId')]",
+                "[variables('keyVaultId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('KeyVaultCryptoUserId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat('v2', resourceGroup().id, resourceGroup().name, parameters('deploymentIdentityPrincipalId'), variables('KeyVaultCryptoUserId')))]",
+            "scope": "[variables('keyVaultId')]",
+            "dependsOn": [
+                "[variables('keyVaultId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('KeyVaultCryptoUserId'))]",
+                "principalId": "[parameters('deploymentIdentityPrincipalId')]",
+                "principalType": "[parameters('deploymentIdentityPrincipalType')]"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('applicationInsightsName'), parameters('deepWikiIdentityName'), variables('MonitoringReaderRoleId')))]",
+            "scope": "[variables('applicationInsightId')]",
+            "dependsOn": [
+                "[variables('applicationInsightId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('MonitoringReaderRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('logAnalyticsName'), parameters('deepWikiIdentityName'), variables('MonitoringReaderRoleId')))]",
+            "scope": "[variables('logAnalyticsId')]",
+            "dependsOn": [
+                "[variables('logAnalyticsId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('MonitoringReaderRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "condition": "[parameters('isCreatingVnetForAzureML')]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('deepWikiIdentityName'), variables('azureAiEnterpriseNetworkConnectionApproverRoleId')))]",
+            "scope": "[variables('storageAccountId')]",
+            "dependsOn": [
+                "[variables('deepWikiIdentityId')]",
+                "[variables('storageAccountId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('azureAiEnterpriseNetworkConnectionApproverRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        }
+    ],
+    "outputs": {
+        "deepWikiClientId": {
+            "type": "string",
+            "value": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').clientId]"
+        }
+    }
+}

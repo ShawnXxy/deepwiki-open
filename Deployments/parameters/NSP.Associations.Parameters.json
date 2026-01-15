@@ -1,0 +1,24 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "nspName": {
+            "value": "__NSP_NAME__"
+        },
+        "nspProfileName": {
+            "value": "__NSP_PROFILE_NAME__"
+        },
+        "nspAccessMode": {
+            "value": "__NSP_ACCESS_MODE__"
+        },
+        "machineLearningWorkspaceSubComponentsNamePrefix": {
+            "value": "__MACHINE_LEARNING_WORKSPACE_SUB_COMPONENTS_NAME_PREFIX__"
+        },
+        "nspAssociatedResourceType": {
+            "value": "__NSP_ASSOCIATED_RESOURCE_TYPE__"
+        },
+        "paasResourceId": {
+            "value": "__PAAS_RESOURCE_ID__"
+        }
+    }
+}

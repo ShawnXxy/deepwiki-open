@@ -1,0 +1,275 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "managedIdentityPrincipalId": {
+            "type": "string",
+            "metadata": {
+                "description": "Principal ID of the User-Assigned Managed Identity."
+            }
+        },
+        "deploymentIdentityPrincipalId": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Principal ID of the user or service principal performing the deployment (for development access)."
+            }
+        },
+        "deploymentIdentityPrincipalType": {
+            "defaultValue": "User",
+            "allowedValues": [
+                "User",
+                "ServicePrincipal"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Type of the deployment identity principal."
+            }
+        },
+        "openAiResourceName": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Azure OpenAI resource. Leave empty to skip OpenAI role assignment."
+            }
+        },
+        "openAiResourceGroup": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Resource group containing the Azure OpenAI resource. If empty, uses the deployment resource group."
+            }
+        },
+        "storageAccountName": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Storage Account. Leave empty to skip storage role assignment."
+            }
+        },
+        "applicationInsightsName": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Application Insights resource. Leave empty to skip App Insights role assignment."
+            }
+        },
+        "keyVaultName": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Key Vault. Leave empty to skip Key Vault role assignments."
+            }
+        },
+        "searchServiceName": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Azure Cognitive Search service. Leave empty to skip search role assignments."
+            }
+        },
+        "machineLearningWorkspaceName": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Azure ML workspace. Leave empty to skip AML role assignment."
+            }
+        }
+    },
+    "variables": {
+        "cognitiveServicesOpenAIUserRoleId": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",
+        "storageBlobDataContributorRoleId": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+        "monitoringMetricsPublisherRoleId": "3913510d-42f4-4e42-8a64-420c390055eb",
+        "keyVaultCryptoUserRoleId": "12338af0-0e69-4776-bea7-57ae8d297424",
+        "keyVaultSecretsOfficerRoleId": "b86a8fe4-44ce-4948-aee5-eccb2c155cd7",
+        "keyVaultCertificateUserRoleId": "db79e9a7-68ee-4b58-9aeb-b90e7c24fcba",
+        "searchIndexDataReaderRoleId": "1407120a-92aa-4202-b7e9-c0e197c71c8f",
+        "searchServiceContributorRoleId": "7ca78c08-252a-4471-8644-bb5ff32d4ba0",
+        "azureMLDataScientistRoleId": "f6c7c914-8db3-469d-8ca1-694a8f32e121",
+
+        "openAiResourceId": "[if(not(empty(parameters('openAiResourceName'))), if(empty(parameters('openAiResourceGroup')), resourceId('Microsoft.CognitiveServices/accounts', parameters('openAiResourceName')), resourceId(parameters('openAiResourceGroup'), 'Microsoft.CognitiveServices/accounts', parameters('openAiResourceName'))), '')]",
+        "storageAccountId": "[if(not(empty(parameters('storageAccountName'))), resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '')]",
+        "applicationInsightsId": "[if(not(empty(parameters('applicationInsightsName'))), resourceId('Microsoft.Insights/components', parameters('applicationInsightsName')), '')]",
+        "keyVaultId": "[if(not(empty(parameters('keyVaultName'))), resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName')), '')]",
+        "searchServiceId": "[if(not(empty(parameters('searchServiceName'))), resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), '')]",
+        "machineLearningWorkspaceId": "[if(not(empty(parameters('machineLearningWorkspaceName'))), resourceId('Microsoft.MachineLearningServices/workspaces', parameters('machineLearningWorkspaceName')), '')]",
+        "effectiveOpenAiResourceGroup": "[if(empty(parameters('openAiResourceGroup')), resourceGroup().name, parameters('openAiResourceGroup'))]",
+        "isExternalOpenAiRg": "[and(not(empty(parameters('openAiResourceGroup'))), not(equals(parameters('openAiResourceGroup'), resourceGroup().name)))]"
+    },
+    "resources": [
+        {
+            "comments": "Nested deployment for OpenAI role assignment when OpenAI is in a DIFFERENT resource group",
+            "condition": "[and(not(empty(parameters('openAiResourceName'))), variables('isExternalOpenAiRg'))]",
+            "type": "Microsoft.Resources/deployments",
+            "apiVersion": "2022-09-01",
+            "name": "openai-role-assignment-external-rg",
+            "resourceGroup": "[variables('effectiveOpenAiResourceGroup')]",
+            "properties": {
+                "mode": "Incremental",
+                "template": {
+                    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                    "contentVersion": "1.0.0.0",
+                    "resources": [
+                        {
+                            "type": "Microsoft.Authorization/roleAssignments",
+                            "apiVersion": "2022-04-01",
+                            "name": "[guid(resourceId(variables('effectiveOpenAiResourceGroup'), 'Microsoft.CognitiveServices/accounts', parameters('openAiResourceName')), parameters('managedIdentityPrincipalId'), variables('cognitiveServicesOpenAIUserRoleId'))]",
+                            "scope": "[concat('Microsoft.CognitiveServices/accounts/', parameters('openAiResourceName'))]",
+                            "properties": {
+                                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveServicesOpenAIUserRoleId'))]",
+                                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                                "principalType": "ServicePrincipal"
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "comments": "Direct role assignment for OpenAI when in SAME resource group",
+            "condition": "[and(not(empty(parameters('openAiResourceName'))), not(variables('isExternalOpenAiRg')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('openAiResourceId'), parameters('managedIdentityPrincipalId'), variables('cognitiveServicesOpenAIUserRoleId'))]",
+            "scope": "[variables('openAiResourceId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveServicesOpenAIUserRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "condition": "[and(not(empty(parameters('openAiResourceName'))), not(empty(parameters('deploymentIdentityPrincipalId'))), not(variables('isExternalOpenAiRg')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('openAiResourceId'), parameters('deploymentIdentityPrincipalId'), variables('cognitiveServicesOpenAIUserRoleId'))]",
+            "scope": "[variables('openAiResourceId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveServicesOpenAIUserRoleId'))]",
+                "principalId": "[parameters('deploymentIdentityPrincipalId')]",
+                "principalType": "[parameters('deploymentIdentityPrincipalType')]"
+            }
+        },
+        {
+            "condition": "[not(empty(parameters('storageAccountName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('storageAccountId'), parameters('managedIdentityPrincipalId'), variables('storageBlobDataContributorRoleId'))]",
+            "scope": "[variables('storageAccountId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageBlobDataContributorRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "condition": "[and(not(empty(parameters('storageAccountName'))), not(empty(parameters('deploymentIdentityPrincipalId'))))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('storageAccountId'), parameters('deploymentIdentityPrincipalId'), variables('storageBlobDataContributorRoleId'))]",
+            "scope": "[variables('storageAccountId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageBlobDataContributorRoleId'))]",
+                "principalId": "[parameters('deploymentIdentityPrincipalId')]",
+                "principalType": "[parameters('deploymentIdentityPrincipalType')]"
+            }
+        },
+        {
+            "condition": "[not(empty(parameters('applicationInsightsName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('applicationInsightsId'), parameters('managedIdentityPrincipalId'), variables('monitoringMetricsPublisherRoleId'))]",
+            "scope": "[variables('applicationInsightsId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('monitoringMetricsPublisherRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "condition": "[not(empty(parameters('keyVaultName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('keyVaultId'), parameters('managedIdentityPrincipalId'), variables('keyVaultCryptoUserRoleId'))]",
+            "scope": "[variables('keyVaultId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('keyVaultCryptoUserRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "condition": "[not(empty(parameters('keyVaultName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('keyVaultId'), parameters('managedIdentityPrincipalId'), variables('keyVaultSecretsOfficerRoleId'))]",
+            "scope": "[variables('keyVaultId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('keyVaultSecretsOfficerRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "condition": "[not(empty(parameters('keyVaultName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('keyVaultId'), parameters('managedIdentityPrincipalId'), variables('keyVaultCertificateUserRoleId'))]",
+            "scope": "[variables('keyVaultId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('keyVaultCertificateUserRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "condition": "[not(empty(parameters('searchServiceName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('searchServiceId'), parameters('managedIdentityPrincipalId'), variables('searchIndexDataReaderRoleId'))]",
+            "scope": "[variables('searchServiceId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('searchIndexDataReaderRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "condition": "[not(empty(parameters('searchServiceName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('searchServiceId'), parameters('managedIdentityPrincipalId'), variables('searchServiceContributorRoleId'))]",
+            "scope": "[variables('searchServiceId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('searchServiceContributorRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "condition": "[not(empty(parameters('machineLearningWorkspaceName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('machineLearningWorkspaceId'), parameters('managedIdentityPrincipalId'), variables('azureMLDataScientistRoleId'))]",
+            "scope": "[variables('machineLearningWorkspaceId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('azureMLDataScientistRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        }
+    ],
+    "outputs": {
+        "roleAssignmentsCreated": {
+            "type": "array",
+            "value": [
+                "[if(not(empty(parameters('openAiResourceName'))), 'Cognitive Services OpenAI User on Azure OpenAI', '')]",
+                "[if(not(empty(parameters('storageAccountName'))), 'Storage Blob Data Contributor on Storage Account', '')]",
+                "[if(not(empty(parameters('applicationInsightsName'))), 'Monitoring Metrics Publisher on Application Insights', '')]",
+                "[if(not(empty(parameters('keyVaultName'))), 'Key Vault Crypto User, Secrets Officer, Certificate User on Key Vault', '')]",
+                "[if(not(empty(parameters('searchServiceName'))), 'Search Index Data Reader, Search Service Contributor on Azure Search', '')]",
+                "[if(not(empty(parameters('machineLearningWorkspaceName'))), 'AzureML Data Scientist on Azure ML Workspace', '')]"
+            ]
+        }
+    }
+}

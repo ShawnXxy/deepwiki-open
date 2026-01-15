@@ -1,0 +1,52 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "defaultValue": "[resourceGroup().location]",
+            "type": "string",
+            "metadata": {
+                "description": "Location for the managed identity resource."
+            }
+        },
+        "managedIdentityName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the User-Assigned Managed Identity."
+            }
+        },
+        "resourceTags": {
+            "defaultValue": {},
+            "type": "object",
+            "metadata": {
+                "description": "Tags to assign to the resource."
+            }
+        }
+    },
+    "variables": {
+        "managedIdentityId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+            "apiVersion": "2023-07-31-preview",
+            "name": "[parameters('managedIdentityName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]"
+        }
+    ],
+    "outputs": {
+        "managedIdentityId": {
+            "type": "string",
+            "value": "[variables('managedIdentityId')]"
+        },
+        "managedIdentityPrincipalId": {
+            "type": "string",
+            "value": "[reference(variables('managedIdentityId'), '2023-07-31-preview').principalId]"
+        },
+        "managedIdentityClientId": {
+            "type": "string",
+            "value": "[reference(variables('managedIdentityId'), '2023-07-31-preview').clientId]"
+        }
+    }
+}

@@ -1,0 +1,24 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "value": "{{location}}"
+        },
+        "searchServiceName": {
+            "value": "{{search_service_name}}"
+        },
+        "deepWikiIdentityName": {
+            "value": "{{dri_copilot_identity_name}}"
+        },
+        "deploymentIdentityPrincipalId": {
+            "value": "{{deployment_identity_principal_id}}"
+        },
+        "deploymentIdentityPrincipalType": {
+            "value": "User"
+        },
+        "resourceTags": {
+            "value": {{resource_tags}}
+        }
+    }
+}
