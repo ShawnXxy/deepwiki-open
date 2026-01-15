@@ -59,7 +59,8 @@ from backend.api import app
 
 if __name__ == "__main__":
     # Get port from environment variable or use default
-    port = int(os.environ.get("PORT", 8001))
+    # Use FASTAPI_PORT to avoid conflict with Azure's PORT/WEBSITES_PORT
+    port = int(os.environ.get("FASTAPI_PORT", os.environ.get("PORT", 8001)))
 
     logger.info(f"Starting Streaming API on port {port}")
 

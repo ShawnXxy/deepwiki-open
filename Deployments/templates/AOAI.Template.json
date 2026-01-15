@@ -1,0 +1,203 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "defaultValue": "eastus",
+            "type": "string",
+            "metadata": {
+                "description": "Location of the Azure Open AI endpoint."
+            }
+        },
+        "openAiResourceName": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of Azure Open AI endpoint."
+            }
+        },
+        "isCreatingOpenAiEndpoint": {
+            "defaultValue": true,
+            "type": "bool",
+            "metadata": {
+                "description": "Specifies whether to create the OpenAI endpoint. If not, we assume the endpoint already exists."
+            }
+        },
+        "openAiReasoningModelDeploymentName": {
+            "defaultValue": "o4-mini",
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of the reasoning model deployment."
+            }
+        },
+        "openAiReasoningModelModelName": {
+            "defaultValue": "o4-mini",
+            "allowedValues": [
+                "o1-preview",
+                "o3-mini",
+                "o3",
+                "o3-pro",
+                "o4-mini",
+                "gpt-5",
+                "gpt-5-mini"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of the reasoning model."
+            }
+        },
+        "openAiReasoningModelTokensPerMinute": {
+            "defaultValue": 200,
+            "type": "int",
+            "metadata": {
+                "description": "Token per minute for reasoning model."
+            }
+        },
+        "openAiReasoningModelVersion": {
+            "defaultValue": "2025-04-16",
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the version of the reasoning model."
+            }
+        },
+        "openAiReasoningModelSkuName": {
+            "defaultValue": "GlobalStandard",
+            "allowedValues": [
+                "Standard",
+                "GlobalStandard",
+                "DataZoneStandard"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the SKU name of the reasoning model."
+            }
+        },
+        "openAiEmbeddingDeploymentName": {
+            "defaultValue": "text-embedding-3-large",
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of the embedding deployment."
+            }
+        },
+        "openAiEmbeddingModelName": {
+            "defaultValue": "text-embedding-3-large",
+            "allowedValues": [
+                "text-embedding-ada-002",
+                "text-embedding-3-large",
+                "text-embedding-3-small"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of the embedding model."
+            }
+        },
+        "openAiEmbeddingTokensPerMinute": {
+            "defaultValue": 50,
+            "type": "int",
+            "metadata": {
+                "description": "Token per minute for embedding model."
+            }
+        },
+        "openAiEmbeddingVersion": {
+            "defaultValue": "1",
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the version of the embedding model."
+            }
+        },
+        "openAiEmbeddingSkuName": {
+            "defaultValue": "Standard",
+            "allowedValues": [
+                "Standard",
+                "GlobalStandard",
+                "DataZoneStandard"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the SKU name of the embedding model."
+            }
+        },
+        "resourceTags": {
+            "defaultValue": {},
+            "type": "object",
+            "metadata": {
+                "description": "Tags to assign to given resources"
+            }
+        }
+    },
+    "variables": {
+        "openAiResourceId": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAiResourceName'))]",
+        "openAiReasoningModelDeploymentId": "[resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('openAiResourceName'), parameters('openAiReasoningModelDeploymentName'))]"
+    },
+    "resources": [
+        {
+            "condition": "[parameters('isCreatingOpenAiEndpoint')]",
+            "type": "Microsoft.CognitiveServices/accounts",
+            "apiVersion": "2023-10-01-preview",
+            "name": "[parameters('openAiResourceName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "sku": {
+                "name": "S0"
+            },
+            "kind": "OpenAI",
+            "properties": {
+                "customSubDomainName": "[parameters('openAiResourceName')]",
+                "networkAcls": {
+                    "defaultAction": "Allow",
+                    "virtualNetworkRules": [],
+                    "ipRules": []
+                },
+                "publicNetworkAccess": "Enabled",
+                "disableLocalAuth": true
+            }
+        },
+        {
+            "condition": "[parameters('isCreatingOpenAiEndpoint')]",
+            "type": "Microsoft.CognitiveServices/accounts/deployments",
+            "apiVersion": "2025-04-01-preview",
+            "name": "[concat(parameters('openAiResourceName'), '/', parameters('openAiReasoningModelDeploymentName'))]",
+            "dependsOn": [
+                "[variables('openAiResourceId')]"
+            ],
+            "sku": {
+                "name": "[parameters('openAiReasoningModelSkuName')]",
+                "capacity": "[parameters('openAiReasoningModelTokensPerMinute')]"
+            },
+            "properties": {
+                "model": {
+                    "format": "OpenAI",
+                    "name": "[parameters('openAiReasoningModelModelName')]",
+                    "version": "[parameters('openAiReasoningModelVersion')]"
+                },
+                "versionUpgradeOption": "OnceNewDefaultVersionAvailable",
+                "currentCapacity": "[parameters('openAiReasoningModelTokensPerMinute')]",
+                "raiPolicyName": "Microsoft.Default"
+            }
+        },
+        {
+            "condition": "[parameters('isCreatingOpenAiEndpoint')]",
+            "type": "Microsoft.CognitiveServices/accounts/deployments",
+            "apiVersion": "2023-10-01-preview",
+            "name": "[concat(parameters('openAiResourceName'), '/', parameters('openAiEmbeddingDeploymentName'))]",
+            "dependsOn": [
+                "[variables('openAiResourceId')]",
+                "[variables('openAiReasoningModelDeploymentId')]"
+            ],
+            "sku": {
+                "name": "[parameters('openAiEmbeddingSkuName')]",
+                "capacity": "[parameters('openAiEmbeddingTokensPerMinute')]"
+            },
+            "properties": {
+                "model": {
+                    "format": "OpenAI",
+                    "name": "[parameters('openAiEmbeddingModelName')]",
+                    "version": "[parameters('openAiEmbeddingVersion')]"
+                },
+                "versionUpgradeOption": "OnceNewDefaultVersionAvailable",
+                "currentCapacity": "[parameters('openAiEmbeddingTokensPerMinute')]",
+                "raiPolicyName": "Microsoft.Default"
+            }
+        }
+    ],
+    "outputs": {}
+}

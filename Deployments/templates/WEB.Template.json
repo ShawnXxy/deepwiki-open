@@ -1,0 +1,228 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "defaultValue": "[resourceGroup().location]",
+            "type": "string",
+            "metadata": {
+                "description": "Location for the App Service resources."
+            }
+        },
+        "appServicePlanName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the App Service Plan."
+            }
+        },
+        "appServiceName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the App Service (Web App)."
+            }
+        },
+        "managedIdentityName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the User-Assigned Managed Identity to associate with the App Service."
+            }
+        },
+        "containerRegistryName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Azure Container Registry (without .azurecr.io). Required for custom container deployment."
+            }
+        },
+        "containerImageName": {
+            "defaultValue": "deepwiki",
+            "type": "string",
+            "metadata": {
+                "description": "Container image name (without registry prefix or tag)."
+            }
+        },
+        "containerImageTag": {
+            "defaultValue": "latest",
+            "type": "string",
+            "metadata": {
+                "description": "Container image tag."
+            }
+        },
+        "appServicePlanSku": {
+            "defaultValue": "P1v3",
+            "type": "string",
+            "metadata": {
+                "description": "SKU for the App Service Plan."
+            }
+        },
+        "applicationInsightsConnectionString": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Connection string for Application Insights."
+            }
+        },
+        "enableNetworkRestrictions": {
+            "defaultValue": true,
+            "type": "bool",
+            "metadata": {
+                "description": "Enable network restrictions with service tags."
+            }
+        },
+        "resourceTags": {
+            "defaultValue": {},
+            "type": "object",
+            "metadata": {
+                "description": "Tags to assign to the resources."
+            }
+        }
+    },
+    "variables": {
+        "managedIdentityId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName'))]",
+        "appServicePlanId": "[resourceId('Microsoft.Web/serverfarms', parameters('appServicePlanName'))]",
+        "appServiceId": "[resourceId('Microsoft.Web/sites', parameters('appServiceName'))]",
+        "containerRegistryServer": "[concat(parameters('containerRegistryName'), '.azurecr.io')]",
+        "containerImageFull": "[concat(variables('containerRegistryServer'), '/', parameters('containerImageName'), ':', parameters('containerImageTag'))]",
+        "ipSecurityRestrictions": [
+            {
+                "ipAddress": "AzureTrafficManager",
+                "action": "Allow",
+                "tag": "ServiceTag",
+                "priority": 200,
+                "name": "AzureTrafficManager",
+                "description": "Allow Azure Traffic Manager"
+            },
+            {
+                "ipAddress": "CorpNetPublic",
+                "action": "Allow",
+                "tag": "ServiceTag",
+                "priority": 400,
+                "name": "Allow CorpNetPublic",
+                "description": "Allow CorpNetPublic"
+            },
+            {
+                "ipAddress": "CorpNetSaw",
+                "action": "Allow",
+                "tag": "ServiceTag",
+                "priority": 401,
+                "name": "Allow CorpNetSAW",
+                "description": "Allow CorpNetSAW"
+            },
+            {
+                "ipAddress": "Any",
+                "action": "Deny",
+                "priority": 2147483647,
+                "name": "Deny all",
+                "description": "Deny all access"
+            }
+        ],
+        "emptyIpRestrictions": []
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Web/serverfarms",
+            "apiVersion": "2023-01-01",
+            "name": "[parameters('appServicePlanName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "sku": {
+                "name": "[parameters('appServicePlanSku')]"
+            },
+            "kind": "linux",
+            "properties": {
+                "reserved": true
+            }
+        },
+        {
+            "type": "Microsoft.Web/sites",
+            "apiVersion": "2023-01-01",
+            "name": "[parameters('appServiceName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "kind": "app,linux,container",
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[variables('managedIdentityId')]": {}
+                }
+            },
+            "dependsOn": [
+                "[variables('appServicePlanId')]"
+            ],
+            "properties": {
+                "serverFarmId": "[variables('appServicePlanId')]",
+                "reserved": true,
+                "httpsOnly": true,
+                "siteConfig": {
+                    "linuxFxVersion": "[concat('DOCKER|', variables('containerImageFull'))]",
+                    "acrUseManagedIdentityCreds": true,
+                    "acrUserManagedIdentityID": "[reference(variables('managedIdentityId'), '2023-07-31-preview').clientId]",
+                    "alwaysOn": true,
+                    "http20Enabled": true,
+                    "minTlsVersion": "1.2",
+                    "ftpsState": "Disabled",
+                    "ipSecurityRestrictions": "[if(parameters('enableNetworkRestrictions'), variables('ipSecurityRestrictions'), variables('emptyIpRestrictions'))]",
+                    "ipSecurityRestrictionsDefaultAction": "[if(parameters('enableNetworkRestrictions'), 'Deny', 'Allow')]",
+                    "scmIpSecurityRestrictions": "[if(parameters('enableNetworkRestrictions'), variables('ipSecurityRestrictions'), variables('emptyIpRestrictions'))]",
+                    "scmIpSecurityRestrictionsDefaultAction": "[if(parameters('enableNetworkRestrictions'), 'Deny', 'Allow')]",
+                    "scmIpSecurityRestrictionsUseMain": false,
+                    "appSettings": [
+                        {
+                            "name": "WEBSITES_ENABLE_APP_SERVICE_STORAGE",
+                            "value": "false"
+                        },
+                        {
+                            "name": "DOCKER_REGISTRY_SERVER_URL",
+                            "value": "[concat('https://', variables('containerRegistryServer'))]"
+                        },
+                        {
+                            "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                            "value": "[parameters('applicationInsightsConnectionString')]"
+                        },
+                        {
+                            "name": "AZURE_CLIENT_ID",
+                            "value": "[reference(variables('managedIdentityId'), '2023-07-31-preview').clientId]"
+                        }
+                    ]
+                },
+                "clientAffinityEnabled": false
+            }
+        },
+        {
+            "type": "Microsoft.Web/sites/config",
+            "apiVersion": "2023-01-01",
+            "name": "[concat(parameters('appServiceName'), '/web')]",
+            "dependsOn": [
+                "[variables('appServiceId')]"
+            ],
+            "properties": {
+                "healthCheckPath": "/health"
+            }
+        }
+    ],
+    "outputs": {
+        "appServicePlanId": {
+            "type": "string",
+            "value": "[variables('appServicePlanId')]"
+        },
+        "appServiceId": {
+            "type": "string",
+            "value": "[variables('appServiceId')]"
+        },
+        "appServiceDefaultHostName": {
+            "type": "string",
+            "value": "[reference(variables('appServiceId'), '2023-01-01').defaultHostName]"
+        },
+        "appServiceUrl": {
+            "type": "string",
+            "value": "[concat('https://', reference(variables('appServiceId'), '2023-01-01').defaultHostName)]"
+        },
+        "containerRegistryServer": {
+            "type": "string",
+            "value": "[variables('containerRegistryServer')]"
+        },
+        "containerImageFull": {
+            "type": "string",
+            "value": "[variables('containerImageFull')]"
+        }
+    }
+}

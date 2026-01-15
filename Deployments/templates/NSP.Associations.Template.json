@@ -1,0 +1,81 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "nspName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Network Security Perimeter."
+            }
+        },
+        "nspProfileName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the NSP profile."
+            }
+        },
+        "nspAccessMode": {
+            "defaultValue": "Enforced",
+            "allowedValues": [
+                "Learning",
+                "Enforced"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Access mode for the resource association. 'Enforced' blocks violations, 'Learning' allows traffic but logs violations."
+            }
+        },
+        "resourceName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the resource to associate with NSP."
+            }
+        },
+        "resourceType": {
+            "allowedValues": [
+                "storage",
+                "keyvault"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Type of resource to associate - 'storage' for Storage Account or 'keyvault' for Key Vault."
+            }
+        }
+    },
+    "variables": {
+        "storageResourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('resourceName'))]",
+        "keyVaultResourceId": "[resourceId('Microsoft.KeyVault/vaults', parameters('resourceName'))]",
+        "paasResourceId": "[if(equals(parameters('resourceType'), 'storage'), variables('storageResourceId'), variables('keyVaultResourceId'))]",
+        "resourceAssociationName": "[format('association-{0}', parameters('resourceName'))]",
+        "shouldCreate": "[and(not(empty(parameters('nspName'))), not(startsWith(parameters('nspName'), '__')))]"
+    },
+    "resources": [
+        {
+            "condition": "[variables('shouldCreate')]",
+            "type": "Microsoft.Network/networkSecurityPerimeters/resourceAssociations",
+            "apiVersion": "2024-07-01",
+            "name": "[concat(parameters('nspName'), '/', variables('resourceAssociationName'))]",
+            "properties": {
+                "privateLinkResource": {
+                    "id": "[variables('paasResourceId')]"
+                },
+                "profile": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityPerimeters/profiles', parameters('nspName'), parameters('nspProfileName'))]"
+                },
+                "accessMode": "[parameters('nspAccessMode')]"
+            }
+        }
+    ],
+    "outputs": {
+        "associationName": {
+            "condition": "[variables('shouldCreate')]",
+            "type": "string",
+            "value": "[variables('resourceAssociationName')]"
+        },
+        "associatedResourceId": {
+            "condition": "[variables('shouldCreate')]",
+            "type": "string",
+            "value": "[variables('paasResourceId')]"
+        }
+    }
+}

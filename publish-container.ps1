@@ -9,14 +9,18 @@ $ErrorActionPreference = "Stop"
 $RESOURCE_GROUP = "RG-ORCAS-DEEPWIKI"
 $LOCATION = "eastasia"
 $ENVIRONMENT_NAME = "codewiki-env"
-$ACR_NAME = "orcascodewikiacr"  # Must be globally unique, lowercase, alphanumeric only
+$ACR_NAME = "acrorcascodewiki"  # Must be globally unique, lowercase, alphanumeric only
 $APP_NAME = "orcascodewiki"
 
 # Managed Identity (from your infra.json)
-$MSI_NAME = "mid-deepwiki-ea"
+$MSI_NAME = "mid-orcas-deepwiki"
 
 # Storage account name from infra.json
-$STORAGE_ACCOUNT_NAME = "amldwstorage"
+$STORAGE_ACCOUNT_NAME = "bloborcasdeepwiki"
+
+# Log Analytics Workspace (existing workspace to use for Container Apps Environment)
+# Leave empty to let Azure auto-create a new workspace
+$LOG_ANALYTICS_WORKSPACE_NAME = "log-orcas-deepwiki-ea"
 
 # ============================================
 # Pre-flight Checks
@@ -122,11 +126,45 @@ $envExists = az containerapp env show --name $ENVIRONMENT_NAME --resource-group 
 if ($envExists) {
     Write-Host "✅ Environment already exists: $ENVIRONMENT_NAME" -ForegroundColor Green
 } else {
-    az containerapp env create `
-        --name $ENVIRONMENT_NAME `
-        --resource-group $RESOURCE_GROUP `
-        --location $LOCATION
-    Write-Host "✅ Environment created: $ENVIRONMENT_NAME" -ForegroundColor Green
+    # Check if using existing Log Analytics workspace
+    if ($LOG_ANALYTICS_WORKSPACE_NAME) {
+        Write-Host "   Using existing Log Analytics workspace: $LOG_ANALYTICS_WORKSPACE_NAME" -ForegroundColor Yellow
+        
+        # Get the Log Analytics workspace resource ID and customer ID
+        $LOG_ANALYTICS_WORKSPACE_ID = az monitor log-analytics workspace show `
+            --workspace-name $LOG_ANALYTICS_WORKSPACE_NAME `
+            --resource-group $RESOURCE_GROUP `
+            --query customerId -o tsv
+        
+        $LOG_ANALYTICS_WORKSPACE_KEY = az monitor log-analytics workspace get-shared-keys `
+            --workspace-name $LOG_ANALYTICS_WORKSPACE_NAME `
+            --resource-group $RESOURCE_GROUP `
+            --query primarySharedKey -o tsv
+        
+        if ($LOG_ANALYTICS_WORKSPACE_ID -and $LOG_ANALYTICS_WORKSPACE_KEY) {
+            az containerapp env create `
+                --name $ENVIRONMENT_NAME `
+                --resource-group $RESOURCE_GROUP `
+                --location $LOCATION `
+                --logs-workspace-id $LOG_ANALYTICS_WORKSPACE_ID `
+                --logs-workspace-key $LOG_ANALYTICS_WORKSPACE_KEY
+            Write-Host "✅ Environment created with existing Log Analytics workspace" -ForegroundColor Green
+        } else {
+            Write-Host "⚠️  Could not retrieve Log Analytics workspace details. Creating environment with auto-generated workspace..." -ForegroundColor Yellow
+            az containerapp env create `
+                --name $ENVIRONMENT_NAME `
+                --resource-group $RESOURCE_GROUP `
+                --location $LOCATION
+            Write-Host "✅ Environment created with auto-generated Log Analytics workspace" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "   No existing workspace specified - Azure will auto-create one" -ForegroundColor Yellow
+        az containerapp env create `
+            --name $ENVIRONMENT_NAME `
+            --resource-group $RESOURCE_GROUP `
+            --location $LOCATION
+        Write-Host "✅ Environment created: $ENVIRONMENT_NAME" -ForegroundColor Green
+    }
 }
 
 # ============================================

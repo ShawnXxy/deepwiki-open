@@ -1,0 +1,183 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "defaultValue": "eastus",
+            "type": "string",
+            "metadata": {
+                "description": "Location of the Azure Open AI endpoint."
+            }
+        },
+        "searchServiceName": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of the Azure Search service."
+            }
+        },
+        "machineLearningWorkspaceSubComponentsNamePrefix": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name prefix for AML-related components (lower case, no space, one word, no numbers)."
+            }
+        },
+        "deepWikiIdentityName": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the name of user assigned identity that represents the Azure Machine Learning workspace and all its components."
+            }
+        },
+        "deploymentIdentityPrincipalId": {
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the object id (in AAD) of the user or identity doing the deployment."
+            }
+        },
+        "deploymentIdentityPrincipalType": {
+            "allowedValues": [
+                "User",
+                "ServicePrincipal"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the type of the principal doing the deployment."
+            }
+        },
+        "resourceTags": {
+            "defaultValue": {},
+            "type": "object",
+            "metadata": {
+                "description": "Tags to assign to given resources"
+            }
+        }
+    },
+    "variables": {
+        "deepWikiIdentityId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('deepWikiIdentityName'))]",
+
+        "searchServiceId": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
+
+        "storageAccountName": "[concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'storage')]",
+        "storageAccountId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+
+        "storageBlobDataReaderRoleId": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1",
+        "searchContributorRoleId": "7ca78c08-252a-4471-8644-bb5ff32d4ba0",
+        "searchIndexDataReaderId": "1407120a-92aa-4202-b7e9-c0e197c71c8f",
+        "contributorRoleId": "b24988ac-6180-42a0-ab88-20f7382dd24c"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+            "apiVersion": "2023-07-31-preview",
+            "name": "[parameters('deepWikiIdentityName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]"
+        },
+        {
+            "type": "Microsoft.Search/searchServices",
+            "apiVersion": "2023-11-01",
+            "name": "[parameters('searchServiceName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "sku": {
+                "name": "standard"
+            },
+            "identity": {
+                "type": "SystemAssigned"
+            },
+            "properties": {
+                "replicaCount": 1,
+                "partitionCount": 1,
+                "hostingMode": "Default",
+                "publicNetworkAccess": "Enabled",
+                "networkRuleSet": {
+                    "ipRules": []
+                },
+                "encryptionWithCmk": {
+                    "enforcement": "Unspecified"
+                },
+                "disableLocalAuth": true,
+                "semanticSearch": "disabled"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('searchServiceName'), variables('storageBlobDataReaderRoleId')))]",
+            "scope": "[variables('storageAccountId')]",
+            "dependsOn": [
+                "[variables('searchServiceId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('storageBlobDataReaderRoleId'))]",
+                "principalId": "[reference(variables('searchServiceId'), '2024-03-01-Preview', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, parameters('searchServiceName'), parameters('deepWikiIdentityName'), variables('searchContributorRoleId')))]",
+            "scope": "[concat('Microsoft.Search/searchServices', '/', parameters('searchServiceName'))]",
+            "dependsOn": [
+              "[variables('searchServiceId')]"
+            ],
+            "properties": {
+              "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('searchContributorRoleId'))]",
+              "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+              "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, parameters('searchServiceName'), parameters('deploymentIdentityPrincipalId'), variables('searchContributorRoleId')))]",
+            "scope": "[variables('searchServiceId')]",
+            "dependsOn": [
+                "[variables('searchServiceId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('searchContributorRoleId'))]",
+                "principalId": "[parameters('deploymentIdentityPrincipalId')]",
+                "principalType": "[parameters('deploymentIdentityPrincipalType')]"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, parameters('searchServiceName'), parameters('deepWikiIdentityName'), variables('searchIndexDataReaderId')))]",
+            "scope": "[concat('Microsoft.Search/searchServices', '/', parameters('searchServiceName'))]",
+            "dependsOn": [
+              "[variables('searchServiceId')]"
+            ],
+            "properties": {
+              "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('searchIndexDataReaderId'))]",
+              "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+              "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, parameters('searchServiceName'), parameters('deploymentIdentityPrincipalId'), variables('searchIndexDataReaderId')))]",
+            "scope": "[variables('searchServiceId')]",
+            "dependsOn": [
+                "[variables('searchServiceId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('searchIndexDataReaderId'))]",
+                "principalId": "[parameters('deploymentIdentityPrincipalId')]",
+                "principalType": "[parameters('deploymentIdentityPrincipalType')]"
+            }
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, resourceGroup().name, parameters('deploymentIdentityPrincipalId'), variables('contributorRoleId')))]",
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('contributorRoleId'))]",
+                "principalId": "[parameters('deploymentIdentityPrincipalId')]",
+                "principalType": "[parameters('deploymentIdentityPrincipalType')]"
+            }
+        }
+    ]
+}

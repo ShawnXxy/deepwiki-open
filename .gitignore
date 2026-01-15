@@ -71,3 +71,11 @@ next-env.d.ts
 
 # ignore adding self-signed certs
 certs/
+
+# ignore AI instruction files
+.github/
+.copilot/
+
+# ignore azure logs
+webapp-logs/
+webapp-logs.zip

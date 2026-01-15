@@ -1,0 +1,36 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "managedIdentityPrincipalId": {
+            "value": ""
+        },
+        "deploymentIdentityPrincipalId": {
+            "value": "{{deployment_identity_principal_id}}"
+        },
+        "deploymentIdentityPrincipalType": {
+            "value": "User"
+        },
+        "openAiResourceName": {
+            "value": "{{open_ai_resource_name}}"
+        },
+        "openAiResourceGroup": {
+            "value": "{{open_ai_resource_group}}"
+        },
+        "storageAccountName": {
+            "value": "{{storage_account_name}}"
+        },
+        "applicationInsightsName": {
+            "value": "{{application_insights_name}}"
+        },
+        "keyVaultName": {
+            "value": ""
+        },
+        "searchServiceName": {
+            "value": ""
+        },
+        "machineLearningWorkspaceName": {
+            "value": ""
+        }
+    }
+}

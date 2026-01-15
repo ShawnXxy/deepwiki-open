@@ -1,0 +1,48 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "value": "{{location}}"
+        },
+        "openAiResourceName": {
+            "value": "{{open_ai_resource_name}}"
+        },
+        "isCreatingOpenAiEndpoint": {
+            "value": {{is_creating_open_ai_endpoint}}
+        },
+        "openAiReasoningModelDeploymentName": {
+            "value": "{{open_ai_reasoning_model_deployment_name}}"
+        },
+        "openAiReasoningModelModelName": {
+            "value": "{{open_ai_reasoning_model_model_name}}"
+        },
+        "openAiReasoningModelTokensPerMinute": {
+            "value": {{open_ai_reasoning_model_tokens_per_minute}}
+        },
+        "openAiReasoningModelVersion": {
+            "value": "{{open_ai_reasoning_model_version}}"
+        },
+        "openAiReasoningModelSkuName": {
+            "value": "{{open_ai_reasoning_model_sku_name}}"
+        },
+        "openAiEmbeddingDeploymentName": {
+            "value": "{{open_ai_embedding_deployment_name}}"
+        },
+        "openAiEmbeddingModelName": {
+            "value": "{{open_ai_embedding_model_name}}"
+        },
+        "openAiEmbeddingTokensPerMinute": {
+            "value": {{open_ai_embedding_tokens_per_minute}}
+        },
+        "openAiEmbeddingVersion": {
+            "value": "{{open_ai_embedding_version}}"
+        },
+        "openAiEmbeddingSkuName": {
+            "value": "{{open_ai_embedding_sku_name}}"
+        },
+        "resourceTags": {
+            "value": {{resource_tags}}
+        }
+    }
+}

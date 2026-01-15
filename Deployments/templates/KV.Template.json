@@ -1,0 +1,121 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "defaultValue": "[resourceGroup().location]",
+            "type": "string",
+            "metadata": {
+                "description": "Location for the Key Vault."
+            }
+        },
+        "keyVaultName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the Key Vault."
+            }
+        },
+        "tenantId": {
+            "defaultValue": "[subscription().tenantId]",
+            "type": "string",
+            "metadata": {
+                "description": "Tenant ID for the Key Vault."
+            }
+        },
+        "enableRbacAuthorization": {
+            "defaultValue": true,
+            "type": "bool",
+            "metadata": {
+                "description": "Enable RBAC authorization for the Key Vault."
+            }
+        },
+        "enableSoftDelete": {
+            "defaultValue": true,
+            "type": "bool",
+            "metadata": {
+                "description": "Enable soft delete for the Key Vault."
+            }
+        },
+        "softDeleteRetentionDays": {
+            "defaultValue": 90,
+            "minValue": 7,
+            "maxValue": 90,
+            "type": "int",
+            "metadata": {
+                "description": "Soft delete retention period in days."
+            }
+        },
+        "enablePurgeProtection": {
+            "defaultValue": true,
+            "type": "bool",
+            "metadata": {
+                "description": "Enable purge protection for the Key Vault."
+            }
+        },
+        "skuName": {
+            "defaultValue": "standard",
+            "allowedValues": [
+                "standard",
+                "premium"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "SKU name for the Key Vault."
+            }
+        },
+        "resourceTags": {
+            "defaultValue": {},
+            "type": "object",
+            "metadata": {
+                "description": "Tags to assign to the resource."
+            }
+        }
+    },
+    "variables": {
+        "keyVaultId": "[resourceId('Microsoft.KeyVault/vaults', parameters('keyVaultName'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.KeyVault/vaults",
+            "apiVersion": "2023-07-01",
+            "name": "[parameters('keyVaultName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "properties": {
+                "tenantId": "[parameters('tenantId')]",
+                "sku": {
+                    "family": "A",
+                    "name": "[parameters('skuName')]"
+                },
+                "enableRbacAuthorization": "[parameters('enableRbacAuthorization')]",
+                "enableSoftDelete": "[parameters('enableSoftDelete')]",
+                "softDeleteRetentionInDays": "[parameters('softDeleteRetentionDays')]",
+                "enablePurgeProtection": "[if(parameters('enablePurgeProtection'), true(), null())]",
+                "enabledForDeployment": false,
+                "enabledForDiskEncryption": false,
+                "enabledForTemplateDeployment": true,
+                "publicNetworkAccess": "Disabled",
+                "networkAcls": {
+                    "bypass": "AzureServices",
+                    "defaultAction": "Deny",
+                    "virtualNetworkRules": [],
+                    "ipRules": []
+                }
+            }
+        }
+    ],
+    "outputs": {
+        "keyVaultId": {
+            "type": "string",
+            "value": "[variables('keyVaultId')]"
+        },
+        "keyVaultName": {
+            "type": "string",
+            "value": "[parameters('keyVaultName')]"
+        },
+        "keyVaultUri": {
+            "type": "string",
+            "value": "[reference(variables('keyVaultId'), '2023-07-01').vaultUri]"
+        }
+    }
+}

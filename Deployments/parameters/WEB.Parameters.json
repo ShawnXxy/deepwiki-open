@@ -1,0 +1,36 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "value": "{{location}}"
+        },
+        "appServicePlanName": {
+            "value": "{{app_service_plan_name}}"
+        },
+        "appServiceName": {
+            "value": "{{app_service_name}}"
+        },
+        "managedIdentityName": {
+            "value": "{{dri_copilot_identity_name}}"
+        },
+        "containerRegistryName": {
+            "value": "{{container_registry_name}}"
+        },
+        "containerImageName": {
+            "value": "{{container_image_name}}"
+        },
+        "appServicePlanSku": {
+            "value": "{{app_service_plan_sku}}"
+        },
+        "applicationInsightsConnectionString": {
+            "value": ""
+        },
+        "enableNetworkRestrictions": {
+            "value": {{enable_app_service_network_restrictions}}
+        },
+        "resourceTags": {
+            "value": {{resource_tags}}
+        }
+    }
+}

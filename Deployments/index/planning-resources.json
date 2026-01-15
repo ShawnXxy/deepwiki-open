@@ -1,0 +1,101 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "DeepWiki Planning Resources Index",
+    "description": "Index of optional/future resources for DeepWiki deployment",
+    "version": "1.0.0",
+    "deploymentOrder": [
+        {
+            "step": 1,
+            "name": "Key Vault",
+            "description": "Azure Key Vault for secrets management",
+            "template": "templates/KV.Template.json",
+            "parameters": "parameters/KV.Parameters.json",
+            "configKeys": ["key_vault_name", "key_vault_enable_rbac"],
+            "required": false,
+            "outputs": ["keyVaultId", "keyVaultUri"],
+            "nspSupported": true
+        },
+        {
+            "step": 2,
+            "name": "Azure Cognitive Search",
+            "description": "Azure Cognitive Search for code indexing",
+            "template": "templates/ACS.Template.json",
+            "parameters": "parameters/ACS.Parameters.json",
+            "configKeys": ["search_service_name"],
+            "required": false,
+            "outputs": ["searchServiceId"]
+        },
+        {
+            "step": 3,
+            "name": "Azure Machine Learning",
+            "description": "Azure ML Workspace with associated resources",
+            "template": "templates/AML.Template.json",
+            "parameters": "parameters/AML.Parameters.json",
+            "configKeys": ["machine_learning_workspace_name", "machine_learning_workspace_sub_components_name_prefix"],
+            "required": false,
+            "dependsOn": ["Key Vault"],
+            "createsResources": [
+                "Container Registry",
+                "Storage Account (AML)",
+                "Application Insights (AML)"
+            ]
+        },
+        {
+            "step": 4,
+            "name": "Role Assignments (Planning)",
+            "description": "Additional RBAC roles for optional resources",
+            "template": "templates/role-assignments.json",
+            "required": false,
+            "dependsOn": ["Key Vault", "Azure Cognitive Search", "Azure Machine Learning"],
+            "roles": [
+                {"role": "Key Vault Crypto User", "scope": "Key Vault"},
+                {"role": "Key Vault Secrets Officer", "scope": "Key Vault"},
+                {"role": "Key Vault Certificate User", "scope": "Key Vault"},
+                {"role": "Search Index Data Reader", "scope": "Azure Cognitive Search"},
+                {"role": "Search Service Contributor", "scope": "Azure Cognitive Search"},
+                {"role": "AzureML Data Scientist", "scope": "Azure Machine Learning"}
+            ]
+        },
+        {
+            "step": 5,
+            "name": "NSP Associations (Planning)",
+            "description": "NSP associations for Key Vault",
+            "template": "templates/NSP.Associations.Template.json",
+            "configKeys": ["nsp_name", "nsp_access_mode_for_key_vault"],
+            "conditional": "nsp_name",
+            "required": false,
+            "dependsOn": ["Key Vault"],
+            "protectedServices": ["Key Vault"]
+        }
+    ],
+    "roleAssignmentDefinitions": {
+        "keyVaultCryptoUser": {
+            "roleId": "12338af0-0e69-4776-bea7-57ae8d297424",
+            "description": "Perform cryptographic operations using keys"
+        },
+        "keyVaultSecretsOfficer": {
+            "roleId": "b86a8fe4-44ce-4948-aee5-eccb2c155cd7",
+            "description": "Perform any action on secrets"
+        },
+        "keyVaultCertificateUser": {
+            "roleId": "db79e9a7-68ee-4b58-9aeb-b90e7c24fcba",
+            "description": "Read certificate contents"
+        },
+        "searchIndexDataReader": {
+            "roleId": "1407120a-92aa-4202-b7e9-c0e197c71c8f",
+            "description": "Read access to index data"
+        },
+        "searchServiceContributor": {
+            "roleId": "7ca78c08-252a-4471-8644-bb5ff32d4ba0",
+            "description": "Manage Search services"
+        },
+        "azureMLDataScientist": {
+            "roleId": "f6c7c914-8db3-469d-8ca1-694a8f32e121",
+            "description": "Perform all actions within an Azure ML workspace"
+        },
+        "azureAIEnterpriseNetworkConnectionApprover": {
+            "roleId": "b556d68e-0be0-4f35-a333-ad7ee1ce17ea",
+            "description": "Approve private endpoint connections (for managed VNet)"
+        }
+    }
+}
