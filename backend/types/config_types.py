@@ -85,10 +85,11 @@ class RetrieverConfig(BaseModel):
 
 
 class TextSplitterConfig(BaseModel):
-    """Text splitter configuration for chunking."""
-    split_by: str = "word"
-    chunk_size: int = 350
-    chunk_overlap: int = 100
+    """Text splitter configuration for chunking. All values from embedder.json."""
+    split_by: str
+    chunk_size: int
+    chunk_overlap: int
+    separators: Optional[Dict[str, str]] = None
 
 
 class EmbedderConfig(BaseModel):

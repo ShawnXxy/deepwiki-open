@@ -308,23 +308,46 @@ az containerapp update -n codewiki -g RG-ORCAS-DEEPWIKI --workload-profile-name 
 
 # Get app URL
 az containerapp show -n codewiki -g RG-ORCAS-DEEPWIKI --query properties.configuration.ingress.fqdn -o tsv
-
+```
 
 ##  How It Works
 
 ```mermaid
-graph TD
-    A[User inputs repo URL] --> AA{Private repo?}
-    AA -->|Yes| AB[Add access token]
-    AA -->|No| B[Clone Repository]
-    AB --> B
-    B --> C[Analyze Code Structure]
-    C --> D[Create Embeddings with Azure OpenAI]
-    D --> E[Generate Documentation with Azure OpenAI]
-    D --> F[Create Visual Diagrams]
-    E --> G[Organize as Wiki]
-    F --> G
-    G --> H[Interactive DeepWiki]
+flowchart TB
+    %% ===== Client Layer =====
+    subgraph Client["Client layer"]
+        Repo["Repo url"]
+        Git["Git"]
+        QABot["Q&A bot"]
+        WikiClient["Wiki"]
+
+        Repo --> Git
+    end
+
+    %% ===== AI Layer =====
+    subgraph AI["AI layer"]
+        Embedding["Embedding"]
+        Reasoning["Reasoning"]
+    end
+
+    %% ===== Storage Layer =====
+    subgraph Storage["Storage layer"]
+        Chunk["Chunk --> .pkl"]
+        WikiJson["Wiki --> .json"]
+    end
+
+    %% ===== Flows =====
+    Git --> Embedding
+    Embedding --> Chunk
+
+    Chunk --> Reasoning
+    Reasoning --> Chunk
+
+    QABot --> Reasoning
+    Reasoning --> WikiJson
+
+    WikiClient --> WikiJson
+
 ```
 
 DeepWiki uses Azure OpenAI to:

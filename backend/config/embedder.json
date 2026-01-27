@@ -7,11 +7,14 @@
     }
   },
   "retriever": {
-    "top_k": 20
+    "top_k": 12
   },
   "text_splitter": {
-    "split_by": "word",
-    "chunk_size": 350,
-    "chunk_overlap": 100
+    "split_by": "passage",
+    "chunk_size": 15,
+    "chunk_overlap": 3,
+    "separators": {
+      "passage": "\n\n"
+    }
   }
 }
