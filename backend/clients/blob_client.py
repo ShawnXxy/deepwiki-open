@@ -399,6 +399,83 @@ class AzureBlobStorageClient:
             logger.error(f"Failed to check directory existence {blob_prefix}: {e}")
             return False
 
+    def delete_directory(self, blob_prefix: str) -> bool:
+        """
+        Delete all blobs with the given prefix (simulating directory deletion).
+        
+        Azure Blob Storage uses a flat namespace - there are no actual directories,
+        just blob names that may contain "/" characters. This method simulates
+        directory deletion by listing all blobs with the given prefix and deleting
+        each one individually.
+        
+        Purpose:
+            This method is primarily used by the VectorStorage class to clean up
+            JSON chunk files when regenerating embeddings for a repository. Since
+            the new JSON-based vector storage saves each chunk as a separate file
+            under a directory-like structure (e.g., "vectors/repo_name_branch/"),
+            this method provides a way to remove all those files at once.
+        
+        Use Cases:
+            1. Regenerating embeddings: When embedding model changes or you need
+               to re-embed a repository, delete old vectors first
+            2. Repository cleanup: Remove vector data for deleted/archived repos
+            3. Testing: Clear test data between test runs
+            4. Storage management: Free up blob storage space
+        
+        Example Usage:
+            ```python
+            blob_client = get_blob_storage_client()
+            
+            # Delete all JSON chunks for a repository's vectors
+            # This removes files like:
+            #   vectors/owner_repo_main/src/backend/main_chunk_000.json
+            #   vectors/owner_repo_main/src/backend/main_chunk_001.json
+            #   vectors/owner_repo_main/README_chunk_000.json
+            blob_client.delete_directory("vectors/owner_repo_main/")
+            
+            # Called internally by VectorStorage.delete():
+            vector_storage = get_vector_storage()
+            vector_storage.delete("owner_repo", "main")
+            ```
+        
+        Note:
+            - Returns True even if no blobs exist (idempotent operation)
+            - Logs warnings for individual blob deletion failures but continues
+            - Returns False only if ANY blob fails to delete
+
+        Args:
+            blob_prefix: Prefix to delete (e.g., "vectors/my_repo/"). Should end
+                        with "/" to avoid accidentally matching unintended blobs
+                        (e.g., "vectors/my_repo" might match "vectors/my_repo2/")
+
+        Returns:
+            bool: True if all blobs deleted successfully (or none existed),
+                  False if any deletion failed
+        """
+        try:
+            blobs = self.list_blobs(blob_prefix)
+            if not blobs:
+                logger.debug(f"No blobs to delete with prefix: {blob_prefix}")
+                return True
+            
+            deleted_count = 0
+            failed_count = 0
+            
+            for blob_name in blobs:
+                try:
+                    blob_client = self.get_container_client().get_blob_client(blob_name)
+                    blob_client.delete_blob()
+                    deleted_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to delete blob {blob_name}: {e}")
+                    failed_count += 1
+            
+            logger.info(f"Deleted {deleted_count} blobs with prefix {blob_prefix}, {failed_count} failed")
+            return failed_count == 0
+        except Exception as e:
+            logger.error(f"Failed to delete directory {blob_prefix}: {e}")
+            return False
+
 
 def get_blob_storage_client() -> Optional[AzureBlobStorageClient]:
     """

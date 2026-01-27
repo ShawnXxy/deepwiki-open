@@ -13,6 +13,7 @@ from backend.clients.blob_client import (
     get_storage_mode
 )
 from backend.clients.storage import storage, StorageClient
+from backend.clients.vector_storage import VectorStorage, get_vector_storage
 
 __all__ = [
     "AzureAIClient",
@@ -24,4 +25,6 @@ __all__ = [
     "get_storage_mode",
     "storage",
     "StorageClient",
+    "VectorStorage",
+    "get_vector_storage",
 ]

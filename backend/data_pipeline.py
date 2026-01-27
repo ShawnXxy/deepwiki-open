@@ -12,6 +12,7 @@ from adalflow.utils import get_adalflow_default_root_path
 from adalflow.core.db import LocalDB
 from backend.config import configs, get_file_filters_config
 from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
+from backend.clients.vector_storage import get_vector_storage
 from backend.types import FileFilter
 from urllib.parse import urlparse, urlunparse, quote
 import requests
@@ -315,7 +316,8 @@ def download_repo(repo_url: str = None, local_path: str = None, type: str = "git
 # Alias for backward compatibility
 download_github_repo = download_repo
 
-def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder: bool = None, 
+def read_all_documents(path: str, repo_url: str = None, repo_type: str = None, branch: str = None,
+                      embedder_type: str = None, is_ollama_embedder: bool = None, 
                       excluded_dirs: List[str] = None, excluded_files: List[str] = None,
                       included_dirs: List[str] = None, included_files: List[str] = None):
     """
@@ -323,6 +325,9 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
 
     Args:
         path (str): The root directory path.
+        repo_url (str, optional): The URL of the repository (for creating links in metadata).
+        repo_type (str, optional): The type of repository (github, azuredevops, etc.).
+        branch (str, optional): The branch name (for creating links in metadata).
         embedder_type (str, optional): Kept for backward compatibility, ignored.
         is_ollama_embedder (bool, optional): DEPRECATED. Kept for backward compatibility.
         excluded_dirs (List[str], optional): List of directories to exclude from processing.
@@ -377,6 +382,38 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
 
     logger.info(f"Reading documents from {path}")
 
+    def _compute_file_url(relative_path: str) -> str:
+        """Helper to compute the file URL based on repo settings."""
+        if not repo_url or not repo_url.startswith(("http://", "https://")):
+            return relative_path
+        
+        # Normalize relative path (forward slashes)
+        file_path = relative_path.replace("\\", "/")
+        if not file_path.startswith("/"):
+            file_path = "/" + file_path
+            
+        branch_name = branch if branch and branch.strip() else "main"
+        
+        if repo_type == "azuredevops":
+             # Format: .../_git/repo?version=GB{branch}&path=/{path}
+             return f"{repo_url.rstrip('/')}?version=GB{branch_name}&path={file_path}"
+             
+        elif repo_type in ["github", "gitlab"]:
+             # Format: .../blob/{branch}/{path}
+             base_url = repo_url
+             if base_url.endswith(".git"):
+                 base_url = base_url[:-4]
+             return f"{base_url.rstrip('/')}/blob/{branch_name}{file_path}"
+             
+        elif repo_type == "bitbucket":
+             # Format: .../src/{branch}/{path}
+             base_url = repo_url
+             if base_url.endswith(".git"):
+                 base_url = base_url[:-4]
+             return f"{base_url.rstrip('/')}/src/{branch_name}{file_path}"
+             
+        return relative_path
+
     # Process code files first
     for ext in code_extensions:
         files = glob.glob(f"{path}/**/*{ext}", recursive=True)
@@ -411,7 +448,8 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
                         "type": ext[1:],
                         "is_code": True,
                         "is_implementation": is_implementation,
-                        "title": relative_path,
+                        "url": _compute_file_url(relative_path),
+                        "raw_content": content,
                         "token_count": token_count,
                     },
                 )
@@ -446,7 +484,8 @@ def read_all_documents(path: str, embedder_type: str = None, is_ollama_embedder:
                         "type": ext[1:],
                         "is_code": False,
                         "is_implementation": False,
-                        "title": relative_path,
+                        "url": _compute_file_url(relative_path),
+                        "raw_content": content,
                         "token_count": token_count,
                     },
                 )
@@ -492,6 +531,9 @@ def transform_documents_and_save_to_db(
 ) -> LocalDB:
     """
     Transforms a list of documents and saves them to storage (Azure Blob or local).
+    
+    DEPRECATED: This function uses pickle format. New code should use 
+    transform_documents_and_save_as_json() for memory-efficient JSON storage.
 
     Args:
         documents (list): A list of `Document` objects.
@@ -540,6 +582,75 @@ def transform_documents_and_save_to_db(
     db.save_state(filepath=db_path)
     logger.info(f"Database saved to local storage: {db_path}")
     return db
+
+
+def transform_documents_and_save_as_json(
+    documents: List[Document],
+    repo_name: str,
+    branch: str,
+    progress_callback: callable = None
+) -> List[Document]:
+    """
+    Transforms documents and saves them as JSON chunk files.
+    
+    This is the new memory-efficient approach that:
+    - Splits documents into chunks
+    - Generates embeddings
+    - Saves each chunk as a separate JSON file organized by source file
+    
+    Storage structure:
+        vectors/{repo_name}_{branch}/
+            └── {source_file_path}_chunk_001.json
+            └── {source_file_path}_chunk_002.json
+            ...
+
+    Args:
+        documents: List of Document objects (raw, before splitting)
+        repo_name: Repository name (owner_repo format)
+        branch: Branch name
+        progress_callback: Optional callback(saved, total) for progress updates
+    
+    Returns:
+        List of transformed Document objects with embeddings
+        
+    Raises:
+        ConnectionError: If Azure Blob Storage is configured but connection fails
+        ValueError: If transformation or saving fails
+    """
+    logger.info(f"[Vec] Transforming {len(documents)} documents for {repo_name}_{branch}")
+    
+    # Get the data transformer
+    data_transformer = prepare_data_pipeline()
+
+    # Create a temporary LocalDB for transformation
+    db = LocalDB()
+    db.register_transformer(transformer=data_transformer, key="split_and_embed")
+    db.load(documents)
+    db.transform(key="split_and_embed")
+    
+    # Get transformed documents
+    transformed_docs = db.get_transformed_data(key="split_and_embed")
+    
+    if not transformed_docs:
+        logger.warning("[Vec] No documents after transformation")
+        return []
+    
+    logger.info(f"[Vec] Generated {len(transformed_docs)} chunks, saving as JSON...")
+    
+    # Save to JSON vector storage
+    vector_storage = get_vector_storage()
+    
+    if not vector_storage.save_documents(
+        transformed_docs,
+        repo_name,
+        branch,
+        progress_callback=progress_callback
+    ):
+        raise ValueError(f"[Vec] Failed to save vectors for {repo_name}_{branch}")
+    
+    logger.info(f"[Vec] Successfully saved {len(transformed_docs)} chunks as JSON")
+    return transformed_docs
+
 
 def get_github_file_content(repo_url: str, file_path: str, access_token: str = None) -> str:
     """
@@ -1075,11 +1186,6 @@ class DatabaseManager:
             save_db_file = os.path.join(root_path, db_relative_path)
             blob_db_path = db_relative_path  # Same relative path for blob
             
-            logger.debug(f"Database relative path: {db_relative_path}")
-            logger.debug(f"Local database path: {save_db_file}")
-            logger.debug(f"Blob database path: {blob_db_path}")
-            logger.debug(f"Branch: {branch} -> suffix: {branch_suffix}")
-            
             os.makedirs(save_repo_dir, exist_ok=True)
             os.makedirs(os.path.dirname(save_db_file), exist_ok=True)
 
@@ -1089,9 +1195,11 @@ class DatabaseManager:
                 "blob_db_path": blob_db_path,
                 "blob_repo_path": blob_repo_path,  # Add blob repo path
                 "repo_name": repo_name,  # Store for reference
+                "branch_suffix": branch_suffix,  # Store branch suffix for vector storage
+                "repo_type": repo_type,  # Store repo type for URL construction
             }
             self.repo_url_or_path = repo_url_or_path
-            logger.debug(f"Repo paths: {self.repo_paths}")
+            logger.debug(f"Repo: {repo_name}, branch: {branch_suffix}, type: {repo_type}")
 
         except Exception as e:
             logger.error(f"Failed to create repository structure: {e}")
@@ -1102,7 +1210,11 @@ class DatabaseManager:
                         included_dirs: List[str] = None, included_files: List[str] = None) -> List[Document]:
         """
         Prepare the indexed database for the repository.
-        Uses Azure Blob Storage when configured, raises error if blob connection fails.
+        
+        Storage priority (backward compatible):
+        1. Check for existing pkl database in "databases/" - load if found (backward compat)
+        2. Check for existing JSON vectors in "vectors/" - load if found (new format)
+        3. If neither exists, create new using JSON format in "vectors/"
 
         Args:
             embedder_type (str, optional): Kept for backward compatibility, ignored.
@@ -1118,7 +1230,16 @@ class DatabaseManager:
         Raises:
             ConnectionError: If Azure Blob Storage is configured but connection fails
         """
-        # Try to load from Azure Blob Storage when configured
+        repo_name = self.repo_paths.get("repo_name", "unknown")
+        branch_suffix = self.repo_paths.get("branch_suffix", "main")
+        vector_storage = get_vector_storage()
+        vectors_path = f"vectors/{repo_name}_{branch_suffix}"
+        
+        logger.info(f"Looking for existing embeddings for {repo_name} (branch: {branch_suffix})...")
+        
+        # ========================================================================
+        # STEP 1: Check for existing pkl database (backward compatibility)
+        # ========================================================================
         if self.repo_paths and is_blob_storage_configured():
             blob_db_path = self.repo_paths.get("blob_db_path")
             if blob_db_path:
@@ -1129,17 +1250,28 @@ class DatabaseManager:
                         logger.error(error_msg)
                         raise ConnectionError(error_msg)
                     
+                    # Check for legacy pkl database first
                     if blob_client.exists(blob_db_path):
-                        logger.info(f"Loading database from Azure Blob Storage: {blob_db_path}")
+                        logger.info(f"[Pkl] Found legacy pkl database in Azure Blob: {blob_db_path}")
                         self.db = blob_client.load_pickle(blob_db_path)
                         if self.db:
                             documents = self.db.get_transformed_data(key="split_and_embed")
                             if documents:
-                                logger.info(f"Loaded {len(documents)} documents from Azure Blob Storage")
+                                logger.info(f"[Pkl] Successfully loaded {len(documents)} documents from legacy pkl database")
                                 return documents
-                        logger.info(f"Database exists in blob but is empty or invalid, will create new")
+                        logger.info("[Pkl] Legacy pkl exists but is empty/invalid, switching to check vectors...")
+                    
+                    # Check for new JSON vectors
+                    if vector_storage.exists(repo_name, branch_suffix):
+                        logger.info(f"[Vec] Found JSON vectors at: vectors/{repo_name}_{branch_suffix}/")
+                        documents = vector_storage.load_documents(repo_name, branch_suffix)
+                        if documents:
+                            logger.info(f"[Vec] Successfully loaded {len(documents)} documents from JSON vector storage")
+                            return documents
+                        logger.info("[Vec] Vectors directory exists but empty/invalid, will create new")
                     else:
-                        logger.info(f"Database not found in Azure Blob Storage: {blob_db_path}, will create new")
+                        logger.info(f"[Vec] No existing vectors found, will create new with JSON format")
+                        
                 except ConnectionError:
                     raise  # Re-raise connection errors
                 except Exception as e:
@@ -1148,35 +1280,57 @@ class DatabaseManager:
                     raise ConnectionError(error_msg) from e
         else:
             # Local storage mode (blob not configured)
+            # Check for legacy pkl database first
             if self.repo_paths and os.path.exists(self.repo_paths["save_db_file"]):
-                logger.info("Loading existing database from local storage...")
+                logger.info(f"[Pkl] Found legacy pkl database at local: {self.repo_paths['save_db_file']}")
                 try:
                     self.db = LocalDB.load_state(self.repo_paths["save_db_file"])
                     documents = self.db.get_transformed_data(key="split_and_embed")
                     if documents:
-                        logger.info(f"Loaded {len(documents)} documents from local database")
+                        logger.info(f"[Pkl] Successfully loaded {len(documents)} documents from legacy pkl database")
                         return documents
                 except Exception as e:
-                    logger.error(f"Error loading existing local database: {e}")
-                    # Continue to create a new database
+                    logger.error(f"[Pkl] Error loading legacy pkl database: {e}")
+                    logger.info("[Pkl] Switching to check vectors...")
+            
+            # Check for new JSON vectors
+            if vector_storage.exists(repo_name, branch_suffix):
+                logger.info(f"[Vec] Found JSON vectors at: vectors/{repo_name}_{branch_suffix}/")
+                documents = vector_storage.load_documents(repo_name, branch_suffix)
+                if documents:
+                    logger.info(f"[Vec] Successfully loaded {len(documents)} documents from JSON vector storage")
+                    return documents
 
-        # Create new database
-        logger.info("Creating new database...")
+        # ========================================================================
+        # STEP 2: Create new database using JSON format
+        # ========================================================================
+        logger.info("[Vec] Creating new embeddings with JSON vector storage...")
         documents = read_all_documents(
             self.repo_paths["save_repo_dir"],
+            repo_url=self.repo_url_or_path,
+            repo_type=self.repo_paths.get("repo_type"),
+            branch=self.repo_paths.get("branch_suffix"),
             excluded_dirs=excluded_dirs,
             excluded_files=excluded_files,
             included_dirs=included_dirs,
             included_files=included_files
         )
-        self.db = transform_documents_and_save_to_db(
-            documents, 
-            self.repo_paths["save_db_file"],
-            blob_path=self.repo_paths.get("blob_db_path")
+        
+        if not documents:
+            logger.warning("No documents found to process")
+            return []
+        
+        logger.info(f"[Vec] Processing {len(documents)} documents...")
+        
+        # Use new JSON format for storage
+        transformed_docs = transform_documents_and_save_as_json(
+            documents,
+            repo_name,
+            branch_suffix
         )
-        logger.info(f"Total documents: {len(documents)}")
-        transformed_docs = self.db.get_transformed_data(key="split_and_embed")
-        logger.info(f"Total transformed documents: {len(transformed_docs)}")
+        
+        logger.info(f"[Vec] Total documents: {len(documents)}")
+        logger.info(f"[Vec] Total transformed chunks: {len(transformed_docs)}")
         return transformed_docs
 
     def prepare_retriever(self, repo_url_or_path: str, repo_type: str = None, 

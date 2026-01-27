@@ -11,7 +11,7 @@
   },
   "text_splitter": {
     "split_by": "word",
-    "chunk_size": 350,
-    "chunk_overlap": 100
+    "chunk_size": 2000,
+    "chunk_overlap": 300
   }
 }
