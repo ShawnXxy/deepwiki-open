@@ -1,0 +1,380 @@
+"""
+Git operations for repository management.
+
+Provides functions for cloning, pulling, and managing Git repositories.
+"""
+
+import os
+import subprocess
+import logging
+from urllib.parse import urlparse, urlunparse, quote
+
+logger = logging.getLogger(__name__)
+
+
+def detect_default_branch(local_path: str) -> str:
+    """
+    Detect the default branch of a cloned repository.
+    
+    Args:
+        local_path: Path to the cloned repository
+        
+    Returns:
+        str: Name of the default branch (e.g., 'main', 'master')
+    """
+    try:
+        result = subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
+            cwd=local_path,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        # Output format: refs/remotes/origin/main
+        output = result.stdout.decode("utf-8").strip()
+        branch = output.split("/")[-1]
+        logger.debug(f"Detected default branch: {branch}")
+        return branch
+    except subprocess.CalledProcessError:
+        # Fallback to main/master
+        logger.warning("Could not detect default branch, trying main/master")
+        for fallback in ['main', 'master']:
+            try:
+                subprocess.run(
+                    ["git", "rev-parse", "--verify", f"origin/{fallback}"],
+                    cwd=local_path,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                logger.info(f"Using fallback branch: {fallback}")
+                return fallback
+            except subprocess.CalledProcessError:
+                continue
+        # Last resort
+        return 'main'
+
+
+def download_repo(
+    repo_url: str = None,
+    local_path: str = None,
+    type: str = "github",
+    access_token: str = None,
+    branch: str = None,
+    git_source=None,
+    force_update: bool = False
+) -> str:
+    """
+    Downloads a Git repository (GitHub, GitLab, Bitbucket, or Azure DevOps) to a specified
+    local path. If the repository already exists and force_update=True, pulls latest changes.
+
+    Supports both legacy parameter-based API and new GitSource type-based API.
+
+    Args:
+        repo_url (str, optional): The URL of the Git repository to clone.
+        local_path (str, optional): The local directory where the repository will be cloned.
+        type (str): The type of repository (github, gitlab, bitbucket, azuredevops).
+        access_token (str, optional): Access token for private repositories.
+        branch (str, optional): Specific branch to clone. If None, uses default branch.
+        git_source (GitSource, optional): GitSource object containing all git parameters.
+        force_update (bool): If True and repo exists, pull latest changes instead of skipping.
+
+    Returns:
+        str: The output message from the git command.
+    """
+    # If git_source provided, extract parameters from it
+    if git_source is not None:
+        from backend.types import GitSource
+        if not isinstance(git_source, GitSource):
+            raise TypeError(f"git_source must be GitSource type, got {type(git_source)}")
+            
+        repo_url = git_source.repository.url
+        type = git_source.repository.repo_type
+        access_token = git_source.credentials.access_token if git_source.credentials else None
+        branch = git_source.reference.branch if git_source.reference else None
+        # If local_path not explicitly provided, use from GitSource
+        if local_path is None:
+            local_path = git_source.repository.local_path
+    
+    # Validate required parameters
+    if not repo_url:
+        raise ValueError("repo_url must be provided either directly or via git_source")
+    if not local_path:
+        raise ValueError("local_path must be provided either directly or via git_source")
+    
+    try:
+        # Check if Git is installed
+        logger.info(f"Preparing to clone repository to {local_path}")
+        subprocess.run(
+            ["git", "--version"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        # Check if repository already exists
+        if os.path.exists(local_path) and os.listdir(local_path):
+            # Directory exists and is not empty
+            if force_update:
+                # Pull latest changes instead of skipping
+                logger.info(f"Repository exists at {local_path}, pulling latest changes...")
+                return _pull_repo_internal(local_path, access_token, repo_url, type)
+            else:
+                logger.warning(f"Repository already exists at {local_path}. Using existing.")
+                return f"Using existing repository at {local_path}"
+
+        # Ensure the local path exists
+        os.makedirs(local_path, exist_ok=True)
+
+        # Prepare the clone URL with access token if provided
+        clone_url = repo_url
+        logger.debug(f"download_repo called with type={type}, access_token={'[PROVIDED]' if access_token else '[NONE]'}")
+        if access_token:
+            parsed = urlparse(repo_url)
+            # URL-encode the token to handle special characters
+            encoded_token = quote(access_token, safe='')
+            logger.debug(f"Token encoded, length: {len(encoded_token)}")
+            # Determine the repository type and format the URL accordingly
+            if type == "github":
+                # Format: https://{token}@{domain}/owner/repo.git
+                clone_url = urlunparse((parsed.scheme, f"{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+            elif type == "gitlab":
+                # Format: https://oauth2:{token}@gitlab.com/owner/repo.git
+                clone_url = urlunparse((parsed.scheme, f"oauth2:{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+            elif type == "bitbucket":
+                # Format: https://x-token-auth:{token}@bitbucket.org/owner/repo.git
+                clone_url = urlunparse((parsed.scheme, f"x-token-auth:{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+            elif type == "azuredevops":
+                # Format: https://{token}@{domain}/owner/repo.git
+                clone_url = urlunparse((
+                    parsed.scheme, 
+                    f"{encoded_token}@{parsed.netloc}", 
+                    parsed.path, '', '', ''
+                ))
+            else:
+                logger.warning(f"Unknown repo type: {type}, token may not be embedded correctly")
+
+            logger.info(f"Using access token for authentication (type={type})")
+        else:
+            logger.warning(f"No access token provided for repo type={type}")
+
+        # Clone the repository with branch handling
+        logger.info(f"Cloning repository from {repo_url} to {local_path}")
+        
+        # Build git clone command with branch parameter if specified
+        clone_cmd = ["git", "clone", "--depth=1", "--single-branch"]
+        
+        # Add branch parameter if specified, with fallback logic
+        if branch and branch.strip():
+            clone_cmd.extend(["-b", branch.strip()])
+            logger.info(f"Attempting to clone branch: {branch.strip()}")
+        
+        clone_cmd.extend([clone_url, local_path])
+        
+        try:
+            result = subprocess.run(
+                clone_cmd,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            logger.info("Repository cloned successfully")
+            return result.stdout.decode("utf-8")
+            
+        except subprocess.CalledProcessError as e:
+            # If specified branch fails, try fallback branches
+            if branch and branch.strip() and branch.strip() not in ['main', 'master']:
+                logger.warning(f"Branch {branch.strip()} not found, trying fallback branches")
+                
+                # Clean up failed clone attempt
+                if os.path.exists(local_path):
+                    import shutil
+                    shutil.rmtree(local_path)
+                
+                # Try with 'main' branch
+                for fallback_branch in ['main', 'master']:
+                    try:
+                        logger.info(f"Trying fallback branch: {fallback_branch}")
+                        clone_cmd_fallback = ["git", "clone", "-b", fallback_branch, clone_url, local_path]
+                        result = subprocess.run(
+                            clone_cmd_fallback,
+                            check=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                        )
+                        logger.info(f"Repository cloned successfully using fallback branch: {fallback_branch}")
+                        return result.stdout.decode("utf-8")
+                    except subprocess.CalledProcessError:
+                        # Clean up and try next fallback
+                        if os.path.exists(local_path):
+                            shutil.rmtree(local_path)
+                        continue
+                
+                # If all fallback branches fail, try without branch specification
+                try:
+                    logger.info("Trying clone without branch specification (default branch)")
+                    clone_cmd_default = ["git", "clone", clone_url, local_path]
+                    result = subprocess.run(
+                        clone_cmd_default,
+                        check=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    logger.info("Repository cloned successfully using default branch")
+                    return result.stdout.decode("utf-8")
+                except subprocess.CalledProcessError:
+                    pass
+            
+            # If we get here, all attempts failed
+            error_msg = e.stderr.decode('utf-8')
+            # Sanitize error message to remove any tokens
+            if access_token:
+                error_msg = error_msg.replace(access_token, "***TOKEN***")
+                encoded_token = quote(access_token, safe='')
+                error_msg = error_msg.replace(encoded_token, "***TOKEN***")
+            raise ValueError(f"Error during cloning: {error_msg}")
+    except Exception as e:
+        raise ValueError(f"An unexpected error occurred: {str(e)}")
+
+
+# Alias for backward compatibility
+download_github_repo = download_repo
+
+
+def _pull_repo_internal(
+    local_path: str,
+    access_token: str = None,
+    repo_url: str = None,
+    repo_type: str = "github"
+) -> str:
+    """
+    Internal helper: Pull the latest changes from a Git repository.
+    Called by download_repo when force_update=True and repo exists.
+    """
+    git_dir = os.path.join(local_path, ".git")
+    if not os.path.exists(git_dir):
+        raise ValueError(f"Not a Git repository: {local_path}")
+
+    logger.info(f"Pulling latest changes for repository at {local_path}")
+
+    try:
+        # If we have an access token and repo URL, update the remote URL for auth
+        if access_token and repo_url:
+            parsed = urlparse(repo_url)
+            encoded_token = quote(access_token, safe='')
+
+            if repo_type == "github":
+                auth_url = urlunparse((
+                    parsed.scheme, f"{encoded_token}@{parsed.netloc}",
+                    parsed.path, '', '', ''
+                ))
+            elif repo_type == "gitlab":
+                auth_url = urlunparse((
+                    parsed.scheme, f"oauth2:{encoded_token}@{parsed.netloc}",
+                    parsed.path, '', '', ''
+                ))
+            elif repo_type == "bitbucket":
+                auth_url = urlunparse((
+                    parsed.scheme, f"x-token-auth:{encoded_token}@{parsed.netloc}",
+                    parsed.path, '', '', ''
+                ))
+            elif repo_type == "azuredevops":
+                auth_url = urlunparse((
+                    parsed.scheme, f"{encoded_token}@{parsed.netloc}",
+                    parsed.path, '', '', ''
+                ))
+            else:
+                auth_url = repo_url
+
+            # Temporarily set the remote URL with auth
+            subprocess.run(
+                ["git", "remote", "set-url", "origin", auth_url],
+                cwd=local_path,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            logger.info("Updated remote URL with authentication token")
+
+        # Get current branch name
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=local_path,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        current_branch = result.stdout.decode("utf-8").strip()
+        if not current_branch:
+            current_branch = "HEAD"
+        logger.info(f"Current branch: {current_branch}")
+
+        # Check if this is a shallow clone
+        shallow_file = os.path.join(git_dir, "shallow")
+        is_shallow = os.path.exists(shallow_file)
+
+        if is_shallow:
+            logger.info("Repository is a shallow clone, fetching with unshallow...")
+            subprocess.run(
+                ["git", "fetch", "--unshallow", "origin"],
+                cwd=local_path,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            logger.info("Repository unshallowed successfully")
+
+        # Try to pull
+        try:
+            result = subprocess.run(
+                ["git", "pull", "--ff-only"],
+                cwd=local_path,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            output = result.stdout.decode("utf-8")
+            logger.info(f"Git pull successful: {output}")
+            return f"Pull successful: {output}"
+        except subprocess.CalledProcessError:
+            # If fast-forward fails, reset to remote
+            logger.warning("Fast-forward pull failed, resetting to remote branch")
+            subprocess.run(
+                ["git", "fetch", "origin"],
+                cwd=local_path,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if current_branch != "HEAD":
+                subprocess.run(
+                    ["git", "reset", "--hard", f"origin/{current_branch}"],
+                    cwd=local_path,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+            logger.info("Repository reset to remote successfully")
+            return "Repository reset to remote HEAD"
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.decode('utf-8') if e.stderr else str(e)
+        # Sanitize error message to remove tokens
+        if access_token:
+            error_msg = error_msg.replace(access_token, "***TOKEN***")
+            encoded_token = quote(access_token, safe='')
+            error_msg = error_msg.replace(encoded_token, "***TOKEN***")
+        raise ValueError(f"Git pull failed: {error_msg}")
+    finally:
+        # Reset remote URL to original (without token) for security
+        if access_token and repo_url:
+            try:
+                subprocess.run(
+                    ["git", "remote", "set-url", "origin", repo_url],
+                    cwd=local_path,
+                    check=False,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                logger.debug("Reset remote URL to original (without token)")
+            except Exception:
+                pass

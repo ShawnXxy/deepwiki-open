@@ -699,10 +699,9 @@ class AzureBatchEmbedder(DataComponent):
                        f"reducing to 100 for better rate limit handling")
             self.batch_size = 100
         
-        # Use proper cache directory under adalflow root
-        from adalflow.utils import get_adalflow_default_root_path
-        cache_dir = os.path.join(get_adalflow_default_root_path(), "embedding_cache")
-        os.makedirs(cache_dir, exist_ok=True)
+        # Use consistent cache directory under ~/.adalflow
+        from backend.utils.paths import get_embedding_cache_path
+        cache_dir = get_embedding_cache_path()
         
         self.cache_path = os.path.join(cache_dir, f'{embedding_cache_file_name}_{self.embedder.__class__.__name__}_embeddings.pkl')
         self.checkpoint_path = os.path.join(cache_dir, f'{embedding_cache_file_name}_{self.embedder.__class__.__name__}_checkpoint.pkl')

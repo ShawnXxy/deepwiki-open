@@ -10,11 +10,8 @@
     "top_k": 12
   },
   "text_splitter": {
-    "split_by": "passage",
-    "chunk_size": 15,
-    "chunk_overlap": 3,
-    "separators": {
-      "passage": "\n\n"
-    }
+    "split_by": "token",
+    "chunk_size": 2000,
+    "chunk_overlap": 200
   }
 }

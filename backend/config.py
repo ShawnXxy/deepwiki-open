@@ -295,7 +295,8 @@ def get_retriever_config() -> Dict[str, Any]:
 def get_text_splitter_config() -> Dict[str, Any]:
     """Get the text splitter configuration."""
     config = get_embedder_config_obj()
-    return config.text_splitter.model_dump()
+    # Exclude None values to avoid passing separators=None to TextSplitter
+    return config.text_splitter.model_dump(exclude_none=True)
 
 
 # ============================================================================

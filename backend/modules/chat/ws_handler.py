@@ -1,6 +1,7 @@
 """
-WebSocket handler for wiki chat completions.
-This module handles WebSocket connections for chat completions using Azure OpenAI.
+WebSocket handler for chat completions.
+
+Provides the WebSocket /ws/chat endpoint with keepalive support.
 """
 
 import asyncio
@@ -11,7 +12,6 @@ from urllib.parse import unquote
 
 from adalflow.core.types import ModelType
 from fastapi import WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
 
 from backend.config import (
     get_model_config,
@@ -19,69 +19,83 @@ from backend.config import (
     get_azure_deployment_name,
     get_azure_ai_client,
 )
-from backend.data_pipeline import count_tokens, get_file_content
-from backend.rag import RAG
+from backend.modules.rag import RAG
+from backend.modules.rag.utils import count_tokens
+from backend.modules.repository.file_content import get_file_content
+from backend.modules.chat.models import ChatCompletionRequest
+from backend.modules.chat.service import (
+    format_conversation_history,
+    format_context_text,
+    get_language_info,
+)
 from backend.promptstore import build_chat_system_prompt
+from backend.promptstore.wiki_structure import (
+    WIKI_STRUCTURE_PROMPT,
+    WIKI_STRUCTURE_CONCISE_PROMPT,
+)
 
 # Thread pool for running blocking operations (like embedding)
 _executor = ThreadPoolExecutor(max_workers=4)
 
-# Configure logging
-from backend.tools.logger import setup_logging
-
-setup_logging()
 logger = logging.getLogger(__name__)
 
 
-class ChatMessage(BaseModel):
-    """Model for a chat message."""
-    role: str  # 'user' or 'assistant'
-    content: str
+# Language display names for wiki structure prompts
+LANGUAGE_DISPLAY_NAMES = {
+    'en': 'English',
+    'ja': 'Japanese (日本語)',
+    'zh': 'Mandarin Chinese (中文)',
+    'zh-tw': 'Traditional Chinese (繁體中文)',
+    'es': 'Spanish (Español)',
+    'kr': 'Korean (한국어)',
+    'vi': 'Vietnamese (Tiếng Việt)',
+    'pt-br': 'Brazilian Portuguese (Português Brasileiro)',
+    'fr': 'Français (French)',
+    'ru': 'Русский (Russian)',
+}
 
 
-class ChatCompletionRequest(BaseModel):
-    """Model for requesting a chat completion."""
-    repo_url: str = Field(..., description="URL of the repository to query")
-    messages: List[ChatMessage] = Field(..., description="List of chat messages")
-    filePath: Optional[str] = Field(
-        None, description="Optional path to a file in the repository"
-    )
-    token: Optional[str] = Field(
-        None, description="Personal access token for private repositories"
-    )
-    type: Optional[str] = Field(
-        "github", description="Type of repository (e.g., 'github', 'gitlab')"
-    )
-    branch: Optional[str] = Field(
-        None, description="Specific branch to clone/process"
+def build_wiki_structure_prompt(
+    request: ChatCompletionRequest,
+    owner: str,
+    repo: str
+) -> str:
+    """
+    Build wiki structure prompt using templates from promptstore.
+
+    Args:
+        request: The chat completion request with file_tree, readme, etc.
+        owner: Repository owner
+        repo: Repository name
+
+    Returns:
+        Formatted prompt string ready for LLM
+    """
+    # Select prompt template based on comprehensive flag
+    template = (WIKI_STRUCTURE_PROMPT if request.comprehensive
+                else WIKI_STRUCTURE_CONCISE_PROMPT)
+
+    # Get language display name
+    lang = request.language or 'en'
+    language_name = LANGUAGE_DISPLAY_NAMES.get(lang, 'English')
+
+    # Determine page count based on mode
+    page_count = '8-12' if request.comprehensive else '4-6'
+
+    # Fill in the template placeholders
+    prompt = template.format(
+        owner=owner,
+        repo=repo,
+        file_tree=request.file_tree or '',
+        readme=request.readme or '',
+        language_name=language_name,
+        page_count=page_count
     )
 
-    # Model parameters (provider is ignored, always uses Azure)
-    provider: str = Field(
-        "azure", description="Model provider (always Azure OpenAI)"
-    )
-    model: Optional[str] = Field(
-        None, description="Model name for Azure OpenAI deployment"
-    )
+    logger.info(f"Built wiki structure prompt using promptstore template "
+                f"(comprehensive={request.comprehensive}, lang={lang})")
 
-    language: Optional[str] = Field(
-        "en", description="Language for content generation"
-    )
-    excluded_dirs: Optional[str] = Field(
-        None, description="Comma-separated list of directories to exclude"
-    )
-    excluded_files: Optional[str] = Field(
-        None, description="Comma-separated list of file patterns to exclude"
-    )
-    included_dirs: Optional[str] = Field(
-        None, description="Comma-separated list of directories to include exclusively"
-    )
-    included_files: Optional[str] = Field(
-        None, description="Comma-separated list of file patterns to include"
-    )
-    force_reprocess: Optional[bool] = Field(
-        False, description="If True, ignore existing pkl/vectors and create fresh JSON vectors (migration mode)"
-    )
+    return prompt
 
 
 async def prepare_retriever_with_keepalive(
@@ -127,6 +141,9 @@ async def prepare_retriever_with_keepalive(
                 force_reprocess=force_reprocess
             )
         except Exception as e:
+            import traceback
+            full_traceback = traceback.format_exc()
+            logger.error(f"Full traceback in prepare_retriever:\n{full_traceback}")
             error_message = str(e)
         finally:
             loop.call_soon_threadsafe(completed.set)
@@ -176,6 +193,25 @@ async def handle_websocket_chat(websocket: WebSocket):
         
         # Debug: Log token status
         logger.debug(f"Request parsed - token: {'[PROVIDED]' if request.token else '[NONE]'}, type: {request.type}")
+
+        # Handle wiki structure generation requests specially
+        # These use promptstore templates instead of frontend-provided prompts
+        if request.wiki_structure_request:
+            # Extract owner/repo from repo_url
+            repo_url = request.repo_url
+            # Parse owner/repo from URL like https://github.com/owner/repo
+            parts = repo_url.rstrip('/').split('/')
+            owner = parts[-2] if len(parts) >= 2 else 'unknown'
+            repo = parts[-1] if len(parts) >= 1 else 'unknown'
+
+            # Build prompt from promptstore template
+            prompt_content = build_wiki_structure_prompt(request, owner, repo)
+
+            # Replace the message content with the built prompt
+            if request.messages and len(request.messages) > 0:
+                request.messages[-1].content = prompt_content
+                logger.info(f"Wiki structure request: using promptstore template "
+                            f"for {owner}/{repo}")
 
         # Check if request contains very large input
         input_too_large = False
@@ -358,29 +394,8 @@ async def handle_websocket_chat(websocket: WebSocket):
                     retrieved_documents = request_rag(
                         rag_query, language=request.language
                     )
-
-                    if (retrieved_documents and
-                            retrieved_documents[0].documents):
-                        documents = retrieved_documents[0].documents
-                        logger.info(f"Retrieved {len(documents)} documents")
-
-                        # Group documents by file path
-                        docs_by_file = {}
-                        for doc in documents:
-                            file_path = doc.meta_data.get('file_path', 'unknown')
-                            if file_path not in docs_by_file:
-                                docs_by_file[file_path] = []
-                            docs_by_file[file_path].append(doc)
-
-                        # Format context text
-                        context_parts = []
-                        for file_path, docs in docs_by_file.items():
-                            header = f"## File Path: {file_path}\n\n"
-                            content = "\n\n".join([doc.text for doc in docs])
-                            context_parts.append(f"{header}{content}")
-
-                        context_text = "\n\n" + "-" * 10 + "\n\n".join(context_parts)
-                    else:
+                    context_text = format_context_text(retrieved_documents)
+                    if not context_text:
                         logger.warning("No documents retrieved from RAG")
                 except Exception as e:
                     logger.error(f"Error in RAG retrieval: {str(e)}")
@@ -395,9 +410,7 @@ async def handle_websocket_chat(websocket: WebSocket):
         repo_type = request.type
 
         # Get language information
-        language_code = request.language or configs["lang_config"]["default"]
-        supported_langs = configs["lang_config"]["supported_languages"]
-        language_name = supported_langs.get(language_code, "English")
+        language_code, language_name = get_language_info(request.language)
 
         # Create system prompt based on research mode
         system_prompt = build_chat_system_prompt(
@@ -418,16 +431,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                 logger.error(f"Error retrieving file content: {str(e)}")
 
         # Format conversation history
-        conversation_history = ""
-        for turn_id, turn in request_rag.memory().items():
-            if (not isinstance(turn_id, int) and
-                    hasattr(turn, 'user_query') and
-                    hasattr(turn, 'assistant_response')):
-                conversation_history += (
-                    f"<turn>\n<user>{turn.user_query.query_str}</user>\n"
-                    f"<assistant>{turn.assistant_response.response_str}"
-                    f"</assistant>\n</turn>\n"
-                )
+        conversation_history = format_conversation_history(request_rag.memory())
 
         # Build the prompt
         prompt = f"/no_think {system_prompt}\n\n"
