@@ -177,7 +177,7 @@ npm run dev
 #### Step 3: Use CodeWiki!
 
 1. Open [http://localhost:3000](http://localhost:3000) in your browser
-2. Enter a repository URL (e.g., `https://github.com/microsoft/autogen`)
+2. Enter an Azure DevOps repository URL (e.g., `https://dev.azure.com/org/project/_git/repo`)
 3. Enter your personal access token
 4. Click "Generate Wiki", it would take some time to generate wiki for large code base. You can check back on the homepage.
 
@@ -273,41 +273,35 @@ The nginx reverse proxy enables **WebSocket connections** which bypass HTTP time
 └─────────────────┘  └─────────────────┘  └─────────────────┘
 ```
 
-### Resource Requirements
-
-For large repositories (5000+ files), the container needs sufficient memory for embedding:
-
-| Profile | CPU | Memory | Suitable For |
-|---------|-----|--------|-------------|
-| Consumption | 2.0 | 4 GB | Small repos (<1000 files) |
-| Consumption | 4.0 | 8 GB | Medium repos (1000-3000 files) |
-| **D4 (Dedicated)** | 4.0 | **16 GB** | Large repos (5000+ files) - **Default** |
-
-The `deploy-azure.ps1` script creates a **D4 dedicated workload profile** with 4 CPU / 16 GB by default. This is required because:
-- Consumption tier max is 8GB, which causes OOM (exit code 137) for large repos
-- D4 dedicated profile provides up to 16GB RAM per container
-- Costs more than Consumption, but necessary for large repository embedding
-
 ### Useful Azure CLI Commands
 
 ```bash
-# View container app logs
-az containerapp logs show -n codewiki -g RG-ORCAS-DEEPWIKI --follow
+# View Web App logs (live streaming)
+az webapp log tail -n codewiki -g RG-ORCAS-DEEPWIKI
 
-# Restart the app
-az containerapp revision restart -n codewiki -g RG-ORCAS-DEEPWIKI
+# Restart the Web App
+az webapp restart -n codewiki -g RG-ORCAS-DEEPWIKI
 
-# Scale the app
-az containerapp update -n codewiki -g RG-ORCAS-DEEPWIKI --min-replicas 2 --max-replicas 10
+# View deployment logs
+az webapp log deployment show -n codewiki -g RG-ORCAS-DEEPWIKI
 
-# Switch to Consumption tier (after embedding, for cost savings)
-az containerapp update -n codewiki -g RG-ORCAS-DEEPWIKI --workload-profile-name Consumption --cpu 4 --memory 8Gi
+# Get Web App URL
+az webapp show -n codewiki -g RG-ORCAS-DEEPWIKI --query defaultHostName -o tsv
 
-# Switch to D4 dedicated (for large repo embedding)
-az containerapp update -n codewiki -g RG-ORCAS-DEEPWIKI --workload-profile-name D4 --cpu 4 --memory 16Gi
+# Check Web App status
+az webapp show -n codewiki -g RG-ORCAS-DEEPWIKI --query state -o tsv
 
-# Get app URL
-az containerapp show -n codewiki -g RG-ORCAS-DEEPWIKI --query properties.configuration.ingress.fqdn -o tsv
+# Scale up (change App Service Plan tier)
+az appservice plan update -n codewiki-plan -g RG-ORCAS-DEEPWIKI --sku P2v3
+
+# Scale out (add instances)
+az webapp update -n codewiki -g RG-ORCAS-DEEPWIKI --set siteConfig.numberOfWorkers=3
+
+# View current configuration
+az webapp config show -n codewiki -g RG-ORCAS-DEEPWIKI
+
+# SSH into the container
+az webapp ssh -n codewiki -g RG-ORCAS-DEEPWIKI
 ```
 
 ##  How It Works
@@ -352,12 +346,13 @@ flowchart TB
 
 DeepWiki uses Azure OpenAI to:
 
-1. Clone and analyze the repository (including private repos with token authentication)
+1. Clone and analyze the repository (Azure DevOps with PAT authentication)
 2. Create embeddings of the code using Azure OpenAI's `text-embedding-3-large`
-3. Generate documentation using Azure OpenAI's GPT models
-4. Create visual diagrams to explain code relationships
-5. Organize everything into a structured wiki
-6. Enable intelligent Q&A with the repository through the Ask feature
+3. Store embeddings as individual JSON files per chunk (memory-efficient)
+4. Generate documentation using Azure OpenAI's GPT models
+5. Create visual diagrams to explain code relationships
+6. Organize everything into a structured wiki
+7. Enable intelligent Q&A with the repository through the Ask feature
 
 ## 🛠️ Project Structure
 
@@ -368,19 +363,76 @@ deepwiki/
 ├── package.json          # Node.js dependencies
 │
 ├── backend/              # Backend API server
-│   ├── main.py           # API entry point
-│   ├── api.py            # FastAPI implementation
-│   ├── rag.py            # Retrieval Augmented Generation
-│   ├── data_pipeline.py  # Data processing utilities
-│   ├── azureai_client.py # Azure OpenAI client
-│   └── config/           # Configuration files
-│       ├── generator.json    # Model configuration
-│       ├── embedder.json     # Embedding configuration
-│       └── infra.json        # Infrastructure & MSI configuration
+│   ├── main.py           # Application entry point (uvicorn server)
+│   ├── app.py            # FastAPI application setup
+│   ├── config.py         # Configuration management
+│   │
+│   ├── modules/          # Core business logic (modular architecture)
+│   │   ├── chat/         # Chat & deep research functionality
+│   │   │   ├── ws_handler.py    # WebSocket handler for streaming
+│   │   │   ├── http_handler.py  # HTTP streaming endpoint
+│   │   │   ├── service.py       # Shared chat utilities
+│   │   │   └── models.py        # Pydantic request models
+│   │   │
+│   │   ├── rag/          # Retrieval-Augmented Generation
+│   │   │   ├── retriever.py     # Main RAG component (FAISS)
+│   │   │   ├── database.py      # Document database management
+│   │   │   ├── document.py      # Document processing & embedding
+│   │   │   ├── memory.py        # Conversation history
+│   │   │   └── utils.py         # Token counting, file utils
+│   │   │
+│   │   ├── wiki/         # Wiki cache & export
+│   │   │   ├── cache.py         # Read/write wiki cache
+│   │   │   ├── export.py        # Markdown/JSON export
+│   │   │   ├── routes.py        # Wiki API endpoints
+│   │   │   └── models.py        # Wiki structure models
+│   │   │
+│   │   └── repository/   # Git operations
+│   │       ├── git_ops.py       # Clone, pull, branch detection
+│   │       ├── file_content.py  # Azure DevOps file retrieval
+│   │       └── routes.py        # Repository API endpoints
+│   │
+│   ├── clients/          # External service clients
+│   │   ├── azureai_client.py    # Azure OpenAI (LLM + embeddings)
+│   │   ├── blob_client.py       # Azure Blob Storage
+│   │   ├── storage.py           # Unified storage abstraction
+│   │   └── vector_storage.py    # JSON vector embeddings storage
+│   │
+│   ├── promptstore/      # Centralized prompt templates
+│   │   ├── rag.py               # RAG system prompts
+│   │   ├── wiki_structure.py    # Wiki generation prompts
+│   │   ├── wiki_page.py         # Page content prompts
+│   │   ├── deep_research.py     # Multi-turn research prompts
+│   │   └── simple_chat.py       # Simple Q&A prompts
+│   │
+│   ├── tools/            # Utility tools
+│   │   ├── embedder.py          # Safe embedding with token limits
+│   │   └── logger.py            # Smart logging with deduplication
+│   │
+│   ├── types/            # Type definitions (Pydantic models)
+│   │   ├── config_types.py      # Configuration types
+│   │   ├── git_types.py         # Git operation types
+│   │   └── processor_types.py   # File processing types
+│   │
+│   ├── utils/            # General utilities
+│   │   └── paths.py             # Centralized path management
+│   │
+│   └── config/           # JSON configuration files
+│       ├── infra.json           # Azure infrastructure settings
+│       ├── embedder.json        # Embedding model configuration
+│       ├── generator.json       # LLM generation configuration
+│       ├── repo.json            # File filter settings
+│       └── lang.json            # Language configuration
 │
 ├── src/                  # Frontend Next.js app
 │   ├── app/              # Next.js app directory
 │   └── components/       # React components
+│
+├── Deployments/          # Azure infrastructure (ARM templates)
+│   ├── config.py         # Deployment configuration
+│   ├── deploy_required.ipynb    # Core resources deployment
+│   ├── templates/        # ARM templates
+│   └── parameters/       # ARM parameters
 │
 ├── img/                  # Images and screenshots
 │   ├── public/           # Next.js public assets
@@ -390,6 +442,14 @@ deepwiki/
     ├── backend-*.log     # Backend logs (daily rotation)
     └── frontend-*.log    # Frontend logs (daily rotation)
 ```
+
+> **Architecture Note**: The backend uses a modular architecture with clear separation of concerns:
+> - **modules/**: Domain-specific business logic
+> - **clients/**: External service integrations
+> - **promptstore/**: LLM prompt templates (single source of truth)
+> - **types/**: Shared type definitions
+> 
+> See [backend/README.md](backend/README.md) for detailed module documentation.
 
 ## ⚙️ Configuration
 
@@ -437,8 +497,11 @@ DeepWiki supports two **mutually exclusive** storage modes:
 | Data | Description | Blob Path | Local Path |
 |------|-------------|-----------|------------|
 | **Repositories** | Cloned repository files | `repos/{repo_name}/` | `~/.adalflow/repos/{repo_name}/` |
-| **Databases** | Embedded document databases (pkl) | `databases/{repo_name}.pkl` | `~/.adalflow/databases/{repo_name}.pkl` |
+| **Vectors** | Embedded document vectors (JSON) | `vectors/{repo_name}_{branch}/` | `~/.adalflow/vectors/{repo_name}_{branch}/` |
 | **Wiki Cache** | Generated wiki content (JSON) | `wikicache/*.json` | `~/.adalflow/wikicache/*.json` |
+| **Embedding Cache** | Cached embeddings | `embedding_cache/` | `~/.adalflow/embedding_cache/` |
+
+> **Note**: The backend uses `~/.adalflow/` consistently on all platforms (Windows, Linux, macOS) to ensure Docker volume mounting works correctly. This differs from adalflow's default `%APPDATA%/adalflow` on Windows.
 
 ### Local Working Directory
 
@@ -446,10 +509,11 @@ Even in **Blob Mode**, you may see files in `~/.adalflow/`. This is the **tempor
 
 ```
 ~/.adalflow/
-├── repos/                           # ← Temporary: downloaded from blob for processing
-├── databases/                       # ← Not used in blob mode (blob is source of truth)
-├── wikicache/                       # ← Not used in blob mode (blob is source of truth)
-└── cache_AzureAIClient_*.db/        # ← Local-only LLM response cache (intentional)
+├── repos/           # ← Temporary: downloaded from blob for processing
+├── vectors/         # ← Not used in blob mode (blob is source of truth)
+├── wikicache/       # ← Not used in blob mode (blob is source of truth)
+├── embedding_cache/ # ← Cached embeddings to avoid recomputation
+└── cache_AzureAIClient_*.db/  # ← Local-only LLM response cache (intentional)
 ```
 
 **Why local copies exist in blob mode:**
