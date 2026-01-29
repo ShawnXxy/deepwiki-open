@@ -654,6 +654,10 @@ class AzureAIClient(ModelClient):
         if model_type == ModelType.EMBEDDER:
             return await self.async_client.embeddings.create(**api_kwargs)
         elif model_type == ModelType.LLM:
+            # Log api_kwargs for debugging (excluding messages content)
+            debug_kwargs = {k: v for k, v in api_kwargs.items() if k != 'messages'}
+            debug_kwargs['messages'] = f"[{len(api_kwargs.get('messages', []))} messages]"
+            log.debug(f"LLM api_kwargs: {debug_kwargs}")
             return await self.async_client.chat.completions.create(
                 **api_kwargs
             )

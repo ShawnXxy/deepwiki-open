@@ -17,7 +17,7 @@ interface ModelSelectionModalProps {
   setIsCustomModel: (value: boolean) => void;
   customModel: string;
   setCustomModel: (value: string) => void;
-  onApply: (token?: string) => void;
+  onApply: (token?: string, newComprehensiveValue?: boolean) => void;
 
   // Wiki type options
   isComprehensiveView: boolean;
@@ -124,11 +124,12 @@ export default function ModelSelectionModal({
     if (setIncludedDirs) setIncludedDirs(localIncludedDirs);
     if (setIncludedFiles) setIncludedFiles(localIncludedFiles);
     
-    // Pass token to onApply if needed
+    // Pass token and comprehensive value to onApply
+    // We pass the new comprehensive value directly to avoid React state timing issues
     if (showTokenInput) {
-      onApply(localAccessToken);
+      onApply(localAccessToken, localIsComprehensiveView);
     } else {
-      onApply();
+      onApply(undefined, localIsComprehensiveView);
     }
     onClose();
   };
@@ -193,6 +194,9 @@ export default function ModelSelectionModal({
             {showTokenInput && (
               <>
                 <div className="my-4 border-t border-[var(--border-color)]/30"></div>
+                <div className="mb-2 text-xs text-[var(--muted)]">
+                  💡 Token is used to pull the latest changes from the repository during refresh.
+                </div>
                 <TokenInput
                   selectedPlatform={localSelectedPlatform}
                   setSelectedPlatform={setLocalSelectedPlatform}

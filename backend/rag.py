@@ -330,7 +330,8 @@ IMPORTANT FORMATTING RULES:
         excluded_dirs: List[str] = None,
         excluded_files: List[str] = None,
         included_dirs: List[str] = None,
-        included_files: List[str] = None
+        included_files: List[str] = None,
+        force_reprocess: bool = False
     ):
         """
         Prepare the retriever for a repository.
@@ -348,6 +349,8 @@ IMPORTANT FORMATTING RULES:
             included_dirs: Optional list of directories to include exclusively
             included_files: Optional list of file patterns to include 
                            exclusively
+            force_reprocess: If True, ignore existing pkl/vectors and create fresh JSON vectors.
+                            Use this to migrate from pkl to vector-based storage.
         """
         self.initialize_db_manager()
         self.repo_url_or_path = repo_url_or_path
@@ -360,7 +363,8 @@ IMPORTANT FORMATTING RULES:
             excluded_dirs=excluded_dirs,
             excluded_files=excluded_files,
             included_dirs=included_dirs,
-            included_files=included_files
+            included_files=included_files,
+            force_reprocess=force_reprocess
         )
         logger.info(f"Loaded {len(self.transformed_docs)} documents for retrieval")
 

@@ -79,6 +79,9 @@ class ChatCompletionRequest(BaseModel):
     included_files: Optional[str] = Field(
         None, description="Comma-separated list of file patterns to include"
     )
+    force_reprocess: Optional[bool] = Field(
+        False, description="If True, ignore existing pkl/vectors and create fresh JSON vectors (migration mode)"
+    )
 
 
 async def prepare_retriever_with_keepalive(
@@ -91,11 +94,15 @@ async def prepare_retriever_with_keepalive(
     excluded_dirs: Optional[List[str]],
     excluded_files: Optional[List[str]],
     included_dirs: Optional[List[str]],
-    included_files: Optional[List[str]]
+    included_files: Optional[List[str]],
+    force_reprocess: bool = False
 ) -> bool:
     """
     Run prepare_retriever in a thread pool while sending keepalive pings to the WebSocket.
     This prevents connection timeout during long-running embedding operations.
+    
+    Args:
+        force_reprocess: If True, ignore existing pkl/vectors and create fresh JSON vectors.
     
     Returns True if successful, False if an error occurred.
     """
@@ -116,7 +123,8 @@ async def prepare_retriever_with_keepalive(
                 excluded_dirs,
                 excluded_files,
                 included_dirs,
-                included_files
+                included_files,
+                force_reprocess=force_reprocess
             )
         except Exception as e:
             error_message = str(e)
@@ -232,7 +240,8 @@ async def handle_websocket_chat(websocket: WebSocket):
                 excluded_dirs,
                 excluded_files,
                 included_dirs,
-                included_files
+                included_files,
+                force_reprocess=request.force_reprocess or False
             )
             logger.info(f"Retriever prepared for {request.repo_url}")
         except ValueError as e:
@@ -458,6 +467,9 @@ async def handle_websocket_chat(websocket: WebSocket):
         # Use shared Azure AI client instance (singleton)
         model = get_azure_ai_client(request.model)
 
+        # Check if this is an o-series reasoning model (o1, o3, o4, etc.)
+        is_reasoning_model = deployment_name.startswith("o") and len(deployment_name) > 1 and deployment_name[1].isdigit()
+
         # Get temperature from deployment config
         temperature = deployment_config.get("temperature", 1.0)
 
@@ -470,11 +482,29 @@ async def handle_websocket_chat(websocket: WebSocket):
         if "top_p" in deployment_config:
             model_kwargs["top_p"] = deployment_config["top_p"]
 
+        # Add max_completion_tokens for o-series reasoning models (o1-mini, o4-mini, etc.)
+        # These models require max_completion_tokens instead of max_tokens
+        # Default to 16384 to allow for comprehensive wiki structure generation
+        if is_reasoning_model:
+            model_kwargs["max_completion_tokens"] = deployment_config.get(
+                "max_completion_tokens", 16384
+            )
+            logger.info(f"Reasoning model {deployment_name}: max_completion_tokens={model_kwargs['max_completion_tokens']}")
+
+        # Debug: Log model_kwargs before conversion
+        debug_model_kwargs = {k: v for k, v in model_kwargs.items() if k != 'messages'}
+        logger.debug(f"model_kwargs before conversion: {debug_model_kwargs}")
+
         api_kwargs = model.convert_inputs_to_api_kwargs(
             input=prompt,
             model_kwargs=model_kwargs,
             model_type=ModelType.LLM
         )
+
+        # Debug: Log api_kwargs after conversion (exclude messages for brevity)
+        debug_api_kwargs = {k: v for k, v in api_kwargs.items() if k != 'messages'}
+        debug_api_kwargs['messages_count'] = len(api_kwargs.get('messages', []))
+        logger.debug(f"api_kwargs after conversion: {debug_api_kwargs}")
 
         # Process Azure response
         try:
@@ -485,17 +515,22 @@ async def handle_websocket_chat(websocket: WebSocket):
             # Handle streaming response from Azure AI
             total_text = ""
             chunk_count = 0
+            finish_reason = None
             async for chunk in response:
                 chunk_count += 1
                 choices = getattr(chunk, "choices", [])
                 if len(choices) > 0:
-                    delta = getattr(choices[0], "delta", None)
+                    choice = choices[0]
+                    # Track finish_reason
+                    if hasattr(choice, "finish_reason") and choice.finish_reason:
+                        finish_reason = choice.finish_reason
+                    delta = getattr(choice, "delta", None)
                     if delta is not None:
                         text = getattr(delta, "content", None)
                         if text is not None:
                             total_text += text
                             await websocket.send_text(text)
-            logger.info(f"Streaming complete: {chunk_count} chunks, {len(total_text)} chars")
+            logger.info(f"Streaming complete: {chunk_count} chunks, {len(total_text)} chars, finish_reason={finish_reason}")
             await websocket.close()
         except Exception as e_azure:
             logger.error(f"Error with Azure AI API: {str(e_azure)}")

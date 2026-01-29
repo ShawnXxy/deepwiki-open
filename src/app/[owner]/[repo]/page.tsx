@@ -114,7 +114,8 @@ const addTokensToRequestBody = (
   excludedDirs?: string,
   excludedFiles?: string,
   includedDirs?: string,
-  includedFiles?: string
+  includedFiles?: string,
+  forceReprocess?: boolean
 ): void => {
   if (token !== '') {
     requestBody.token = token;
@@ -148,6 +149,10 @@ const addTokensToRequestBody = (
     requestBody.included_files = includedFiles;
   }
 
+  // Add force_reprocess flag for migration from pkl to vector-based storage
+  if (forceReprocess) {
+    requestBody.force_reprocess = true;
+  }
 };
 
 const createGithubHeaders = (githubToken: string): HeadersInit => {
@@ -366,6 +371,10 @@ export default function RepoWikiPage() {
 
   // Create a flag to ensure the effect only runs once
   const effectRan = React.useRef(false);
+
+  // Flag to trigger force reprocessing (migration from pkl to vector-based storage)
+  // Set to true in confirmRefresh, used once in determineWikiStructure, then reset
+  const forceReprocessRef = React.useRef(false);
 
   // State for chat panel visibility (collapsed/expanded)
   const [isChatPanelCollapsed, setIsChatPanelCollapsed] = useState(false);
@@ -1192,7 +1201,16 @@ IMPORTANT:
       // Use detectedBranch (passed directly) or effectiveRepoInfo.branch as fallback
       // This fixes the race condition where effectiveRepoInfo.branch state hasn't updated yet
       const branchToUse = detectedBranch || effectiveRepoInfo.branch || undefined;
-      addTokensToRequestBody(requestBody, effectiveToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, branchToUse, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles);
+      
+      // Check if force_reprocess is requested (from Refresh Wiki action)
+      // This triggers migration from pkl to vector-based storage
+      const shouldForceReprocess = forceReprocessRef.current;
+      if (shouldForceReprocess) {
+        console.log('[determineWikiStructure] force_reprocess=true - will regenerate embeddings');
+        forceReprocessRef.current = false; // Reset after use
+      }
+      
+      addTokensToRequestBody(requestBody, effectiveToken, effectiveRepoInfo.type, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, language, branchToUse, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, shouldForceReprocess);
 
       // Use WebSocket for communication
       let responseText = '';
@@ -2128,10 +2146,13 @@ IMPORTANT:
 
   // No longer needed as we use the modal directly
 
-  const confirmRefresh = useCallback(async (newToken?: string) => {
+  const confirmRefresh = useCallback(async (newToken?: string, newComprehensiveValue?: boolean) => {
     setShowModelOptions(false);
     setLoadingMessage(messages.loading?.clearingCache || 'Clearing server cache...');
     setIsLoading(true); // Show loading indicator immediately
+
+    // Use the new comprehensive value passed from modal (avoids React state timing issues)
+    const targetComprehensive = newComprehensiveValue ?? isComprehensiveView;
 
     try {
       const params = new URLSearchParams({
@@ -2143,7 +2164,7 @@ IMPORTANT:
         model: selectedModelState,
         is_custom_model: isCustomSelectedModelState.toString(),
         custom_model: customSelectedModelState,
-        comprehensive: isComprehensiveView.toString(),
+        comprehensive: targetComprehensive.toString(),
         authorization_code: authCode,
       });
 
@@ -2224,12 +2245,17 @@ IMPORTANT:
     console.log('Refreshing wiki. Server cache will be overwritten upon new generation if not cleared.');
 
     // Clear the localStorage cache (if any remnants or if it was used before this change)
-    const localStorageCacheKey = getCacheKey(effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, isComprehensiveView);
+    // Use targetComprehensive to clear the correct mode's cache
+    const localStorageCacheKey = getCacheKey(effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, targetComprehensive);
     localStorage.removeItem(localStorageCacheKey);
 
     // Reset cache loaded flag
     cacheLoadedSuccessfully.current = false;
     effectRan.current = false; // Allow the main data loading useEffect to run again
+
+    // Set force_reprocess flag to trigger migration from pkl to vector-based storage
+    // This flag is used once during wiki structure determination and then reset
+    forceReprocessRef.current = true;
 
     // Reset all state
     setWikiStructure(undefined);
@@ -3123,7 +3149,7 @@ IMPORTANT:
         setIncludedFiles={setModelIncludedFiles}
         onApply={confirmRefresh}
         showWikiType={true}
-        showTokenInput={effectiveRepoInfo.type !== 'local' && !currentToken} // Show token input if not local and no current token
+        showTokenInput={effectiveRepoInfo.type !== 'local'} // Always show token input for refresh (for git pull)
         repositoryType={effectiveRepoInfo.type as 'github' | 'gitlab' | 'bitbucket' | 'azuredevops'}
         authRequired={authRequired}
         authCode={authCode}
