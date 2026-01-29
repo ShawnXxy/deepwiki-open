@@ -1,102 +1,33 @@
 """
-Simple Chat API module for streaming chat completions using Azure OpenAI.
+HTTP handler for streaming chat completions.
+
+Provides the POST /chat/completions/stream endpoint.
 """
 
 import logging
-from typing import List, Optional
 from urllib.parse import unquote
 
 from adalflow.core.types import ModelType
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
 
 from backend.config import (
     get_model_config, configs, get_azure_deployment_name,
     get_azure_ai_client
 )
-from backend.data_pipeline import count_tokens, get_file_content
-from backend.rag import RAG
-from backend.prompts import (
-    DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
-    DEEP_RESEARCH_FINAL_ITERATION_PROMPT,
-    DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT,
-    SIMPLE_CHAT_SYSTEM_PROMPT
+from backend.modules.rag import RAG
+from backend.modules.rag.utils import count_tokens
+from backend.modules.repository.file_content import get_file_content
+from backend.modules.chat.models import ChatCompletionRequest
+from backend.modules.chat.service import (
+    build_system_prompt,
+    get_language_info,
+    format_conversation_history,
+    format_context_text,
 )
 
-# Configure logging
-from backend.tools.logger import setup_logging
-
-setup_logging()
 logger = logging.getLogger(__name__)
 
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Simple Chat API",
-    description="Simplified API for streaming chat completions using Azure OpenAI"
-)
-
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-class ChatMessage(BaseModel):
-    """Model for a chat message."""
-    role: str  # 'user' or 'assistant'
-    content: str
-
-
-class ChatCompletionRequest(BaseModel):
-    """Model for requesting a chat completion."""
-    repo_url: str = Field(..., description="URL of the repository to query")
-    messages: List[ChatMessage] = Field(..., description="List of chat messages")
-    filePath: Optional[str] = Field(
-        None, description="Optional path to a file in the repository"
-    )
-    token: Optional[str] = Field(
-        None, description="Personal access token for private repositories"
-    )
-    type: Optional[str] = Field(
-        "github", description="Type of repository"
-    )
-    branch: Optional[str] = Field(
-        None, description="Specific branch to clone/process"
-    )
-
-    # Model parameters (provider ignored, always Azure)
-    provider: str = Field(
-        "azure", description="Model provider (always Azure OpenAI)"
-    )
-    model: Optional[str] = Field(
-        None, description="Model name for Azure OpenAI deployment"
-    )
-
-    language: Optional[str] = Field(
-        "en", description="Language for content generation"
-    )
-    excluded_dirs: Optional[str] = Field(
-        None, description="Comma-separated directories to exclude"
-    )
-    excluded_files: Optional[str] = Field(
-        None, description="Comma-separated file patterns to exclude"
-    )
-    included_dirs: Optional[str] = Field(
-        None, description="Comma-separated directories to include exclusively"
-    )
-    included_files: Optional[str] = Field(
-        None, description="Comma-separated file patterns to include"
-    )
-
-
-@app.post("/chat/completions/stream")
 async def chat_completions_stream(request: ChatCompletionRequest):
     """Stream a chat completion response using Azure OpenAI."""
     try:
@@ -263,27 +194,7 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                     retrieved_documents = request_rag(
                         rag_query, language=request.language
                     )
-
-                    if retrieved_documents and retrieved_documents[0].documents:
-                        documents = retrieved_documents[0].documents
-                        logger.info(f"Retrieved {len(documents)} documents")
-
-                        docs_by_file = {}
-                        for doc in documents:
-                            file_path = doc.meta_data.get('file_path', 'unknown')
-                            if file_path not in docs_by_file:
-                                docs_by_file[file_path] = []
-                            docs_by_file[file_path].append(doc)
-
-                        context_parts = []
-                        for file_path, docs in docs_by_file.items():
-                            header = f"## File Path: {file_path}\n\n"
-                            content = "\n\n".join([doc.text for doc in docs])
-                            context_parts.append(f"{header}{content}")
-
-                        context_text = "\n\n" + "-" * 10 + "\n\n".join(context_parts)
-                    else:
-                        logger.warning("No documents retrieved from RAG")
+                    context_text = format_context_text(retrieved_documents)
                 except Exception as e:
                     logger.error(f"Error in RAG retrieval: {str(e)}")
 
@@ -297,44 +208,13 @@ async def chat_completions_stream(request: ChatCompletionRequest):
         repo_type = request.type
 
         # Get language information
-        language_code = request.language or configs["lang_config"]["default"]
-        supported_langs = configs["lang_config"]["supported_languages"]
-        language_name = supported_langs.get(language_code, "English")
+        language_code, language_name = get_language_info(request.language)
 
         # Create system prompt based on research mode
-        if is_deep_research:
-            is_first_iteration = research_iteration == 1
-            is_final_iteration = research_iteration >= 5
-
-            if is_first_iteration:
-                system_prompt = DEEP_RESEARCH_FIRST_ITERATION_PROMPT.format(
-                    repo_type=repo_type,
-                    repo_url=repo_url,
-                    repo_name=repo_name,
-                    language_name=language_name
-                )
-            elif is_final_iteration:
-                system_prompt = DEEP_RESEARCH_FINAL_ITERATION_PROMPT.format(
-                    repo_type=repo_type,
-                    repo_url=repo_url,
-                    repo_name=repo_name,
-                    language_name=language_name
-                )
-            else:
-                system_prompt = DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT.format(
-                    repo_type=repo_type,
-                    repo_url=repo_url,
-                    repo_name=repo_name,
-                    language_name=language_name,
-                    research_iteration=research_iteration
-                )
-        else:
-            system_prompt = SIMPLE_CHAT_SYSTEM_PROMPT.format(
-                repo_type=repo_type,
-                repo_url=repo_url,
-                repo_name=repo_name,
-                language_name=language_name
-            )
+        system_prompt = build_system_prompt(
+            is_deep_research, research_iteration, repo_type,
+            repo_url, repo_name, language_name
+        )
 
         # Fetch file content if provided
         file_content = ""
@@ -349,16 +229,7 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                 logger.error(f"Error retrieving file content: {str(e)}")
 
         # Format conversation history
-        conversation_history = ""
-        for turn_id, turn in request_rag.memory().items():
-            if (not isinstance(turn_id, int) and
-                    hasattr(turn, 'user_query') and
-                    hasattr(turn, 'assistant_response')):
-                conversation_history += (
-                    f"<turn>\n<user>{turn.user_query.query_str}</user>\n"
-                    f"<assistant>{turn.assistant_response.response_str}"
-                    f"</assistant>\n</turn>\n"
-                )
+        conversation_history = format_conversation_history(request_rag.memory())
 
         # Build the prompt
         prompt = f"/no_think {system_prompt}\n\n"

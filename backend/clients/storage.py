@@ -26,7 +26,7 @@ import logging
 from typing import Optional, Any, List, Dict
 from pathlib import Path
 
-from adalflow.utils import get_adalflow_default_root_path
+from backend.utils.paths import get_adalflow_root_path
 
 from backend.clients.blob_client import (
     get_blob_storage_client,
@@ -77,7 +77,7 @@ class StorageClient:
     
     def _get_local_path(self, relative_path: str) -> str:
         """Convert relative path to local filesystem path."""
-        base_path = get_adalflow_default_root_path()
+        base_path = get_adalflow_root_path()
         return os.path.join(base_path, relative_path)
     
     def save_pickle(self, path: str, obj: Any) -> bool:

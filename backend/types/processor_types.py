@@ -27,16 +27,20 @@ class FileFilter(BaseModel):
     excluded_patterns: Set[str] = Field(default_factory=set, description="File patterns to exclude")
     max_file_size_mb: int = Field(default=10, ge=0, description="Maximum file size in MB")
     
-    @validator('included_dirs', 'excluded_dirs', pre=True)
+    @validator('included_dirs', 'excluded_dirs', pre=True, always=True)
     def normalize_paths(cls, v):
-        """Normalize path separators to forward slashes."""
+        """Normalize path separators to forward slashes. Returns empty set if None."""
+        if v is None:
+            return set()
         if isinstance(v, (list, set)):
             return {str(Path(p)).replace('\\', '/') for p in v}
         return v
     
-    @validator('included_patterns', 'excluded_patterns', pre=True)
+    @validator('included_patterns', 'excluded_patterns', pre=True, always=True)
     def normalize_patterns(cls, v):
-        """Convert lists to sets and normalize."""
+        """Convert lists to sets and normalize. Returns empty set if None."""
+        if v is None:
+            return set()
         if isinstance(v, list):
             return set(v)
         return v
@@ -64,18 +68,24 @@ class FileFilter(BaseModel):
         path = Path(file_path)
         path_parts = set(path.parts)
         
+        # Ensure sets are not None (defensive check)
+        included_dirs = self.included_dirs or set()
+        excluded_dirs = self.excluded_dirs or set()
+        included_patterns = self.included_patterns or set()
+        excluded_patterns = self.excluded_patterns or set()
+        
         if self.is_inclusion_mode():
             # Inclusion mode: file must match included dirs or patterns
-            dir_match = any(included in path_parts for included in self.included_dirs)
-            pattern_match = any(path.match(pattern) for pattern in self.included_patterns)
+            dir_match = any(included in path_parts for included in included_dirs)
+            pattern_match = any(path.match(pattern) for pattern in included_patterns)
             return dir_match or pattern_match
         else:
             # Exclusion mode: file must not match excluded dirs or patterns
-            dir_match = any(excluded in path_parts for excluded in self.excluded_dirs)
+            dir_match = any(excluded in path_parts for excluded in excluded_dirs)
             if dir_match:
                 return False
             
-            pattern_match = any(path.match(pattern) for pattern in self.excluded_patterns)
+            pattern_match = any(path.match(pattern) for pattern in excluded_patterns)
             return not pattern_match
 
 

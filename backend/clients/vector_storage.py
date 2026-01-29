@@ -40,7 +40,7 @@ import re
 from typing import List, Optional, Dict, Any, Tuple
 
 from adalflow.core.types import Document
-from adalflow.utils import get_adalflow_default_root_path
+from backend.utils.paths import get_adalflow_root_path
 
 from backend.clients.blob_client import (
     get_blob_storage_client,
@@ -65,7 +65,7 @@ class VectorStorage:
     VECTORS_DIR = "vectors"
     
     def __init__(self):
-        self._root_path = get_adalflow_default_root_path()
+        self._root_path = get_adalflow_root_path()
     
     def _get_vectors_base_path(self, repo_name: str, branch: str) -> str:
         """Get the base path for vectors storage."""

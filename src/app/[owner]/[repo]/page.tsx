@@ -1040,8 +1040,8 @@ CRITICAL REMINDERS:
       // Leave room for prompt template, readme, and response (~200k chars for file tree)
       const MAX_FILE_TREE_CHARS = 200000;
       let truncatedFileTree = fileTree;
-      let fileTreeTruncated = false;
-      if (fileTree.length > MAX_FILE_TREE_CHARS) {
+      const fileTreeTruncated = fileTree.length > MAX_FILE_TREE_CHARS;
+      if (fileTreeTruncated) {
         // Keep the first portion of the file tree (most important structure)
         const lines = fileTree.split('\n');
         let charCount = 0;
@@ -1054,7 +1054,6 @@ CRITICAL REMINDERS:
           charCount += line.length + 1;
         }
         truncatedFileTree = keptLines.join('\n');
-        fileTreeTruncated = true;
         console.log(`[Wiki Structure] File tree truncated from ${fileTree.length} to ${truncatedFileTree.length} chars (${lines.length} to ${keptLines.length} files)`);
       }
 
@@ -1066,134 +1065,21 @@ CRITICAL REMINDERS:
         console.log(`[Wiki Structure] README truncated from ${readme.length} to ${truncatedReadme.length} chars`);
       }
 
-      // Prepare request body
+      // Prepare request body with wiki_structure_request flag
+      // Backend will use promptstore templates to build the actual prompt
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const requestBody: Record<string, any> = {
         repo_url: repoUrl,
         type: effectiveRepoInfo.type,
+        // Signal to backend this is a wiki structure request
+        wiki_structure_request: true,
+        file_tree: truncatedFileTree,
+        readme: truncatedReadme,
+        comprehensive: isComprehensiveView,
+        // Placeholder message - backend will replace with promptstore template
         messages: [{
           role: 'user',
-content: `Analyze this GitHub repository ${owner}/${repo} and create a wiki structure for it.
-
-1. The ${fileTreeTruncated ? 'partial ' : ''}file tree of the project${fileTreeTruncated ? ' (truncated due to size)' : ''}:
-<file_tree>
-${truncatedFileTree}
-</file_tree>
-
-2. The README file of the project:
-<readme>
-${truncatedReadme}
-</readme>
-
-I want to create a wiki for this repository. Determine the most logical structure for a wiki based on the repository's content.
-
-IMPORTANT: The wiki content will be generated in ${language === 'en' ? 'English' :
-            language === 'ja' ? 'Japanese (日本語)' :
-            language === 'zh' ? 'Mandarin Chinese (中文)' :
-            language === 'zh-tw' ? 'Traditional Chinese (繁體中文)' :
-            language === 'es' ? 'Spanish (Español)' :
-            language === 'kr' ? 'Korean (한国語)' :
-            language === 'vi' ? 'Vietnamese (Tiếng Việt)' :
-            language === "pt-br" ? "Brazilian Portuguese (Português Brasileiro)" :
-            language === "fr" ? "Français (French)" :
-            language === "ru" ? "Русский (Russian)" :
-            'English'} language.
-
-When designing the wiki structure, include pages that would benefit from visual diagrams, such as:
-- Architecture overviews
-- Data flow descriptions
-- Component relationships
-- Process workflows
-- State machines
-- Class hierarchies
-
-${isComprehensiveView ? `
-Create a structured wiki with the following main sections:
-- Overview (general information about the project)
-- System Architecture (how the system is designed)
-- Core Features (key functionality)
-- Data Management/Flow: If applicable, how data is stored, processed, accessed, and managed (e.g., database schema, data pipelines, state management).
-- Frontend Components (UI elements, if applicable.)
-- Backend Systems (server-side components)
-- Model Integration (AI model connections)
-- Deployment/Infrastructure (how to deploy, what's the infrastructure like)
-- Extensibility and Customization: If the project architecture supports it, explain how to extend or customize its functionality (e.g., plugins, theming, custom modules, hooks).
-
-Each section should contain relevant pages. For example, the "Frontend Components" section might include pages for "Home Page", "Repository Wiki Page", "Ask Component", etc.
-
-Return your analysis in the following XML format:
-
-<wiki_structure>
-  <title>[Overall title for the wiki]</title>
-  <description>[Brief description of the repository]</description>
-  <sections>
-    <section id="section-1">
-      <title>[Section title]</title>
-      <pages>
-        <page_ref>page-1</page_ref>
-        <page_ref>page-2</page_ref>
-      </pages>
-      <subsections>
-        <section_ref>section-2</section_ref>
-      </subsections>
-    </section>
-    <!-- More sections as needed -->
-  </sections>
-  <pages>
-    <page id="page-1">
-      <title>[Page title]</title>
-      <description>[Brief description of what this page will cover]</description>
-      <importance>high|medium|low</importance>
-      <relevant_files>
-        <file_path>[Path to a relevant file]</file_path>
-        <!-- More file paths as needed -->
-      </relevant_files>
-      <related_pages>
-        <related>page-2</related>
-        <!-- More related page IDs as needed -->
-      </related_pages>
-      <parent_section>section-1</parent_section>
-    </page>
-    <!-- More pages as needed -->
-  </pages>
-</wiki_structure>
-` : `
-Return your analysis in the following XML format:
-
-<wiki_structure>
-  <title>[Overall title for the wiki]</title>
-  <description>[Brief description of the repository]</description>
-  <pages>
-    <page id="page-1">
-      <title>[Page title]</title>
-      <description>[Brief description of what this page will cover]</description>
-      <importance>high|medium|low</importance>
-      <relevant_files>
-        <file_path>[Path to a relevant file]</file_path>
-        <!-- More file paths as needed -->
-      </relevant_files>
-      <related_pages>
-        <related>page-2</related>
-        <!-- More related page IDs as needed -->
-      </related_pages>
-    </page>
-    <!-- More pages as needed -->
-  </pages>
-</wiki_structure>
-`}
-
-IMPORTANT FORMATTING INSTRUCTIONS:
-- Return ONLY the valid XML structure specified above
-- DO NOT wrap the XML in markdown code blocks (no \`\`\` or \`\`\`xml)
-- DO NOT include any explanation text before or after the XML
-- Ensure the XML is properly formatted and valid
-- Start directly with <wiki_structure> and end with </wiki_structure>
-
-IMPORTANT:
-1. Create ${isComprehensiveView ? '8-12' : '4-6'} pages that would make a ${isComprehensiveView ? 'comprehensive' : 'concise'} wiki for this repository
-2. Each page should focus on a specific aspect of the codebase (e.g., architecture, key features, setup)
-3. The relevant_files should be actual files from the repository that would be used to generate that page
-4. Return ONLY valid XML with the structure specified above, with no markdown code block delimiters`
+          content: 'Generate wiki structure'  // Backend replaces this
         }]
       };
 
@@ -1470,6 +1356,12 @@ IMPORTANT:
       // Try to parse sections if we're in comprehensive view
       if (isComprehensiveView) {
         const sectionsEls = xmlDoc.querySelectorAll('section');
+        
+        // DEBUG: Log raw section XML to understand parsing
+        console.log(`Found ${sectionsEls.length} section elements in XML`);
+        sectionsEls.forEach((el, i) => {
+          console.log(`Section ${i} raw XML:`, el.outerHTML?.substring(0, 300));
+        });
 
         if (sectionsEls && sectionsEls.length > 0) {
           // Process sections
@@ -1487,8 +1379,6 @@ IMPORTANT:
               if (el.textContent) sectionPages.push(el.textContent);
             });
             
-            console.log(`Section "${id}" has page_refs:`, sectionPages);
-
             console.log(`Section "${id}" has page_refs:`, sectionPages);
 
             sectionRefEls.forEach(el => {
@@ -1517,6 +1407,41 @@ IMPORTANT:
               rootSections.push(id);
             }
           });
+          
+          // FLATTEN STRUCTURE: Make all sections root-level (no nesting)
+          // This ensures all sections appear at the same level in the sidebar
+          // If you want nested sections in the future, remove this block
+          if (rootSections.length < sections.length) {
+            console.log(`Flattening section hierarchy: ${rootSections.length} root -> ${sections.length} total`);
+            // Clear subsections and make all sections root
+            sections.forEach(section => {
+              section.subsections = undefined;
+              if (!rootSections.includes(section.id)) {
+                rootSections.push(section.id);
+              }
+            });
+          }
+          
+          // Validate: Check for pages not assigned to any section
+          const assignedPageIds = new Set<string>();
+          sections.forEach(section => {
+            section.pages.forEach(pageId => assignedPageIds.add(pageId));
+          });
+          
+          const unassignedPages = pages.filter(page => !assignedPageIds.has(page.id));
+          if (unassignedPages.length > 0) {
+            console.warn(`Found ${unassignedPages.length} pages not assigned to any section:`, unassignedPages.map(p => p.id));
+            
+            // Create an "Additional Topics" section for orphaned pages
+            const additionalSectionId = 'section-additional';
+            sections.push({
+              id: additionalSectionId,
+              title: 'Additional Topics',
+              pages: unassignedPages.map(p => p.id)
+            });
+            rootSections.push(additionalSectionId);
+            console.log(`Created "${additionalSectionId}" section for unassigned pages`);
+          }
         }
       }
 
@@ -2482,6 +2407,27 @@ IMPORTANT:
 
                 cachedStructure.sections = sections;
                 cachedStructure.rootSections = rootSections;
+              }
+
+              // Validate: Check for pages not assigned to any section and add them to "Additional Topics"
+              const assignedPageIds = new Set<string>();
+              cachedStructure.sections.forEach((section: WikiSection) => {
+                section.pages.forEach((pageId: string) => assignedPageIds.add(pageId));
+              });
+              
+              const unassignedPages = cachedStructure.pages.filter((page: WikiPage) => !assignedPageIds.has(page.id));
+              if (unassignedPages.length > 0) {
+                console.warn(`Found ${unassignedPages.length} pages not assigned to any section:`, unassignedPages.map((p: WikiPage) => p.id));
+                
+                // Create an "Additional Topics" section for orphaned pages
+                const additionalSectionId = 'section-additional';
+                cachedStructure.sections.push({
+                  id: additionalSectionId,
+                  title: 'Additional Topics',
+                  pages: unassignedPages.map((p: WikiPage) => p.id)
+                });
+                cachedStructure.rootSections.push(additionalSectionId);
+                console.log(`Created "${additionalSectionId}" section for unassigned pages`);
               }
 
               setWikiStructure(cachedStructure);

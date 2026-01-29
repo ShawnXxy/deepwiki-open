@@ -55,7 +55,7 @@ if __name__ != "__main__":
         logger.error("Required: AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_VERSION")
 
 # Import the app at module level for uvicorn to find it
-from backend.api import app
+from backend.app import app
 
 if __name__ == "__main__":
     # Get port from environment variable or use default
