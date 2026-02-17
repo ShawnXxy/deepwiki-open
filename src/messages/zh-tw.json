@@ -26,7 +26,7 @@
     "quickStart": "快速開始",
     "enterRepoUrl": "請以下列格式之一輸入儲存庫 URL：",
     "advancedVisualization": "使用 Mermaid 圖表進行進階視覺化",
-    "diagramDescription": "DeepWiki 自動產生互動式圖表，協助您理解程式碼結構和關係：",
+    "diagramDescription": "Orcas CodeWiki 自動產生互動式圖表，協助您理解程式碼結構和關係：",
     "flowDiagram": "流程圖",
     "sequenceDiagram": "序列圖"
   },
@@ -84,7 +84,8 @@
     "viewDefault": "檢視預設設定"
   },
   "footer": {
-    "copyright": "Orcas CodeWiki - 為ADO上的DaPCN儲存庫提供AI驅動的文件"
+    "brand": "\u00a9 Microsoft | Azure",
+    "copyright": "DaP CN Orcas CodeWiki - 為Azure DevOps上的儲存庫提供AI驅動的文件"
   },
   "ask": {
     "placeholder": "詢問關於此儲存庫的問題...",

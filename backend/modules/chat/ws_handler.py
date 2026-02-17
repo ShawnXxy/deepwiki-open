@@ -534,7 +534,28 @@ async def handle_websocket_chat(websocket: WebSocket):
                         if text is not None:
                             total_text += text
                             await websocket.send_text(text)
-            logger.info(f"Streaming complete: {chunk_count} chunks, {len(total_text)} chars, finish_reason={finish_reason}")
+            logger.info(
+                f"Streaming complete: {chunk_count} chunks, "
+                f"{len(total_text)} chars, "
+                f"finish_reason={finish_reason}"
+            )
+
+            # Handle content_filter finish reason
+            if finish_reason == "content_filter":
+                logger.warning(
+                    "Response truncated by content filter. "
+                    f"Only {len(total_text)} chars received."
+                )
+                error_msg = (
+                    "\n\n[CONTENT_FILTER_ERROR] "
+                    "Response truncated by Azure OpenAI "
+                    "content safety filter. "
+                    "Repository content may have triggered "
+                    "automated safety checks. "
+                    "Please try again or use fewer files."
+                )
+                await websocket.send_text(error_msg)
+
             await websocket.close()
         except Exception as e_azure:
             logger.error(f"Error with Azure AI API: {str(e_azure)}")

@@ -26,7 +26,7 @@
       "quickStart": "빠른 시작",
       "enterRepoUrl": "다음 형식 중 하나로 저장소 URL을 입력하세요:",
       "advancedVisualization": "Mermaid 다이어그램을 활용한 고급 시각화",
-      "diagramDescription": "DeepWiki는 코드 구조와 관계를 이해하는 데 도움이 되는 대화형 다이어그램을 자동 생성합니다:",
+      "diagramDescription": "Orcas CodeWiki는 코드 구조와 관계를 이해하는 데 도움이 되는 대화형 다이어그램을 자동 생성합니다:",
       "flowDiagram": "흐름도",
       "sequenceDiagram": "시퀀스 다이어그램"
     },
@@ -86,7 +86,8 @@
       "authorizationRequired": "Wiki 생성에는 인증코드가 필요합니다"
     },
     "footer": {
-      "copyright": "Orcas CodeWiki - ADO의 DaPCN 저장소를 위한 AI 기반 문서화"
+      "brand": "\u00a9 Microsoft | Azure",
+      "copyright": "DaP CN Orcas CodeWiki - Azure DevOps의 저장소를 위한 AI 기반 문서화"
     },
     "ask": {
       "placeholder": "이 저장소에 대해 질문해 보세요...",

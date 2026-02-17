@@ -26,7 +26,7 @@
     "quickStart": "クイックスタート",
     "enterRepoUrl": "以下のいずれかの形式でリポジトリURLを入力してください：",
     "advancedVisualization": "Mermaidダイアグラムによる高度な可視化",
-    "diagramDescription": "DeepWikiは、コード構造と関係を理解するのに役立つインタラクティブな図を自動的に生成します：",
+    "diagramDescription": "Orcas CodeWikiは、コード構造と関係を理解するのに役立つインタラクティブな図を自動的に生成します：",
     "flowDiagram": "フロー図",
     "sequenceDiagram": "シーケンス図"
   },
@@ -86,7 +86,8 @@
     "authorizationRequired": "Wiki生成には認証コードが必要です"
   },
   "footer": {
-    "copyright": "Orcas CodeWiki - ADO上のDaPCNリポジトリ向けAI駆動ドキュメンテーション"
+    "brand": "\u00a9 Microsoft | Azure",
+    "copyright": "DaP CN Orcas CodeWiki - Azure DevOps上のリポジトリ向けAI駆動ドキュメンテーション"
   },
   "ask": {
     "placeholder": "このリポジトリについて質問する...",

@@ -224,7 +224,7 @@ export default function ModelSelectionModal({
                       id="authCode"
                       value={authCode || ''}
                       onChange={(e) => setAuthCode?.(e.target.value)}
-                      className="input-japanese block w-full px-3 py-2 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
+                      className="input-azure block w-full px-3 py-2 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
                       placeholder="Enter your authorization code"
                   />
                   <div className="flex items-center mt-2 text-xs text-[var(--muted)]">

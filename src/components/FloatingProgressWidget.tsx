@@ -62,7 +62,7 @@ export default function FloatingProgressWidget() {
           {progress.isGenerating && (
             <FaSpinner className="text-[var(--accent-primary)] animate-spin flex-shrink-0" />
           )}
-          <h3 className="text-sm font-semibold text-[var(--foreground)] truncate font-serif">
+          <h3 className="text-sm font-semibold text-[var(--foreground)] truncate">
             {progress.owner}/{progress.repo}
           </h3>
         </div>

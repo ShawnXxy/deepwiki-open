@@ -26,7 +26,7 @@
     "quickStart": "Быстрый старт",
     "enterRepoUrl": "Введите URL репозитория в одном из следующих форматов:",
     "advancedVisualization": "Продвинутая визуализация с диаграммами Mermaid",
-    "diagramDescription": "DeepWiki автоматически генерирует интерактивные диаграммы, чтобы помочь вам понять структуру и связи в коде:",
+    "diagramDescription": "Orcas CodeWiki автоматически генерирует интерактивные диаграммы, чтобы помочь вам понять структуру и связи в коде:",
     "flowDiagram": "Диаграмма потока",
     "sequenceDiagram": "Диаграмма последовательности"
   },
@@ -95,7 +95,8 @@
     "authorizationRequired": "Для генерации Wiki требуется авторизация."
   },
   "footer": {
-    "copyright": "Orcas CodeWiki — документация с поддержкой ИИ для репозиториев DaPCN на ADO"
+    "brand": "\u00a9 Microsoft | Azure",
+    "copyright": "DaP CN Orcas CodeWiki — документация с поддержкой ИИ для репозиториев на Azure DevOps"
   },
   "ask": {
     "placeholder": "Задайте вопрос об этом репозитории...",

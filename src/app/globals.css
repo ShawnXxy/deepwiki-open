@@ -4,31 +4,45 @@
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 :root {
-  /* Microsoft Azure color palette - light mode */
-  --background: #f3f2f1; /* Fluent UI neutral background */
-  --foreground: #323130; /* Fluent UI neutral text */
+  /* Microsoft Azure / Fluent UI color palette - light mode */
+  --background: #f3f2f1; /* Fluent neutral lighter */
+  --foreground: #323130; /* Fluent neutral primary text */
   --shadow-color: rgba(0, 0, 0, 0.08);
-  --accent-primary: #0078d4; /* Azure Blue - primary brand color */
-  --accent-secondary: #50e6ff; /* Azure Light Blue */
-  --border-color: #e1dfdd; /* Fluent UI neutral border */
-  --card-bg: #ffffff; /* Clean white cards */
-  --highlight: #00bcf2; /* Azure Cyan highlight */
-  --muted: #605e5c; /* Fluent UI neutral secondary text */
-  --link-color: #0063b1; /* Azure link blue */
+  --accent-primary: #0078d4; /* Azure Blue - primary brand */
+  --accent-secondary: #deecf9; /* Azure Blue tint 30 */
+  --accent-dark: #005a9e; /* Azure Blue shade 20 */
+  --border-color: #edebe9; /* Fluent neutral border */
+  --card-bg: #ffffff; /* White surface */
+  --highlight: #00bcf2; /* Azure Cyan */
+  --muted: #605e5c; /* Fluent neutral secondary text */
+  --link-color: #0078d4; /* Azure Blue links */
+  --success: #107c10; /* Fluent green */
+  --warning: #ff8c00; /* Fluent warning orange */
+  --danger: #d13438; /* Fluent red */
+  --nav-bg: #f8f8f8; /* Azure portal nav background */
+  --top-bar-bg: #0078d4; /* Azure portal top bar */
+  --top-bar-text: #ffffff;
 }
 
 html[data-theme='dark'] {
-  /* Microsoft Azure color palette - dark mode */
-  --background: #1b1a19; /* Fluent UI dark background */
-  --foreground: #f3f2f1; /* Fluent UI light text */
-  --shadow-color: rgba(0, 0, 0, 0.3);
-  --accent-primary: #2899f5; /* Lighter Azure Blue for dark mode */
-  --accent-secondary: #0078d4; /* Azure Blue */
-  --border-color: #3b3a39; /* Fluent UI dark border */
-  --card-bg: #252423; /* Fluent UI dark surface */
+  /* Microsoft Azure / Fluent UI color palette - dark mode */
+  --background: #1b1a19; /* Fluent dark background */
+  --foreground: #f3f2f1; /* Fluent light text on dark */
+  --shadow-color: rgba(0, 0, 0, 0.36);
+  --accent-primary: #2b88d8; /* Azure Blue tint for dark */
+  --accent-secondary: #004578; /* Azure Blue shade 30 */
+  --accent-dark: #6cb8f6; /* Lighter blue for contrast */
+  --border-color: #3b3a39; /* Fluent dark border */
+  --card-bg: #252423; /* Fluent dark surface */
   --highlight: #50e6ff; /* Azure Light Blue */
-  --muted: #a19f9d; /* Fluent UI dark secondary text */
-  --link-color: #6cb8f6; /* Lighter blue for dark mode links */
+  --muted: #a19f9d; /* Fluent dark secondary text */
+  --link-color: #6cb8f6; /* Lighter link for dark */
+  --success: #92c353; /* Fluent green light */
+  --warning: #ffc83d; /* Fluent warning light */
+  --danger: #f1707b; /* Fluent red light */
+  --nav-bg: #292827; /* Dark nav */
+  --top-bar-bg: #1b1a19; /* Dark top bar */
+  --top-bar-text: #f3f2f1;
 }
 
 /* Fix for unreadable <select> options in Chrome's dark mode */
@@ -39,15 +53,17 @@ html[data-theme='dark'] {
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  /* System font stacks for Docker build compatibility (no network fetch needed) */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Noto Sans CJK JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  /* Segoe UI first — Microsoft standard font, then system fallbacks */
+  --font-sans: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Noto Sans CJK JP", "Hiragino Sans", Meiryo, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* Custom scrollbar styles for project list */
@@ -73,80 +89,148 @@ body {
   background-color: var(--muted);
 }
 
-/* Custom shadow styles - clean Fluent UI shadows */
+/* Custom shadow styles - Fluent UI depth tokens */
 .shadow-custom {
-  box-shadow: 0 2px 4px -1px var(--shadow-color), 0 4px 8px -2px var(--shadow-color);
+  box-shadow: 0 1.6px 3.6px 0 var(--shadow-color), 0 0.3px 0.9px 0 var(--shadow-color);
 }
 
-/* Clean modern background */
+/* Fluent depth-8 for elevated surfaces */
+.shadow-depth-8 {
+  box-shadow: 0 3.2px 7.2px 0 var(--shadow-color), 0 0.6px 1.8px 0 var(--shadow-color);
+}
+
+/* Clean surface */
 .paper-texture {
-  background-color: var(--card-bg);
+  background-color: var(--background);
   background-image: none;
 }
 
-/* Dark mode clean background */
+/* Dark mode clean surface */
 html[data-theme='dark'] .paper-texture {
   background-image: none;
 }
 
-/* Azure-style buttons */
-.btn-japanese {
+/* Azure Portal primary button */
+.btn-azure, .btn-japanese {
   background-color: var(--accent-primary);
   color: white;
-  border: none;
-  border-radius: 4px;
-  padding: 0.5rem 1.5rem;
+  border: 1px solid var(--accent-primary);
+  border-radius: 2px;
+  padding: 6px 20px;
   font-weight: 600;
-  transition: all 0.2s ease;
+  font-size: 14px;
+  line-height: 20px;
+  transition: background-color 0.1s ease, border-color 0.1s ease;
   position: relative;
-  overflow: hidden;
+  cursor: pointer;
 }
 
-.btn-japanese:hover {
-  background-color: #106ebe; /* Darker Azure Blue */
+.btn-azure:hover, .btn-japanese:hover {
+  background-color: var(--accent-dark, #005a9e);
+  border-color: var(--accent-dark, #005a9e);
 }
 
-.btn-japanese:before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 0;
-  height: 100%;
-  background-color: rgba(255, 255, 255, 0.1);
-  transition: width 0.2s ease;
+.btn-azure:active, .btn-japanese:active {
+  background-color: #004578;
+  border-color: #004578;
 }
 
-.btn-japanese:hover:before {
-  width: 100%;
+.btn-azure:disabled, .btn-japanese:disabled {
+  background-color: #c8c6c4;
+  border-color: #c8c6c4;
+  color: #a19f9d;
+  cursor: not-allowed;
 }
 
-/* Azure-style inputs */
-.input-japanese {
+/* Azure Portal secondary/outline button */
+.btn-azure-secondary {
+  background-color: var(--card-bg);
+  color: var(--foreground);
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  padding: 6px 20px;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 20px;
+  transition: background-color 0.1s ease;
+  cursor: pointer;
+}
+
+.btn-azure-secondary:hover {
+  background-color: var(--nav-bg);
+}
+
+/* Azure Portal input style */
+.input-azure, .input-japanese {
   background-color: var(--card-bg);
   border: 1px solid var(--border-color);
-  border-radius: 4px;
-  padding: 0.5rem 1rem;
-  transition: all 0.2s ease;
+  border-radius: 2px;
+  padding: 6px 12px;
+  font-size: 14px;
+  line-height: 20px;
+  transition: border-color 0.1s ease;
 }
 
-.input-japanese:focus {
+.input-azure:focus, .input-japanese:focus {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 1px var(--accent-primary);
   outline: none;
 }
 
-/* Azure-style cards */
-.card-japanese {
-  background-color: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  overflow: hidden;
-  transition: all 0.2s ease;
+.input-azure:hover, .input-japanese:hover {
+  border-color: var(--muted);
 }
 
-.card-japanese:hover {
-  box-shadow: 0 4px 16px var(--shadow-color);
+/* Azure Portal card style */
+.card-azure, .card-japanese {
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+  overflow: hidden;
+  transition: box-shadow 0.1s ease;
+}
+
+.card-azure:hover, .card-japanese:hover {
+  box-shadow: 0 3.2px 7.2px 0 var(--shadow-color), 0 0.6px 1.8px 0 var(--shadow-color);
+}
+
+/* Azure left-accent indicator for active items */
+.azure-active-indicator {
+  border-left: 2px solid var(--accent-primary);
+}
+
+/* Azure Portal top bar */
+.azure-top-bar {
+  background-color: var(--top-bar-bg);
+  color: var(--top-bar-text);
+  height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+/* Azure Portal breadcrumb */
+.azure-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.azure-breadcrumb a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+.azure-breadcrumb a:hover {
+  text-decoration: underline;
+}
+
+.azure-breadcrumb .separator {
+  color: var(--muted);
+  margin: 0 2px;
 }
 
 /* Line clamp utilities */

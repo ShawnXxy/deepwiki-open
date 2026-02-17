@@ -26,7 +26,7 @@
     "quickStart": "Início Rápido",
     "enterRepoUrl": "Digite uma URL de repositório em um destes formatos:",
     "advancedVisualization": "Visualização Avançada com Diagramas Mermaid",
-    "diagramDescription": "O DeepWiki gera automaticamente diagramas interativos para ajudar você a entender a estrutura e os relacionamentos do código:",
+    "diagramDescription": "O Orcas CodeWiki gera automaticamente diagramas interativos para ajudar você a entender a estrutura e os relacionamentos do código:",
     "flowDiagram": "Diagrama de Fluxo",
     "sequenceDiagram": "Diagrama de Sequência"
   },
@@ -95,7 +95,8 @@
     "authorizationRequired": "A autenticação é necessária para gerar a wiki."
   },
   "footer": {
-    "copyright": "Orcas CodeWiki - Documentação com IA para repositórios DaPCN no ADO"
+    "brand": "\u00a9 Microsoft | Azure",
+    "copyright": "DaP CN Orcas CodeWiki - Documentação com IA para repositórios no Azure DevOps"
   },
   "ask": {
     "placeholder": "Faça uma pergunta sobre este repositório...",
