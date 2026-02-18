@@ -26,7 +26,7 @@
     "quickStart": "快速开始",
     "enterRepoUrl": "请以下列格式之一输入仓库URL：",
     "advancedVisualization": "使用Mermaid图表进行高级可视化",
-    "diagramDescription": "DeepWiki自动生成交互式图表，帮助您理解代码结构和关系：",
+    "diagramDescription": "Orcas CodeWiki自动生成交互式图表，帮助您理解代码结构和关系：",
     "flowDiagram": "流程图",
     "sequenceDiagram": "序列图"
   },
@@ -86,7 +86,8 @@
     "authorizationRequired": "生成wiki页面需要填写授权码"
   },
   "footer": {
-    "copyright": "Orcas CodeWiki - 为ADO上的DaPCN仓库提供AI驱动的文档"
+    "brand": "\u00a9 Microsoft | Azure",
+    "copyright": "DaP CN Orcas CodeWiki - 为Azure DevOps上的仓库提供AI驱动的文档"
   },
   "ask": {
     "placeholder": "询问关于此仓库的问题...",

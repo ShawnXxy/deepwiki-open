@@ -101,7 +101,7 @@ export default function TokenInput({
               value={accessToken}
               onChange={(e) => setAccessToken(e.target.value)}
               placeholder={(t.form?.tokenPlaceholder || 'Enter your {platform} access token').replace('{platform}', platformName)}
-              className="input-japanese block w-full px-3 py-2 rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)] text-sm"
+              className="input-azure block w-full px-3 py-2 rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)] text-sm"
             />
             <div className="flex items-center mt-2 text-xs text-[var(--muted)]">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1 text-[var(--muted)]"

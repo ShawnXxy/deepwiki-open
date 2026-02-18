@@ -39,7 +39,7 @@ export default function CompletionNotificationModal() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-500/20 border-2 border-green-500 mb-4">
             <FaCheck className="text-3xl text-green-600 dark:text-green-400" />
           </div>
-          <h2 className="text-xl font-bold text-[var(--foreground)] font-serif">
+          <h2 className="text-xl font-semibold text-[var(--foreground)]">
             {messages.wikiProgress?.completionTitle || 'Wiki Generation Complete!'}
           </h2>
         </div>

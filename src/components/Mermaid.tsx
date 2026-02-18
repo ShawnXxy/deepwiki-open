@@ -18,7 +18,7 @@ mermaid.initialize({
     rankSpacing: 60,
     padding: 20,
   },
-  fontFamily: 'var(--font-geist-sans), var(--font-serif-jp), sans-serif',
+  fontFamily: 'var(--font-geist-sans), "Segoe UI", sans-serif',
   fontSize: 12,
 });
 
@@ -101,10 +101,10 @@ const FullScreenModal: React.FC<{
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4">
-      <div ref={modalRef} className="bg-[var(--card-bg)] rounded-lg shadow-custom max-w-5xl max-h-[90vh] w-full overflow-hidden flex flex-col card-japanese">
+      <div ref={modalRef} className="bg-[var(--card-bg)] rounded shadow-custom max-w-5xl max-h-[90vh] w-full overflow-hidden flex flex-col card-azure">
         {/* Header with zoom controls */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)]">
-          <div className="font-medium text-[var(--foreground)] font-serif">Diagram View</div>
+          <div className="font-medium text-[var(--foreground)]">Diagram View</div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
               <button onClick={() => setZoom(Math.max(0.5, zoom - 0.1))} className={buttonClass} aria-label="Zoom out">
@@ -350,7 +350,7 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
           </div>
         </div>
         <div ref={mermaidRef} className="text-xs overflow-auto" />
-        <div className="mt-3 text-xs text-[var(--muted)] font-serif">
+        <div className="mt-3 text-xs text-[var(--muted)]">
           The diagram contains syntax errors and cannot be rendered.
         </div>
       </div>
@@ -365,7 +365,7 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
           <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse" />
           <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-75" />
           <div className="w-2 h-2 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-150" />
-          <span className="text-[var(--muted)] text-xs ml-2 font-serif">Rendering diagram...</span>
+          <span className="text-[var(--muted)] text-xs ml-2">Rendering diagram...</span>
         </div>
       </div>
     );

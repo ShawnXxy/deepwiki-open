@@ -152,7 +152,7 @@ export default function ConfigurationModal({
                 value={selectedBranch}
                 onChange={(e) => setSelectedBranch(e.target.value)}
                 placeholder="main"
-                className="input-japanese block w-full px-3 py-2 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
+                className="input-azure block w-full px-3 py-2 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
               />
               <div className="flex items-center mt-1 text-xs text-[var(--muted)]">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1 text-[var(--muted)]"
@@ -184,7 +184,7 @@ export default function ConfigurationModal({
                 id="language-select"
                 value={selectedLanguage}
                 onChange={(e) => setSelectedLanguage(e.target.value)}
-                className="input-japanese block w-full px-3 py-2 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
+                className="input-azure block w-full px-3 py-2 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
               >
                 {
                   Object.entries(supportedLanguages).map(([key, value])=> <option key={key} value={key}>{value}</option>)
@@ -287,7 +287,7 @@ export default function ConfigurationModal({
                   id="authCode"
                   value={authCode || ''}
                   onChange={(e) => setAuthCode?.(e.target.value)}
-                  className="input-japanese block w-full px-3 py-2 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
+                  className="input-azure block w-full px-3 py-2 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
                   placeholder="Enter your authorization code"
                 />
                  <div className="flex items-center mt-2 text-xs text-[var(--muted)]">

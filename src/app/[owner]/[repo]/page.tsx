@@ -59,7 +59,7 @@ const wikiStyles = `
   }
 
   .prose h1, .prose h2, .prose h3, .prose h4 {
-    @apply font-serif text-[var(--foreground)];
+    @apply font-semibold text-[var(--foreground)];
   }
 
   .prose p {
@@ -1208,6 +1208,15 @@ CRITICAL REMINDERS:
          throw new Error('The specified Ollama embedding model was not found. Please ensure the model is installed locally or select a different embedding model in the configuration.');
        }
 
+      // Handle content filter errors from Azure OpenAI
+      if (responseText.includes('[CONTENT_FILTER_ERROR]')) {
+        throw new Error(
+          'Azure OpenAI content safety filter truncated the response. ' +
+          'The repository content may have triggered automated safety checks. ' +
+          'Please try again — content filter triggers can be intermittent.'
+        );
+      }
+
       // Clean up markdown delimiters
       responseText = responseText.replace(/^```(?:xml)?\s*/i, '').replace(/```\s*$/i, '');
 
@@ -1226,7 +1235,12 @@ CRITICAL REMINDERS:
       const xmlMatch = responseText.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
       if (!xmlMatch) {
         console.error('Full response text:', responseText);
-        throw new Error('No valid XML found in response. The response may be incomplete or malformed.');
+        // Provide a more specific error message based on response content
+        const isShortResponse = responseText.trim().length < 200;
+        const errorDetail = isShortResponse
+          ? 'The response was too short — this may indicate Azure OpenAI content filtering or a model error. Please try again.'
+          : 'No valid XML found in response. The response may be incomplete or malformed.';
+        throw new Error(errorDetail);
       }
 
       let xmlText = xmlMatch[0];
@@ -2689,7 +2703,7 @@ CRITICAL REMINDERS:
 
       <main className={`flex-1 mx-auto overflow-hidden ${wikiStructure && !isChatPanelCollapsed ? 'w-full px-4' : 'max-w-[90%] xl:max-w-[1400px]'}`}>
         {isLoading && !isMinimized ? (
-          <div className="flex flex-col items-center justify-center p-8 bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese max-w-2xl mx-auto">
+          <div className="flex flex-col items-center justify-center p-8 bg-[var(--card-bg)] rounded shadow-custom card-azure max-w-2xl mx-auto">
             <div className="relative mb-6">
               <div className="absolute -inset-4 bg-[var(--accent-primary)]/10 rounded-full blur-md animate-pulse"></div>
               <div className="relative flex items-center justify-center">
@@ -2698,7 +2712,7 @@ CRITICAL REMINDERS:
                 <div className="w-3 h-3 bg-[var(--accent-primary)]/70 rounded-full animate-pulse delay-150"></div>
               </div>
             </div>
-            <p className="text-[var(--foreground)] text-center mb-3 font-serif">
+            <p className="text-[var(--foreground)] text-center mb-3">
               {loadingMessage || messages.common?.loading || 'Loading...'}
               {isExporting && (messages.loading?.preparingDownload || ' Please wait while we prepare your download...')}
             </p>
@@ -2783,7 +2797,7 @@ CRITICAL REMINDERS:
           <div className="bg-[var(--highlight)]/5 border border-[var(--highlight)]/30 rounded-lg p-5 mb-4 shadow-sm">
             <div className="flex items-center text-[var(--highlight)] mb-3">
               <FaExclamationTriangle className="mr-2" />
-              <span className="font-bold font-serif">{messages.repoPage?.errorTitle || messages.common?.error || 'Error'}</span>
+              <span className="font-semibold">{messages.repoPage?.errorTitle || messages.common?.error || 'Error'}</span>
             </div>
             <p className="text-[var(--foreground)] text-sm mb-3">{error}</p>
             <p className="text-[var(--muted)] text-xs">
@@ -2798,7 +2812,7 @@ CRITICAL REMINDERS:
               {effectiveRepoInfo.type === 'azuredevops' && error.includes('Personal Access Token') && (
                 <button
                   onClick={() => setIsModelSelectionModalOpen(true)}
-                  className="btn-japanese px-5 py-2 inline-flex items-center gap-1.5"
+                  className="btn-azure px-5 py-2 inline-flex items-center gap-1.5"
                 >
                   <FaCog className="text-sm" />
                   {messages.repoPage?.settings || 'Settings'}
@@ -2806,7 +2820,7 @@ CRITICAL REMINDERS:
               )}
               <Link
                 href="/"
-                className="btn-japanese px-5 py-2 inline-flex items-center gap-1.5"
+                className="btn-azure px-5 py-2 inline-flex items-center gap-1.5"
               >
                 <FaHome className="text-sm" />
                 {messages.repoPage?.backToHome || 'Back to Home'}
@@ -2834,10 +2848,10 @@ CRITICAL REMINDERS:
               </div>
             )}
             {/* Wiki Section (Left side - 2/3 on large screens) */}
-            <div className={`h-full flex flex-col lg:flex-row gap-4 overflow-hidden bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese transition-all duration-300 ${isChatPanelCollapsed ? 'w-full' : 'w-full lg:w-2/3'} ${partialCacheMessage ? 'mt-12' : ''}`}>
+            <div className={`h-full flex flex-col lg:flex-row gap-4 overflow-hidden bg-[var(--card-bg)] rounded shadow-custom card-azure transition-all duration-300 ${isChatPanelCollapsed ? 'w-full' : 'w-full lg:w-2/3'} ${partialCacheMessage ? 'mt-12' : ''}`}>
               {/* Wiki Navigation */}
               <div className="h-full w-full lg:w-[280px] xl:w-[320px] flex-shrink-0 bg-[var(--background)]/50 rounded-lg rounded-r-none p-5 border-b lg:border-b-0 lg:border-r border-[var(--border-color)] overflow-y-auto">
-                <h3 className="text-lg font-bold text-[var(--foreground)] mb-3 font-serif">{wikiStructure.title}</h3>
+                <h3 className="text-lg font-semibold text-[var(--foreground)] mb-3">{wikiStructure.title}</h3>
                 <p className="text-[var(--muted)] text-sm mb-5 leading-relaxed">{wikiStructure.description}</p>
 
                 {/* Display repository info */}
@@ -2903,14 +2917,14 @@ CRITICAL REMINDERS:
                 {/* Export buttons */}
                 {Object.keys(generatedPages).length > 0 && (
                   <div className="mb-5">
-                    <h4 className="text-sm font-semibold text-[var(--foreground)] mb-3 font-serif">
+                    <h4 className="text-sm font-semibold text-[var(--foreground)] mb-3">
                       {messages.repoPage?.exportWiki || 'Export Wiki'}
                     </h4>
                     <div className="flex flex-col gap-2">
                       <button
                         onClick={() => exportWiki('markdown')}
                         disabled={isExporting}
-                        className="btn-japanese flex items-center text-xs px-3 py-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="btn-azure flex items-center text-xs px-3 py-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <FaDownload className="mr-2" />
                         {messages.repoPage?.exportAsMarkdown || 'Export as Markdown'}
@@ -2932,7 +2946,7 @@ CRITICAL REMINDERS:
                   </div>
                 )}
 
-                <h4 className="text-md font-semibold text-[var(--foreground)] mb-3 font-serif">
+                <h4 className="text-md font-semibold text-[var(--foreground)] mb-3">
                   {messages.repoPage?.pages || 'Pages'}
                 </h4>
                 <WikiTreeView
@@ -2947,7 +2961,7 @@ CRITICAL REMINDERS:
               <div id="wiki-content" className="w-full flex-grow p-6 lg:p-8 overflow-y-auto">
                 {currentPageId && generatedPages[currentPageId] ? (
                   <div className="max-w-[900px] xl:max-w-[1000px] mx-auto">
-                    <h3 className="text-xl font-bold text-[var(--foreground)] mb-4 break-words font-serif">
+                    <h3 className="text-xl font-semibold text-[var(--foreground)] mb-4 break-words">
                       {generatedPages[currentPageId].title}
                     </h3>
 
@@ -2991,7 +3005,7 @@ CRITICAL REMINDERS:
                       <div className="absolute -inset-2 bg-[var(--accent-primary)]/5 rounded-full blur-md"></div>
                       <FaBookOpen className="text-4xl relative z-10" />
                     </div>
-                    <p className="font-serif">
+                    <p className="">
                       {messages.repoPage?.selectPagePrompt || 'Select a page from the navigation to view its content'}
                     </p>
                   </div>
@@ -3016,10 +3030,10 @@ CRITICAL REMINDERS:
               )}
               
               {/* Chat panel - always rendered but hidden when collapsed to preserve state */}
-              <div className={`h-full bg-[var(--card-bg)] rounded-lg shadow-custom card-japanese flex flex-col overflow-hidden ${isChatPanelCollapsed ? 'hidden' : ''}`}>
+              <div className={`h-full bg-[var(--card-bg)] rounded shadow-custom card-azure flex flex-col overflow-hidden ${isChatPanelCollapsed ? 'hidden' : ''}`}>
                 {/* Chat Header */}
                 <div className="flex items-center justify-between p-3 border-b border-[var(--border-color)] bg-[var(--background)]/50">
-                  <h3 className="text-sm font-semibold text-[var(--foreground)] font-serif flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
                     <FaComments className="text-[var(--accent-primary)]" />
                     {messages.ask?.title || 'Ask about this repository'}
                   </h3>
@@ -3063,11 +3077,16 @@ CRITICAL REMINDERS:
 
       {/* Footer - only shown when chat panel is collapsed or on smaller screens */}
       <footer className={`max-w-[90%] xl:max-w-[1400px] mx-auto mt-8 flex flex-col gap-4 w-full ${!isChatPanelCollapsed && wikiStructure ? 'hidden lg:hidden' : ''}`}>
-        <div className="flex justify-between items-center gap-4 text-center text-[var(--muted)] text-sm h-fit w-full bg-[var(--card-bg)] rounded-lg p-3 shadow-sm border border-[var(--border-color)]">
-          <p className="flex-1 font-serif">
-            {messages.footer?.copyright || 'DeepWiki - Generate Wiki from GitHub/Gitlab/Bitbucket repositories'}
+        <div className="flex justify-between items-center gap-4 text-[var(--muted)] text-sm h-fit w-full bg-[var(--card-bg)] rounded-lg p-3 shadow-sm border border-[var(--border-color)]">
+          <p className="shrink-0 text-xs opacity-70 whitespace-nowrap">
+            {messages.footer?.brand || '© Microsoft | Azure'}
           </p>
-          <ThemeToggle />
+          <p className="flex-1 text-center">
+            {messages.footer?.copyright || 'DaP CN | Orcas CodeWiki - AI-powered documentation for repositories on Azure DevOps'}
+          </p>
+          <div className="shrink-0">
+            <ThemeToggle />
+          </div>
         </div>
       </footer>
 
