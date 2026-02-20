@@ -36,6 +36,14 @@ The following files were used as context for generating this wiki page:
 
 Immediately after the `<details>` block, the main title of the page should be a H1 Markdown heading: `# {page_title}`.
 
+UNDERSTANDING THE SOURCE CONTEXT:
+The source files provided may include structural metadata to help you write more accurate content:
+- **File headers** like `## File Path: path/to/file.py` indicate the source file.
+- **Structural summaries** like `(Type: py | Classes: MyClass | Functions: init, process)` list key components defined in the file.
+- **Section markers** like `### [function]` or `### [class]` indicate what type of code block follows.
+- **Line references** like `(lines 45-120)` indicate where in the source file the code appears.
+Use this structural information to write more precise descriptions and cite specific components accurately.
+
 Based on the content of the relevant source files:
 
 1.  **Introduction:** Start with a concise introduction (1-2 paragraphs) explaining the purpose, scope, and high-level overview of "{page_title}" within the context of the overall project.
@@ -97,9 +105,10 @@ Based on the content of the relevant source files:
 
 6.  **Source Citations:**
     *   When possible, cite the specific source file(s) from which the information was derived.
+    *   If line numbers are available in the context (e.g., from section markers), reference them.
     *   Place citations at the end of the paragraph, under the diagram/table, or after the code snippet.
     *   Use the format: `Sources: [filename.ext]()` or `Sources: [filename.ext:line_number]()`.
-
+    *   When structural metadata lists specific functions or classes, reference them by name in your explanations.
 7.  **Technical Accuracy:** Base all information on the provided source files. If information is limited, focus on what IS available rather than what's missing.
 
 8.  **Clarity and Conciseness:** Use clear, professional, and concise technical language suitable for other developers working on or learning about the project.

@@ -117,13 +117,17 @@ def format_conversation_history(memory_dict: dict) -> str:
 
 def format_context_text(retrieved_documents) -> str:
     """
-    Format retrieved documents into context text.
+    Format retrieved documents into context text for LLM consumption.
+
+    When enriched chunks are available (from code-aware splitting),
+    includes structural metadata like section type, function names,
+    and class names. Falls back to basic format for legacy chunks.
 
     Args:
         retrieved_documents: Documents retrieved from RAG
 
     Returns:
-        str: Formatted context text
+        str: Formatted context text with structural headers
     """
     if not retrieved_documents or not retrieved_documents[0].documents:
         return ""
@@ -139,11 +143,63 @@ def format_context_text(retrieved_documents) -> str:
             docs_by_file[file_path] = []
         docs_by_file[file_path].append(doc)
 
-    # Format context text
+    # Format context text with enriched headers
     context_parts = []
     for file_path, docs in docs_by_file.items():
-        header = f"## File Path: {file_path}\n\n"
-        content = "\n\n".join([doc.text for doc in docs])
-        context_parts.append(f"{header}{content}")
+        # Build file-level header
+        header = f"## File Path: {file_path}"
+
+        # Collect structural info across chunks from this file
+        all_functions = []
+        all_classes = []
+        file_type = None
+
+        for doc in docs:
+            meta = doc.meta_data
+            if not file_type:
+                file_type = meta.get('type', '')
+            all_functions.extend(meta.get('functions', []))
+            all_classes.extend(meta.get('classes', []))
+
+        # Add structural summary under header
+        summary_parts = []
+        if file_type:
+            summary_parts.append(f"Type: {file_type}")
+        unique_classes = list(dict.fromkeys(all_classes))
+        unique_functions = list(dict.fromkeys(all_functions))
+        if unique_classes:
+            summary_parts.append(
+                f"Classes: {', '.join(unique_classes[:8])}"
+            )
+        if unique_functions:
+            summary_parts.append(
+                f"Functions: {', '.join(unique_functions[:12])}"
+            )
+        if summary_parts:
+            header += f"\n({' | '.join(summary_parts)})"
+        header += "\n"
+
+        # Use raw_chunk_text from metadata for display (clean code),
+        # falling back to doc.text for legacy chunks
+        chunk_texts = []
+        for doc in docs:
+            raw_text = doc.meta_data.get('raw_chunk_text', doc.text)
+            section_type = doc.meta_data.get('section_type', '')
+            start_line = doc.meta_data.get('start_line')
+            end_line = doc.meta_data.get('end_line')
+
+            # Add section marker if available
+            if section_type and section_type != 'code':
+                chunk_header = f"### [{section_type}]"
+                if start_line is not None and end_line is not None:
+                    chunk_header += (
+                        f" (lines {start_line + 1}-{end_line + 1})"
+                    )
+                chunk_texts.append(f"{chunk_header}\n{raw_text}")
+            else:
+                chunk_texts.append(raw_text)
+
+        content = "\n\n".join(chunk_texts)
+        context_parts.append(f"{header}\n{content}")
 
     return "\n\n" + "-" * 10 + "\n\n".join(context_parts)

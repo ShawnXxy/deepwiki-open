@@ -5,8 +5,10 @@ Provides functions for cloning, pulling, and managing Git repositories.
 """
 
 import os
+import shutil
 import subprocess
 import logging
+import time
 from urllib.parse import urlparse, urlunparse, quote
 
 logger = logging.getLogger(__name__)
@@ -15,10 +17,10 @@ logger = logging.getLogger(__name__)
 def detect_default_branch(local_path: str) -> str:
     """
     Detect the default branch of a cloned repository.
-    
+
     Args:
         local_path: Path to the cloned repository
-        
+
     Returns:
         str: Name of the default branch (e.g., 'main', 'master')
     """
@@ -87,7 +89,7 @@ def download_repo(
         from backend.types import GitSource
         if not isinstance(git_source, GitSource):
             raise TypeError(f"git_source must be GitSource type, got {type(git_source)}")
-            
+
         repo_url = git_source.repository.url
         type = git_source.repository.repo_type
         access_token = git_source.credentials.access_token if git_source.credentials else None
@@ -95,13 +97,13 @@ def download_repo(
         # If local_path not explicitly provided, use from GitSource
         if local_path is None:
             local_path = git_source.repository.local_path
-    
+
     # Validate required parameters
     if not repo_url:
         raise ValueError("repo_url must be provided either directly or via git_source")
     if not local_path:
         raise ValueError("local_path must be provided either directly or via git_source")
-    
+
     try:
         # Check if Git is installed
         logger.info(f"Preparing to clone repository to {local_path}")
@@ -128,7 +130,11 @@ def download_repo(
 
         # Prepare the clone URL with access token if provided
         clone_url = repo_url
-        logger.debug(f"download_repo called with type={type}, access_token={'[PROVIDED]' if access_token else '[NONE]'}")
+        token_status = '[PROVIDED]' if access_token else '[NONE]'
+        logger.debug(
+            f"download_repo called with type={type}, "
+            f"access_token={token_status}"
+        )
         if access_token:
             parsed = urlparse(repo_url)
             # URL-encode the token to handle special characters
@@ -137,18 +143,30 @@ def download_repo(
             # Determine the repository type and format the URL accordingly
             if type == "github":
                 # Format: https://{token}@{domain}/owner/repo.git
-                clone_url = urlunparse((parsed.scheme, f"{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+                netloc = f"{encoded_token}@{parsed.netloc}"
+                clone_url = urlunparse((
+                    parsed.scheme, netloc,
+                    parsed.path, '', '', ''
+                ))
             elif type == "gitlab":
                 # Format: https://oauth2:{token}@gitlab.com/owner/repo.git
-                clone_url = urlunparse((parsed.scheme, f"oauth2:{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+                netloc = f"oauth2:{encoded_token}@{parsed.netloc}"
+                clone_url = urlunparse((
+                    parsed.scheme, netloc,
+                    parsed.path, '', '', ''
+                ))
             elif type == "bitbucket":
                 # Format: https://x-token-auth:{token}@bitbucket.org/owner/repo.git
-                clone_url = urlunparse((parsed.scheme, f"x-token-auth:{encoded_token}@{parsed.netloc}", parsed.path, '', '', ''))
+                netloc = f"x-token-auth:{encoded_token}@{parsed.netloc}"
+                clone_url = urlunparse((
+                    parsed.scheme, netloc,
+                    parsed.path, '', '', ''
+                ))
             elif type == "azuredevops":
                 # Format: https://{token}@{domain}/owner/repo.git
                 clone_url = urlunparse((
-                    parsed.scheme, 
-                    f"{encoded_token}@{parsed.netloc}", 
+                    parsed.scheme,
+                    f"{encoded_token}@{parsed.netloc}",
                     parsed.path, '', '', ''
                 ))
             else:
@@ -160,79 +178,132 @@ def download_repo(
 
         # Clone the repository with branch handling
         logger.info(f"Cloning repository from {repo_url} to {local_path}")
-        
+
         # Build git clone command with branch parameter if specified
         clone_cmd = ["git", "clone", "--depth=1", "--single-branch"]
-        
+
         # Add branch parameter if specified, with fallback logic
         if branch and branch.strip():
             clone_cmd.extend(["-b", branch.strip()])
             logger.info(f"Attempting to clone branch: {branch.strip()}")
-        
+
         clone_cmd.extend([clone_url, local_path])
-        
-        try:
-            result = subprocess.run(
-                clone_cmd,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            logger.info("Repository cloned successfully")
-            return result.stdout.decode("utf-8")
-            
-        except subprocess.CalledProcessError as e:
-            # If specified branch fails, try fallback branches
-            if branch and branch.strip() and branch.strip() not in ['main', 'master']:
-                logger.warning(f"Branch {branch.strip()} not found, trying fallback branches")
-                
-                # Clean up failed clone attempt
-                if os.path.exists(local_path):
-                    import shutil
-                    shutil.rmtree(local_path)
-                
-                # Try with 'main' branch
-                for fallback_branch in ['main', 'master']:
+
+        # Retry logic for transient network errors (DNS, timeouts)
+        max_retries = 3
+        retry_delay = 2  # seconds, doubles each retry
+
+        for attempt in range(1, max_retries + 1):
+            # Clean up empty directory from previous failed attempt
+            if os.path.exists(local_path) and not os.listdir(local_path):
+                shutil.rmtree(local_path)
+                os.makedirs(local_path, exist_ok=True)
+
+            try:
+                result = subprocess.run(
+                    clone_cmd,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                logger.info("Repository cloned successfully")
+                return result.stdout.decode("utf-8")
+
+            except subprocess.CalledProcessError as e:
+                error_msg = e.stderr.decode('utf-8')
+                is_network_error = any(
+                    phrase in error_msg.lower()
+                    for phrase in [
+                        'could not resolve host',
+                        'failed to connect',
+                        'connection timed out',
+                        'connection refused',
+                        'network is unreachable',
+                        'ssl',
+                    ]
+                )
+
+                if is_network_error and attempt < max_retries:
+                    logger.warning(
+                        f"Clone attempt {attempt}/{max_retries} failed "
+                        f"(network error), retrying in {retry_delay}s..."
+                    )
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    # Clean up failed clone directory for retry
+                    if os.path.exists(local_path):
+                        shutil.rmtree(local_path)
+                        os.makedirs(local_path, exist_ok=True)
+                    continue
+
+                # Not a network error or final attempt — try branch fallbacks
+                if branch and branch.strip() and branch.strip() not in ['main', 'master']:
+                    logger.warning(f"Branch {branch.strip()} not found, trying fallback branches")
+
+                    # Clean up failed clone attempt
+                    if os.path.exists(local_path):
+                        shutil.rmtree(local_path)
+
+                    # Try with 'main' branch
+                    for fallback_branch in ['main', 'master']:
+                        try:
+                            logger.info(f"Trying fallback branch: {fallback_branch}")
+                            clone_cmd_fallback = [
+                                "git", "clone", "-b", fallback_branch,
+                                clone_url, local_path
+                            ]
+                            result = subprocess.run(
+                                clone_cmd_fallback,
+                                check=True,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                            )
+                            logger.info(
+                                f"Repository cloned successfully using "
+                                f"fallback branch: {fallback_branch}"
+                            )
+                            return result.stdout.decode("utf-8")
+                        except subprocess.CalledProcessError:
+                            # Clean up and try next fallback
+                            if os.path.exists(local_path):
+                                shutil.rmtree(local_path)
+                            continue
+
+                    # If all fallback branches fail, try without branch
                     try:
-                        logger.info(f"Trying fallback branch: {fallback_branch}")
-                        clone_cmd_fallback = ["git", "clone", "-b", fallback_branch, clone_url, local_path]
+                        logger.info(
+                            "Trying clone without branch specification "
+                            "(default branch)"
+                        )
+                        clone_cmd_default = [
+                            "git", "clone", clone_url, local_path
+                        ]
                         result = subprocess.run(
-                            clone_cmd_fallback,
+                            clone_cmd_default,
                             check=True,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE,
                         )
-                        logger.info(f"Repository cloned successfully using fallback branch: {fallback_branch}")
+                        logger.info(
+                            "Repository cloned successfully using "
+                            "default branch"
+                        )
                         return result.stdout.decode("utf-8")
                     except subprocess.CalledProcessError:
-                        # Clean up and try next fallback
-                        if os.path.exists(local_path):
-                            shutil.rmtree(local_path)
-                        continue
-                
-                # If all fallback branches fail, try without branch specification
-                try:
-                    logger.info("Trying clone without branch specification (default branch)")
-                    clone_cmd_default = ["git", "clone", clone_url, local_path]
-                    result = subprocess.run(
-                        clone_cmd_default,
-                        check=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
+                        pass
+
+                # If we get here, all attempts failed
+                error_msg = e.stderr.decode('utf-8')
+                # Sanitize error message to remove any tokens
+                if access_token:
+                    error_msg = error_msg.replace(
+                        access_token, "***TOKEN***"
                     )
-                    logger.info("Repository cloned successfully using default branch")
-                    return result.stdout.decode("utf-8")
-                except subprocess.CalledProcessError:
-                    pass
-            
-            # If we get here, all attempts failed
-            error_msg = e.stderr.decode('utf-8')
-            # Sanitize error message to remove any tokens
-            if access_token:
-                error_msg = error_msg.replace(access_token, "***TOKEN***")
-                encoded_token = quote(access_token, safe='')
-                error_msg = error_msg.replace(encoded_token, "***TOKEN***")
-            raise ValueError(f"Error during cloning: {error_msg}")
+                    encoded_token = quote(access_token, safe='')
+                    error_msg = error_msg.replace(
+                        encoded_token, "***TOKEN***"
+                    )
+                raise ValueError(f"Error during cloning: {error_msg}")
     except Exception as e:
         raise ValueError(f"An unexpected error occurred: {str(e)}")
 
