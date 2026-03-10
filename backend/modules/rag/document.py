@@ -158,11 +158,16 @@ def read_all_documents(
                     and "test" not in relative_path.lower()
                 )
 
-                # Check token count
+                # Log token count for large files — no skip needed since
+                # split_code_at_boundaries() handles any file size by
+                # splitting into ~2000-token chunks at logical boundaries.
                 token_count = count_tokens(content, embedder_type)
                 if token_count > MAX_EMBEDDING_TOKENS * 10:
-                    logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
-                    continue
+                    logger.info(
+                        f"Large code file {relative_path}: "
+                        f"{token_count} tokens "
+                        f"(will be split into ~{token_count // 2000} chunks)"
+                    )
 
                 doc = Document(
                     text=content,
@@ -194,9 +199,12 @@ def read_all_documents(
                 # Use safe_read_file for automatic encoding detection
                 content = safe_read_file(file_path)
 
-                # Check token count
+                # Check token count — doc files are split by
+                # _split_doc_text() so moderate sizes are fine.
+                # Skip only extremely large docs (likely auto-generated
+                # data files like vectors.txt, test fixtures, etc.)
                 token_count = count_tokens(content, embedder_type)
-                if token_count > MAX_EMBEDDING_TOKENS:
+                if token_count > MAX_EMBEDDING_TOKENS * 10:
                     logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
                     continue
 

@@ -94,7 +94,7 @@ class TextSplitterConfig(BaseModel):
 
 class LlmEnhanceConfig(BaseModel):
     """LLM-enhanced chunk processing configuration."""
-    enabled: bool = False
+    enabled: bool = True
     max_output_enhanced: int = 4096
     max_output_key_objects: int = 512
     max_context_window: int = 128000
