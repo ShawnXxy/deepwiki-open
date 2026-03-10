@@ -82,12 +82,15 @@ def build_wiki_structure_prompt(
     # Determine page count based on mode
     page_count = '8-12' if request.comprehensive else '4-6'
 
+    file_tree = request.file_tree or ''
+    readme = request.readme or ''
+
     # Fill in the template placeholders
     prompt = template.format(
         owner=owner,
         repo=repo,
-        file_tree=request.file_tree or '',
-        readme=request.readme or '',
+        file_tree=file_tree,
+        readme=readme,
         language_name=language_name,
         page_count=page_count
     )
@@ -540,29 +543,38 @@ async def handle_websocket_chat(websocket: WebSocket):
                 f"finish_reason={finish_reason}"
             )
 
-            # Handle content_filter finish reason
+            # Content filter finish reason — signal the frontend so it
+            # can handle truncated content (e.g. repair XML, use partial).
+            # (ref: handling_embedder_ref.md — log warning, skip & continue)
             if finish_reason == "content_filter":
                 logger.warning(
-                    "Response truncated by content filter. "
-                    f"Only {len(total_text)} chars received."
+                    "Response truncated by content filter "
+                    f"({len(total_text)} chars received). "
+                    "Sending WARNING marker to frontend."
                 )
-                error_msg = (
-                    "\n\n[CONTENT_FILTER_ERROR] "
-                    "Response truncated by Azure OpenAI "
-                    "content safety filter. "
-                    "Repository content may have triggered "
-                    "automated safety checks. "
-                    "Please try again or use fewer files."
-                )
-                await websocket.send_text(error_msg)
+                await websocket.send_text("\n[CONTENT_FILTER_WARNING]")
 
             await websocket.close()
         except Exception as e_azure:
             logger.error(f"Error with Azure AI API: {str(e_azure)}")
-            error_message = str(e_azure)
+            error_message = str(e_azure).lower()
 
+            # Check for content filter errors — signal frontend
+            # (ref: handling_embedder_ref.md pattern)
+            if ("content_filter" in error_message
+                    or "content_management_policy" in error_message
+                    or "ChatCompletionFailed" in type(e_azure).__name__):
+                logger.warning(
+                    f"Content filter triggered: {e_azure}. "
+                    "Sending WARNING marker to frontend."
+                )
+                try:
+                    await websocket.send_text("\n[CONTENT_FILTER_WARNING]")
+                except Exception:
+                    pass
+                await websocket.close()
             # Check for token limit errors
-            if ("maximum context length" in error_message or
+            elif ("maximum context length" in error_message or
                     "token limit" in error_message or
                     "too many tokens" in error_message):
                 logger.warning("Token limit exceeded, retrying without context")
@@ -626,20 +638,48 @@ async def _handle_fallback_request(
             api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM
         )
 
+        finish_reason = None
         async for chunk in fallback_response:
             choices = getattr(chunk, "choices", [])
             if len(choices) > 0:
-                delta = getattr(choices[0], "delta", None)
+                choice = choices[0]
+                if hasattr(choice, "finish_reason") and choice.finish_reason:
+                    finish_reason = choice.finish_reason
+                delta = getattr(choice, "delta", None)
                 if delta is not None:
                     text = getattr(delta, "content", None)
                     if text is not None:
                         await websocket.send_text(text)
+
+        if finish_reason == "content_filter":
+            logger.warning(
+                "Fallback response truncated by content filter. "
+                "Sending WARNING marker to frontend."
+            )
+            await websocket.send_text("\n[CONTENT_FILTER_WARNING]")
+
         await websocket.close()
     except Exception as e_fallback:
         logger.error(f"Error with Azure AI API fallback: {str(e_fallback)}")
-        error_msg = (
-            f"\nError with Azure AI API fallback: {str(e_fallback)}\n\n"
-            "Please check your Azure OpenAI configuration."
-        )
-        await websocket.send_text(error_msg)
-        await websocket.close()
+        error_message = str(e_fallback).lower()
+
+        # Content filter — signal frontend
+        if ("content_filter" in error_message
+                or "content_management_policy" in error_message
+                or "ChatCompletionFailed" in type(e_fallback).__name__):
+            logger.warning(
+                f"Content filter triggered in fallback: {e_fallback}. "
+                "Sending WARNING marker to frontend."
+            )
+            try:
+                await websocket.send_text("\n[CONTENT_FILTER_WARNING]")
+            except Exception:
+                pass
+            await websocket.close()
+        else:
+            error_msg = (
+                f"\nError with Azure AI API fallback: {str(e_fallback)}\n\n"
+                "Please check your Azure OpenAI configuration."
+            )
+            await websocket.send_text(error_msg)
+            await websocket.close()

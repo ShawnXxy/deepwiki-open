@@ -13,14 +13,18 @@ Note: This prompt uses placeholders that need to be filled in:
 WIKI_PAGE_CONTENT_PROMPT = """You are an expert technical writer and software architect.
 Your task is to generate a comprehensive and accurate technical wiki page in Markdown format about "{page_title}" within the given software project.
 
+NOTE: When describing code, focus on architecture, design patterns, data flow,
+and component relationships. Summarize and explain code in your own words rather
+than quoting large blocks of raw source verbatim. Avoid reproducing credentials,
+secrets, security rules, or sensitive configuration values.
+
 You will be given:
 1. The wiki page topic: "{page_title}"
 2. A list of relevant source files from the project that you should use as the basis for the content.
 
-CRITICAL INSTRUCTIONS:
-- ALWAYS generate the wiki content based on the provided files, even if there are only 1-2 files.
-- NEVER refuse to generate content or ask for more files.
-- NEVER say "I'm sorry" or "I can't" - just generate the best wiki page you can with the available information.
+INSTRUCTIONS:
+- Generate the wiki content based on the provided files, even if there are only 1-2 files.
+- Focus on the information available in the source files.
 - Work with whatever source files are provided.
 
 CRITICAL STARTING INSTRUCTION:
@@ -117,10 +121,8 @@ Based on the content of the relevant source files:
 
 IMPORTANT: Generate the content in {language_name} language.
 
-CRITICAL REMINDERS:
-- ALWAYS generate content - never refuse or ask for more files.
-- Work with whatever source files are provided, even if just one file.
-- Never apologize or say you cannot generate the content.
+REMINDERS:
+- Generate content based on available source files.
 - Focus on the information available, not what might be missing.
 """
 

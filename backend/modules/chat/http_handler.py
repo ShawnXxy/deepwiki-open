@@ -303,17 +303,45 @@ async def _azure_stream_generator(model, api_kwargs):
     try:
         logger.info("Making Azure AI API call")
         response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
+        total_chars = 0
+        finish_reason = None
         async for chunk in response:
             choices = getattr(chunk, "choices", [])
             if len(choices) > 0:
-                delta = getattr(choices[0], "delta", None)
+                choice = choices[0]
+                # Track finish_reason
+                if hasattr(choice, "finish_reason") and choice.finish_reason:
+                    finish_reason = choice.finish_reason
+                delta = getattr(choice, "delta", None)
                 if delta is not None:
                     text = getattr(delta, "content", None)
                     if text is not None:
+                        total_chars += len(text)
                         yield text
+
+        # Content filter finish_reason — signal the frontend
+        # (ref: handling_embedder_ref.md — log warning, skip & continue)
+        if finish_reason == "content_filter":
+            logger.warning(
+                "Response truncated by content filter "
+                f"({total_chars} chars received). "
+                "Sending WARNING marker to frontend."
+            )
+            yield "\n[CONTENT_FILTER_WARNING]"
     except Exception as e:
-        logger.error(f"Error with Azure AI API: {str(e)}")
-        yield f"\nError with Azure AI API: {str(e)}\n"
+        error_message = str(e).lower()
+        # Content filter — signal frontend (ref: handling_embedder_ref.md)
+        if ("content_filter" in error_message
+                or "content_management_policy" in error_message
+                or "ChatCompletionFailed" in type(e).__name__):
+            logger.warning(
+                f"Content filter triggered: {e}. "
+                "Sending WARNING marker to frontend."
+            )
+            yield "\n[CONTENT_FILTER_WARNING]"
+        else:
+            logger.error(f"Error with Azure AI API: {str(e)}")
+            yield f"\nError with Azure AI API: {str(e)}\n"
 
 
 async def _error_generator(message: str):

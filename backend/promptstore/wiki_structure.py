@@ -16,6 +16,12 @@ Note: These prompts use placeholders that need to be filled in:
 # Comprehensive wiki structure prompt (includes sections)
 WIKI_STRUCTURE_PROMPT = """Analyze this GitHub repository {owner}/{repo} and create a wiki structure for it.
 
+NOTE: The file tree and README below are provided as structural context only.
+Focus on file names, directory structure, and high-level descriptions.
+Do NOT reproduce or quote raw code, credentials, security rules,
+or sensitive content from the repository. Your task is purely to
+design a wiki table of contents.
+
 1. The complete file tree of the project:
 <file_tree>
 {file_tree}
@@ -105,6 +111,12 @@ CRITICAL VALIDATION RULES:
 
 # Concise wiki structure prompt (no sections, simpler structure)
 WIKI_STRUCTURE_CONCISE_PROMPT = """Analyze this GitHub repository {owner}/{repo} and create a wiki structure for it.
+
+NOTE: The file tree and README below are provided as structural context only.
+Focus on file names, directory structure, and high-level descriptions.
+Do NOT reproduce or quote raw code, credentials, security rules,
+or sensitive content from the repository. Your task is purely to
+design a wiki table of contents.
 
 1. The complete file tree of the project:
 <file_tree>

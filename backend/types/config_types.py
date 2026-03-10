@@ -92,11 +92,22 @@ class TextSplitterConfig(BaseModel):
     separators: Optional[Dict[str, str]] = None
 
 
+class LlmEnhanceConfig(BaseModel):
+    """LLM-enhanced chunk processing configuration."""
+    enabled: bool = False
+    max_output_enhanced: int = 4096
+    max_output_key_objects: int = 512
+    max_context_window: int = 128000
+
+
 class EmbedderConfig(BaseModel):
     """Embedder pipeline configuration from embedder.json."""
     embedder: EmbedderModelConfig
     retriever: RetrieverConfig
     text_splitter: TextSplitterConfig
+    llm_enhance: LlmEnhanceConfig = Field(
+        default_factory=LlmEnhanceConfig
+    )
 
 
 # ============================================================================

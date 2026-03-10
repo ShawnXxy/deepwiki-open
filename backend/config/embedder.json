@@ -13,5 +13,11 @@
     "split_by": "token",
     "chunk_size": 2000,
     "chunk_overlap": 200
+  },
+  "llm_enhance": {
+    "enabled": false,
+    "max_output_enhanced": 4096,
+    "max_output_key_objects": 512,
+    "max_context_window": 128000
   }
 }

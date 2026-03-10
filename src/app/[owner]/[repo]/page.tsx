@@ -354,6 +354,11 @@ export default function RepoWikiPage() {
   // Track last checkpoint save time to avoid too-frequent saves
   const lastCheckpointTime = useRef<number>(0);
   const CHECKPOINT_INTERVAL_MS = 10000; // Save checkpoint at most every 10 seconds
+
+  // Keepalive worker ref — prevents browser from freezing the tab
+  // during long wiki generation (embedding + page generation).
+  // Web Workers are not throttled by background-tab rules.
+  const keepAliveWorkerRef = useRef<Worker | null>(null);
   
   // Track if we're resuming from a partial cache
   const [isResumingFromPartial, setIsResumingFromPartial] = useState(false);
@@ -363,6 +368,38 @@ export default function RepoWikiPage() {
   useEffect(() => {
     progressRef.current = progress;
   }, [progress]);
+
+  // Keepalive worker: prevents browser from freezing/suspending the tab
+  // during long-running wiki generation (embedding can take 30+ minutes).
+  // A Web Worker's setInterval is NOT throttled by background-tab rules;
+  // its postMessage wakes up the main thread's event loop.
+  useEffect(() => {
+    if (!isLoading) {
+      // Not loading — terminate any existing keepalive worker
+      if (keepAliveWorkerRef.current) {
+        keepAliveWorkerRef.current.terminate();
+        keepAliveWorkerRef.current = null;
+      }
+      return;
+    }
+    // Start a keepalive worker when wiki generation is in progress
+    try {
+      const code = 'setInterval(function(){postMessage(0)},15000)';
+      const blob = new Blob([code], { type: 'text/javascript' });
+      const url = URL.createObjectURL(blob);
+      const worker = new Worker(url);
+      worker.onmessage = () => {}; // Receiving messages keeps main thread alive
+      keepAliveWorkerRef.current = worker;
+      return () => {
+        worker.terminate();
+        URL.revokeObjectURL(url);
+        keepAliveWorkerRef.current = null;
+      };
+    } catch {
+      // Web Workers may be unavailable (e.g., SSR, restrictive CSP)
+      console.warn('Could not create keepalive worker');
+    }
+  }, [isLoading]);
 
   // Sync isComprehensiveView when URL params change (useState only uses initial value once)
   useEffect(() => {
@@ -679,14 +716,18 @@ export default function RepoWikiPage() {
 `You are an expert technical writer and software architect.
 Your task is to generate a comprehensive and accurate technical wiki page in Markdown format about "${page.title}" within the given software project.
 
+NOTE: When describing code, focus on architecture, design patterns, data flow,
+and component relationships. Summarize and explain code in your own words rather
+than quoting large blocks of raw source verbatim. Avoid reproducing credentials,
+secrets, security rules, or sensitive configuration values.
+
 You will be given:
 1. The wiki page topic: "${page.title}"
 2. A list of relevant source files from the project that you should use as the basis for the content.
 
-CRITICAL INSTRUCTIONS:
-- ALWAYS generate the wiki content based on the provided files, even if there are only 1-2 files.
-- NEVER refuse to generate content or ask for more files.
-- NEVER say "I'm sorry" or "I can't" - just generate the best wiki page you can with the available information.
+INSTRUCTIONS:
+- Generate the wiki content based on the provided files, even if there are only 1-2 files.
+- Focus on the information available in the source files.
 - Work with whatever source files are provided.
 
 CRITICAL STARTING INSTRUCTION:
@@ -780,10 +821,8 @@ IMPORTANT: Generate the content in ${language === 'en' ? 'English' :
             language === "ru" ? "Русский (Russian)" :
             'English'} language.
 
-CRITICAL REMINDERS:
-- ALWAYS generate content - never refuse or ask for more files.
-- Work with whatever source files are provided, even if just one file.
-- Never apologize or say you cannot generate the content.
+REMINDERS:
+- Generate content based on available source files.
 - Focus on the information available, not what might be missing.
 `;
 
@@ -927,6 +966,25 @@ CRITICAL REMINDERS:
 
         // Clean up markdown delimiters
         content = content.replace(/^```markdown\s*/i, '').replace(/```\s*$/i, '');
+
+        // Strip content filter warning — use the partial content that was received
+        // and append a visible note so the user knows the page was truncated
+        if (content.includes('[CONTENT_FILTER_WARNING]')) {
+          logger.warn('Page content was partially truncated by content filter', { page: page.title, contentLength: content.length });
+          content = content.replace(/\n*\[CONTENT_FILTER_WARNING][^]*/m, '');
+          // Check if the remaining content is meaningful (more than just the <details> header)
+          // Strip the <details>...</details> block to check actual content length
+          const withoutDetails = content.replace(/<details>[\s\S]*?<\/details>/i, '').trim();
+          if (withoutDetails.length < 100) {
+            // Near-empty page — show a meaningful placeholder
+            content = `# ${page.title}\n\n` +
+              '> This page could not be generated due to Azure OpenAI content filtering. ' +
+              'The source files for this topic may contain terms that triggered automated safety checks. ' +
+              'This does not indicate any issue with the source code itself.\n';
+          } else {
+            content += '\n\n---\n\n> **Note:** This page was partially truncated by Azure OpenAI content filtering. The content above may be incomplete.\n';
+          }
+        }
 
         logger.info('Received content', { page: page.title, contentLength: content.length });
         
@@ -1208,13 +1266,13 @@ CRITICAL REMINDERS:
          throw new Error('The specified Ollama embedding model was not found. Please ensure the model is installed locally or select a different embedding model in the configuration.');
        }
 
-      // Handle content filter errors from Azure OpenAI
-      if (responseText.includes('[CONTENT_FILTER_ERROR]')) {
-        throw new Error(
-          'Azure OpenAI content safety filter truncated the response. ' +
-          'The repository content may have triggered automated safety checks. ' +
-          'Please try again — content filter triggers can be intermittent.'
-        );
+      // Handle content filter warning — strip marker, keep partial content
+      // The backend sends [CONTENT_FILTER_WARNING] when finish_reason=content_filter
+      let wasContentFiltered = false;
+      if (responseText.includes('[CONTENT_FILTER_WARNING]')) {
+        console.warn('Wiki structure response was partially truncated by content filter');
+        wasContentFiltered = true;
+        responseText = responseText.replace(/\n*\[CONTENT_FILTER_WARNING][^]*/m, '');
       }
 
       // Clean up markdown delimiters
@@ -1232,7 +1290,41 @@ CRITICAL REMINDERS:
       console.log('Wiki structure response (last 500 chars):', responseText.substring(responseText.length - 500));
 
       // Extract wiki structure from response
-      const xmlMatch = responseText.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
+      let xmlMatch = responseText.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
+
+      // If XML is incomplete (truncated by content filter), attempt repair
+      if (!xmlMatch && responseText.includes('<wiki_structure>')) {
+        console.warn('Incomplete wiki_structure XML detected, attempting repair...');
+        // Close any open tags so the XML becomes parseable.
+        // Strategy: append closing tags for all unclosed elements.
+        let repaired = responseText;
+        // Collect open tags in order (we need to close them in reverse)
+        const openTagStack: string[] = [];
+        const tagRegex = /<(\/?)([\w_]+)(?:\s[^>]*)?>/g;
+        let m;
+        while ((m = tagRegex.exec(repaired)) !== null) {
+          const isClosing = m[1] === '/';
+          const tagName = m[2];
+          if (isClosing) {
+            // Pop from stack if matching
+            const idx = openTagStack.lastIndexOf(tagName);
+            if (idx !== -1) openTagStack.splice(idx, 1);
+          } else {
+            openTagStack.push(tagName);
+          }
+        }
+        // Close remaining open tags in reverse order
+        for (let i = openTagStack.length - 1; i >= 0; i--) {
+          repaired += `</${openTagStack[i]}>`;
+        }
+        xmlMatch = repaired.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
+        if (xmlMatch) {
+          console.log('XML repair successful — extracted partial wiki structure');
+        } else {
+          console.warn('XML repair did not produce a valid wiki_structure block');
+        }
+      }
+
       if (!xmlMatch) {
         console.error('Full response text:', responseText);
         // Provide a more specific error message based on response content
@@ -1468,6 +1560,20 @@ CRITICAL REMINDERS:
         sections,
         rootSections
       };
+
+      // If wiki structure was content-filtered, log and warn about fewer pages
+      if (wasContentFiltered) {
+        const expectedMin = isComprehensiveView ? 8 : 5;
+        if (pages.length < expectedMin) {
+          console.warn(
+            `Wiki structure was truncated by content filter: got ${pages.length} pages (expected ~${expectedMin}). ` +
+            'Proceeding with available pages.'
+          );
+        }
+        // Update description to note truncation
+        wikiStructure.description = (wikiStructure.description || '') +
+          ' (Note: Wiki structure was partially truncated by content filtering. Some pages may be missing.)';
+      }
 
       setWikiStructure(wikiStructure);
       setCurrentPageId(pages.length > 0 ? pages[0].id : undefined);

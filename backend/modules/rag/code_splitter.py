@@ -241,7 +241,12 @@ def _detect_section_type(text: str) -> str:
     # Check for constant/variable declarations
     if any(line.strip().startswith(('const ', 'let ', 'var ',
                                     'export const ', 'export let ',
-                                    'UPPER_CASE', 'final '))
+                                    'final '))
+           for line in first_lines):
+        return 'declaration'
+
+    # Check for uppercase constant assignments (e.g. MAX_RETRIES = 5)
+    if any(re.match(r'^[A-Z][A-Z0-9_]+ *=', line.strip())
            for line in first_lines):
         return 'declaration'
 
@@ -550,6 +555,9 @@ def split_and_enrich_documents(
         file_path = doc.meta_data.get('file_path', 'unknown')
         is_code = doc.meta_data.get('is_code', False)
 
+        # Collect chunks for this file (for neighbor context)
+        file_chunks = []
+
         if is_code:
             # Code-aware splitting
             raw_chunks = split_code_at_boundaries(
@@ -583,10 +591,24 @@ def split_and_enrich_documents(
                         'total_chunks_in_file': len(raw_chunks),
                     },
                 )
-                all_chunks.append(chunk_doc)
+                file_chunks.append(chunk_doc)
         else:
-            # Documentation files: split by paragraphs/sections
+            # Documentation / configuration files: split by paragraphs
             doc_chunks = _split_doc_text(doc.text, target_tokens)
+
+            # Distinguish config files from documentation per design
+            config_extensions = {
+                'json', 'yaml', 'yml', 'toml', 'ini',
+            }
+            ext = (
+                file_path.rsplit('.', 1)[-1].lower()
+                if '.' in file_path else ''
+            )
+            file_section_type = (
+                'configuration' if ext in config_extensions
+                else 'documentation'
+            )
+
             for i, chunk_text in enumerate(doc_chunks):
                 enriched_text = build_enriched_doc_text(
                     chunk_text, file_path
@@ -596,7 +618,7 @@ def split_and_enrich_documents(
                     meta_data={
                         **doc.meta_data,
                         'raw_chunk_text': chunk_text,
-                        'section_type': 'documentation',
+                        'section_type': file_section_type,
                         'start_line': 0,
                         'end_line': 0,
                         'functions': [],
@@ -605,13 +627,51 @@ def split_and_enrich_documents(
                         'total_chunks_in_file': len(doc_chunks),
                     },
                 )
-                all_chunks.append(chunk_doc)
+                file_chunks.append(chunk_doc)
+
+        # Populate neighbor chunk context for LLM enhancement
+        _attach_neighbor_context(file_chunks, neighbor_count=2)
+        all_chunks.extend(file_chunks)
 
     logger.info(
         f"Split {len(documents)} files into {len(all_chunks)} "
         f"enriched chunks"
     )
     return all_chunks
+
+
+def _attach_neighbor_context(
+    chunks: List[Document],
+    neighbor_count: int = 2,
+) -> None:
+    """
+    Attach previous/next chunk raw text to each chunk's metadata.
+
+    This provides surrounding context for LLM-enhanced chunk processing.
+    Each chunk receives up to `neighbor_count` previous and next chunks'
+    raw text as lists in metadata.
+
+    Args:
+        chunks: List of Document objects from a single file (in order)
+        neighbor_count: Number of neighbors to include on each side
+    """
+    for i, chunk in enumerate(chunks):
+        # Gather raw text from preceding chunks
+        prev_texts = []
+        for j in range(max(0, i - neighbor_count), i):
+            raw = chunks[j].meta_data.get('raw_chunk_text', '')
+            if raw:
+                prev_texts.append(raw)
+
+        # Gather raw text from following chunks
+        next_texts = []
+        for j in range(i + 1, min(len(chunks), i + 1 + neighbor_count)):
+            raw = chunks[j].meta_data.get('raw_chunk_text', '')
+            if raw:
+                next_texts.append(raw)
+
+        chunk.meta_data['previous_chunks'] = prev_texts
+        chunk.meta_data['next_chunks'] = next_texts
 
 
 def _split_doc_text(
