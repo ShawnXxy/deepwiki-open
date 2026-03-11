@@ -68,4 +68,22 @@ class ChatCompletionRequest(BaseModel):
         None, description="README content for wiki structure generation"
     )
     comprehensive: Optional[bool] = Field(
-        True, description="If True, use comprehensive wiki prompt with sections"    )
+        True, description="If True, use comprehensive wiki prompt with sections"
+    )
+
+    # Wiki page generation fields
+    # When wiki_page_request=True, backend uses file-path-aware retrieval
+    # and constructs the page prompt from promptstore templates
+    wiki_page_request: Optional[bool] = Field(
+        False, description="If True, generate wiki page with "
+        "file-path-aware retrieval"
+    )
+    page_title: Optional[str] = Field(
+        None, description="Title of the wiki page to generate"
+    )
+    page_file_paths: Optional[List[str]] = Field(
+        None, description="Relevant source file paths for the page"
+    )
+    page_related_pages: Optional[List[str]] = Field(
+        None, description="IDs of related wiki pages"
+    )

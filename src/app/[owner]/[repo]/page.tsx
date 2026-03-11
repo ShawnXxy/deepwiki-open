@@ -834,7 +834,12 @@ REMINDERS:
           messages: [{
             role: 'user',
             content: promptContent
-          }]
+          }],
+          // Enable file-path-aware retrieval for wiki page generation
+          wiki_page_request: true,
+          page_title: page.title,
+          page_file_paths: page.filePaths,
+          page_related_pages: page.relatedPages || [],
         };
 
         // Add tokens if available - use effectiveToken to handle race condition

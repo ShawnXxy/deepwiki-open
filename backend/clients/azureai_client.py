@@ -100,7 +100,6 @@ def parse_stream_response(completion: ChatCompletionChunk) -> str:
 def handle_streaming_response(generator: Stream[ChatCompletionChunk]):
     r"""Handle the streaming response."""
     for completion in generator:
-        log.debug(f"Raw chunk completion: {completion}")
         parsed_content = parse_stream_response(completion)
         yield parsed_content
 
@@ -513,7 +512,7 @@ class AzureAIClient(ModelClient):
         completion: Union[ChatCompletion, Generator[ChatCompletionChunk, None, None]],
     ) -> "GeneratorOutput":
         """Parse the completion, and put it into the raw_response."""
-        log.debug(f"completion: {completion}, parser: {self.chat_completion_parser}")
+        log.debug(f"completion type: {type(completion).__name__}, parser: {self.chat_completion_parser.__name__ if self.chat_completion_parser else None}")
         try:
             data = self.chat_completion_parser(completion)
             usage = self.track_completion_usage(completion)
@@ -637,22 +636,20 @@ class AzureAIClient(ModelClient):
         """
         kwargs is the combined input and model_kwargs.  Support streaming call.
         """
-        # Safely log api_kwargs without special characters that cause encoding
+        # Log api_kwargs summary without full message/input content
         try:
-            safe_kwargs = {}
+            debug_kwargs = {}
             for k, v in api_kwargs.items():
-                if k == 'input':
+                if k == 'messages':
+                    debug_kwargs[k] = f"[{len(v)} messages]"
+                elif k == 'input':
                     if isinstance(v, list):
-                        safe_kwargs[k] = f"[{len(v)} texts]"
+                        debug_kwargs[k] = f"[{len(v)} texts]"
                     else:
-                        str_v = str(v)
-                        if len(str_v) > 100:
-                            safe_kwargs[k] = str_v[:100] + "..."
-                        else:
-                            safe_kwargs[k] = v
+                        debug_kwargs[k] = f"[{len(str(v))} chars]"
                 else:
-                    safe_kwargs[k] = v
-            log.debug(f"api_kwargs: {safe_kwargs}")
+                    debug_kwargs[k] = v
+            log.debug(f"api_kwargs: {debug_kwargs}")
         except Exception as e:
             log.debug(f"api_kwargs logging failed: {str(e)}")
         

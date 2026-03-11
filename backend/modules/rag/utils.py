@@ -37,7 +37,7 @@ def safe_read_file(file_path: str) -> str:
         try:
             with open(file_path, 'r', encoding=encoding) as f:
                 return f.read()
-        except UnicodeDecodeError:
+        except (UnicodeDecodeError, UnicodeError):
             continue
         except Exception as e:
             # For non-encoding errors, raise immediately

@@ -251,9 +251,13 @@ IMPORTANT FORMATTING RULES:
         logger.info(f"Using {len(self.transformed_docs)} documents with valid embeddings for retrieval")
 
         try:
-            # Use the embedder for retrieval
+            # Filter out internal keys not accepted by FAISSRetriever
+            faiss_kwargs = {
+                k: v for k, v in configs["retriever"].items()
+                if k in ("top_k",)
+            }
             self.retriever = FAISSRetriever(
-                **configs["retriever"],
+                **faiss_kwargs,
                 embedder=self.embedder,
                 documents=self.transformed_docs,
                 document_map_func=lambda doc: doc.vector,
@@ -310,6 +314,75 @@ IMPORTANT FORMATTING RULES:
             # Create error response
             error_response = RAGAnswer(
                 rationale="Error occurred while processing the query.",
-                answer="I apologize, but I encountered an error while processing your question. Please try again or rephrase your question."
+                answer="I apologize, but I encountered an error while "
+                "processing your question. Please try again or "
+                "rephrase your question."
             )
             return error_response, []
+
+    def call_with_file_filter(
+        self,
+        query: str,
+        file_paths: List[str],
+        top_k: int = None,
+        language: str = "en",
+    ) -> Tuple[List]:
+        """
+        Retrieve chunks with priority for specific files.
+
+        Strategy:
+        1. Collect ALL chunks from the declared relevant files
+        2. Run normal semantic search for supplementary context
+        3. Merge: file-filtered chunks first, then semantic (deduplicated)
+
+        Args:
+            query: The search query (typically a page title)
+            file_paths: List of relevant file paths to prioritize
+            top_k: Override for semantic search top_k (default: use config)
+            language: Language code
+
+        Returns:
+            Retrieved documents with file-filtered priority
+        """
+        try:
+            # Step 1: Get ALL chunks from declared relevant files
+            file_chunks = [
+                doc for doc in self.transformed_docs
+                if doc.meta_data.get('file_path', '') in file_paths
+            ]
+            logger.info(
+                f"[RAG] File-filtered retrieval: {len(file_chunks)} "
+                f"chunks from {len(file_paths)} declared files"
+            )
+
+            # Step 2: Semantic search for supplementary context
+            original_top_k = self.retriever.top_k
+            if top_k:
+                self.retriever.top_k = top_k
+            try:
+                semantic_results = self.retriever(query)
+            finally:
+                self.retriever.top_k = original_top_k
+
+            semantic_docs = [
+                self.transformed_docs[idx]
+                for idx in semantic_results[0].doc_indices
+            ]
+
+            # Step 3: Merge — file chunks first, then semantic (deduplicated)
+            seen_ids = {id(doc) for doc in file_chunks}
+            for doc in semantic_docs:
+                if id(doc) not in seen_ids:
+                    file_chunks.append(doc)
+                    seen_ids.add(id(doc))
+
+            logger.info(
+                f"[RAG] Merged result: {len(file_chunks)} total chunks"
+            )
+            semantic_results[0].documents = file_chunks
+            return semantic_results
+
+        except Exception as e:
+            logger.error(f"Error in file-filtered RAG call: {str(e)}")
+            # Fallback to regular retrieval
+            return self.call(query, language)

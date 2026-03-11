@@ -82,6 +82,7 @@ class EmbedderModelConfig(BaseModel):
 class RetrieverConfig(BaseModel):
     """Retriever configuration for RAG."""
     top_k: int = 20
+    top_k_wiki: int = 40
 
 
 class TextSplitterConfig(BaseModel):
@@ -92,22 +93,11 @@ class TextSplitterConfig(BaseModel):
     separators: Optional[Dict[str, str]] = None
 
 
-class LlmEnhanceConfig(BaseModel):
-    """LLM-enhanced chunk processing configuration."""
-    enabled: bool = True
-    max_output_enhanced: int = 4096
-    max_output_key_objects: int = 512
-    max_context_window: int = 128000
-
-
 class EmbedderConfig(BaseModel):
     """Embedder pipeline configuration from embedder.json."""
     embedder: EmbedderModelConfig
     retriever: RetrieverConfig
     text_splitter: TextSplitterConfig
-    llm_enhance: LlmEnhanceConfig = Field(
-        default_factory=LlmEnhanceConfig
-    )
 
 
 # ============================================================================

@@ -391,12 +391,29 @@ async def handle_websocket_chat(websocket: WebSocket):
                 rag_query = query
                 if request.filePath:
                     rag_query = f"Contexts related to {request.filePath}"
-                    logger.info(f"Modified RAG query for file: {request.filePath}")
+                    logger.info(
+                        f"Modified RAG query for file: {request.filePath}"
+                    )
 
                 try:
-                    retrieved_documents = request_rag(
-                        rag_query, language=request.language
-                    )
+                    # Use file-path-aware retrieval for wiki page generation
+                    if (request.wiki_page_request
+                            and request.page_file_paths):
+                        from backend.config import get_embedder_config_obj
+                        wiki_top_k = get_embedder_config_obj(
+                        ).retriever.top_k_wiki
+                        retrieved_documents = (
+                            request_rag.call_with_file_filter(
+                                query=request.page_title or rag_query,
+                                file_paths=request.page_file_paths,
+                                top_k=wiki_top_k,
+                                language=request.language,
+                            )
+                        )
+                    else:
+                        retrieved_documents = request_rag(
+                            rag_query, language=request.language
+                        )
                     context_text = format_context_text(retrieved_documents)
                     if not context_text:
                         logger.warning("No documents retrieved from RAG")

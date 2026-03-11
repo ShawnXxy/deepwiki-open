@@ -629,8 +629,6 @@ def split_and_enrich_documents(
                 )
                 file_chunks.append(chunk_doc)
 
-        # Populate neighbor chunk context for LLM enhancement
-        _attach_neighbor_context(file_chunks, neighbor_count=2)
         all_chunks.extend(file_chunks)
 
     logger.info(
@@ -638,40 +636,6 @@ def split_and_enrich_documents(
         f"enriched chunks"
     )
     return all_chunks
-
-
-def _attach_neighbor_context(
-    chunks: List[Document],
-    neighbor_count: int = 2,
-) -> None:
-    """
-    Attach previous/next chunk raw text to each chunk's metadata.
-
-    This provides surrounding context for LLM-enhanced chunk processing.
-    Each chunk receives up to `neighbor_count` previous and next chunks'
-    raw text as lists in metadata.
-
-    Args:
-        chunks: List of Document objects from a single file (in order)
-        neighbor_count: Number of neighbors to include on each side
-    """
-    for i, chunk in enumerate(chunks):
-        # Gather raw text from preceding chunks
-        prev_texts = []
-        for j in range(max(0, i - neighbor_count), i):
-            raw = chunks[j].meta_data.get('raw_chunk_text', '')
-            if raw:
-                prev_texts.append(raw)
-
-        # Gather raw text from following chunks
-        next_texts = []
-        for j in range(i + 1, min(len(chunks), i + 1 + neighbor_count)):
-            raw = chunks[j].meta_data.get('raw_chunk_text', '')
-            if raw:
-                next_texts.append(raw)
-
-        chunk.meta_data['previous_chunks'] = prev_texts
-        chunk.meta_data['next_chunks'] = next_texts
 
 
 def _split_doc_text(

@@ -15,8 +15,7 @@ from adalflow.components.data_process import TextSplitter, ToEmbeddings
 from adalflow.core.db import LocalDB
 
 from backend.config import (
-    configs, get_file_filters_config, get_embedder_config_obj,
-    get_azure_ai_client, get_azure_deployment_name,
+    configs, get_file_filters_config,
 )
 from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
 from backend.clients.vector_storage import get_vector_storage
@@ -24,7 +23,6 @@ from backend.types import FileFilter
 from backend.tools.embedder import get_embedder
 from backend.modules.rag.utils import safe_read_file, count_tokens, MAX_EMBEDDING_TOKENS
 from backend.modules.rag.code_splitter import split_and_enrich_documents
-from backend.modules.rag.chunk_enhancer import llm_enhance_chunks
 
 logger = logging.getLogger(__name__)
 
@@ -400,30 +398,7 @@ def transform_documents_and_save_as_json(
         f"{len(enriched_chunks)} enriched chunks"
     )
 
-    # Step 2: Optional LLM-enhanced chunk processing
-    # When enabled, uses LLM calls to complete partial code constructs
-    # and extract key references for richer embedding quality
-    embedder_config = get_embedder_config_obj()
-    llm_cfg = embedder_config.llm_enhance
-    if llm_cfg.enabled:
-        logger.info("[Vec] LLM enhancement enabled — enhancing chunks...")
-        client = get_azure_ai_client()
-        deployment = get_azure_deployment_name()
-        enriched_chunks = llm_enhance_chunks(
-            chunks=enriched_chunks,
-            client=client,
-            deployment=deployment,
-            max_context_window=llm_cfg.max_context_window,
-            max_output_enhanced=llm_cfg.max_output_enhanced,
-            max_output_key_objects=llm_cfg.max_output_key_objects,
-            repo_description=f"{repo_name} ({branch})",
-        )
-        logger.info(
-            f"[Vec] LLM enhancement complete: "
-            f"{len(enriched_chunks)} chunks remain"
-        )
-
-    # Step 3: Embed the enriched chunks (splitting already done)
+    # Step 2: Embed the enriched chunks (splitting already done)
     embed_pipeline = prepare_embed_only_pipeline()
 
     db = LocalDB()

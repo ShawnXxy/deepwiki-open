@@ -7,16 +7,12 @@
     }
   },
   "retriever": {
-    "top_k": 12
+    "top_k": 12,
+    "top_k_wiki": 40
   },
   "text_splitter": {
     "split_by": "token",
     "chunk_size": 2000,
     "chunk_overlap": 200
-  },
-  "llm_enhance": {
-    "max_output_enhanced": 4096,
-    "max_output_key_objects": 512,
-    "max_context_window": 128000
   }
 }

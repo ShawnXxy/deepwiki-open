@@ -4,17 +4,14 @@
 
 This pipeline converts a code repository into searchable vector embeddings for RAG-based wiki generation. It uses regex-based structural analysis (no AST parsers) to split code at logical boundaries and enrich each chunk with file context before embedding.
 
-The pipeline has two phases:
-- **Phase 1** (always on): Regex-based splitting and structural enrichment — zero LLM cost.
-- **Phase 2** (on by default): LLM-enhanced chunk completion and reference extraction — 2 LLM calls per code chunk.
+The pipeline uses boundary-aware splitting and structural enrichment with zero LLM cost during indexing. Quality investment is made at generation time (file-path-aware retrieval, higher top_k) rather than at embedding time.
 
 ## Modules
 
 | File | Role |
 |------|------|
-| `document.py` | Reads source files, orchestrates the full pipeline (split → enhance → embed → save) |
+| `document.py` | Reads source files, orchestrates the pipeline (split → embed → save) |
 | `code_splitter.py` | Boundary-aware splitting, structural metadata extraction, enrichment |
-| `chunk_enhancer.py` | Optional LLM enhancement: chunk completion + key reference extraction |
 | `service.py` | Formats retrieved chunks with structural headers for LLM context |
 | `wiki_page.py` | Prompt instructions for the LLM to interpret structural metadata |
 
@@ -22,10 +19,8 @@ The pipeline has two phases:
 
 ```
 read_documents()                      # Read all source files (no size limit for code)
-  → split_and_enrich_documents()      # Phase 1: split + enrich
-      → _attach_neighbor_context()    # Add ±2 neighbor chunks per chunk
-  → llm_enhance_chunks()             # Phase 2 (if enabled): LLM enhancement
-  → prepare_embed_only_pipeline()    # Embed pre-split chunks (no re-splitting)
+  → split_and_enrich_documents()      # Split + enrich with structural metadata
+  → prepare_embed_only_pipeline()     # Embed pre-split chunks (no re-splitting)
   → Save as JSON vector files
 ```
 
@@ -99,36 +94,6 @@ Documentation files get a lighter header via `build_enriched_doc_text`:
 <original text>
 ```
 
-### Step 6 — Attach Neighbor Context (`code_splitter.py: _attach_neighbor_context`)
-
-After all chunks for a file are created, each chunk receives the raw text of its ±2 neighboring chunks (same file) in `previous_chunks` and `next_chunks`. This context is used by the LLM enhancement step to understand how each chunk fits within the file.
-
-## Phase 2: LLM-Enhanced (On by Default)
-
-> Module: `chunk_enhancer.py`
-> Reference pattern: `handling_embedder_ref.md`
-> Disable: set `embedder.json` → `llm_enhance.enabled: false`
-
-Each **code chunk** (documentation chunks are skipped) receives two LLM calls:
-
-### Call 1 — Enhanced Context (`_call_enhanced_context`)
-
-**Input**: The chunk's code (as `SNIPPET`) + neighboring chunks (as `CONTEXT`) + repo description.
-
-**Task**: Complete partial code snippets into full logical blocks (e.g., wrap a code fragment in its enclosing function/class). Return a description first, then the enhanced code.
-
-**Token budget**: `max_context_window - max_output_tokens * 2` reserved for input. If context exceeds the budget, outer neighbor chunks are alternately removed (first the oldest previous, then the farthest next) until it fits.
-
-### Call 2 — Key Object Extraction (`_call_key_objects`)
-
-**Input**: The enhanced code from Call 1.
-
-**Task**: Identify up to 10 key codebase-specific references (classes, functions, modules) and output as JSON `[{name, description}]`.
-
-### Error Handling
-
-Content filter errors are caught per-chunk. If Call 1 fails, the chunk is returned unenhanced (not dropped). If Call 2 fails, the enhanced content is kept without key objects. This ensures no chunks are lost to content filtering. (See `handling_embedder_ref.md` for the reference pattern.)
-
 ## Output
 
 Each chunk is saved as a JSON vector file with metadata:
@@ -146,18 +111,53 @@ Each chunk is saved as a JSON vector file with metadata:
     'classes': List[str],          # Detected class names
     'chunk_index': int,            # Position within file's chunks
     'total_chunks_in_file': int,
-    'previous_chunks': List[str],  # ±2 neighbor raw texts
-    'next_chunks': List[str],
-    # Phase 2 only (when llm_enhance enabled):
-    'raw_content': str,            # Pre-enhancement text
-    'key_external_objects': str,   # JSON [{name, description}]
-    'llm_enhanced': bool,
 }
 ```
 
 ## Downstream Usage
 
-**RAG retrieval** (`service.py`): Retrieved chunks are formatted with structural headers for the LLM:
+### File-Path-Aware Retrieval (`retriever.py: call_with_file_filter`)
+
+Wiki page generation uses a two-tier retrieval strategy instead of blind semantic search.
+
+**Why:** The wiki structure prompt already identifies the most relevant source files per page in `WikiPage.filePaths`. Using the page title as a bare RAG query produces poor retrieval — "Dependency Injection System" won't match code containing `Depends`, `solve_dependencies`, etc. File-path-aware retrieval exploits the known-relevant file list.
+
+**Algorithm:**
+
+```
+Input: query (page title), file_paths (declared relevant files), top_k_wiki (40)
+
+Step 1 — File-filtered collection:
+  For each doc in transformed_docs:
+    if doc.file_path IN file_paths → add to file_chunks[]
+  
+  Result: ALL chunks from declared relevant files (complete file context)
+
+Step 2 — Semantic supplementation:
+  Run FAISS similarity search on query with top_k=top_k_wiki
+  For each result not already in file_chunks → append
+
+Step 3 — Return merged list (file chunks first, then semantic)
+```
+
+**Why file chunks first:** When the wiki generation LLM receives all chunks from a file in order, it effectively sees the entire file — function definitions in context, imports at the top, class structure intact. This is strictly more powerful than the ±2 neighbor window previously used by chunk_enhancer, because:
+
+1. The context reaches the **generation LLM** (which writes the wiki page), not just the embedding LLM
+2. The window is the **entire file**, not just ±2 chunks (~4K tokens)
+3. It costs **zero extra LLM calls** — just a metadata filter over already-loaded documents
+
+**Fallback:** If `call_with_file_filter` fails for any reason, it falls back to standard `call()` (blind semantic search with default top_k).
+
+**Configuration:**
+
+| Parameter | Config File | Default | Purpose |
+|-----------|------------|---------|---------|
+| `top_k` | `embedder.json` | 12 | Semantic search depth for interactive chat |
+| `top_k_wiki` | `embedder.json` | 40 | Semantic search depth for wiki page generation |
+
+### Context Formatting (`service.py: format_context_text`)
+
+Retrieved chunks are grouped by file and formatted with structural headers for the LLM:
 
 ```
 ## File Path: src/rag/retriever.py
