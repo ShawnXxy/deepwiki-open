@@ -32,6 +32,37 @@ DEFAULT_MAX_OUTPUT_ENHANCED = 4096
 DEFAULT_MAX_OUTPUT_KEY_OBJECTS = 512
 
 
+def _is_reasoning_model(deployment: str) -> bool:
+    """Check if deployment is an o-series reasoning model (o1, o3, o4, etc.)."""
+    return (
+        deployment.startswith("o")
+        and len(deployment) > 1
+        and deployment[1].isdigit()
+    )
+
+
+def _build_api_kwargs(
+    deployment: str,
+    messages: list,
+    max_output_tokens: int,
+    temperature: float = 0.0,
+) -> dict:
+    """Build api_kwargs with correct token parameter for the model."""
+    kwargs = {
+        "model": deployment,
+        "messages": messages,
+    }
+    if _is_reasoning_model(deployment):
+        # o-series models require max_completion_tokens, not max_tokens
+        # and only support temperature=1.0
+        kwargs["max_completion_tokens"] = max_output_tokens
+        kwargs["temperature"] = 1.0
+    else:
+        kwargs["max_tokens"] = max_output_tokens
+        kwargs["temperature"] = temperature
+    return kwargs
+
+
 def llm_enhance_chunks(
     chunks: List[Document],
     client,
@@ -267,12 +298,9 @@ def _call_enhanced_context(
 
     try:
         response = client.call(
-            api_kwargs={
-                "model": deployment,
-                "messages": messages,
-                "max_tokens": max_output_tokens,
-                "temperature": 0.0,
-            },
+            api_kwargs=_build_api_kwargs(
+                deployment, messages, max_output_tokens,
+            ),
             model_type=ModelType.LLM,
         )
         return _extract_response_text(response)
@@ -324,12 +352,9 @@ def _call_key_objects(
 
     try:
         response = client.call(
-            api_kwargs={
-                "model": deployment,
-                "messages": messages,
-                "max_tokens": max_output_tokens,
-                "temperature": 0.0,
-            },
+            api_kwargs=_build_api_kwargs(
+                deployment, messages, max_output_tokens,
+            ),
             model_type=ModelType.LLM,
         )
         return _extract_response_text(response)
