@@ -306,9 +306,10 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
         setTimeout(() => mermaid.contentLoaded(), 50);
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
-        logger.error('Mermaid rendering error', {
-          error: errorMsg,
-          chart: chart.substring(0, 500)
+        // Use warn instead of error — Mermaid syntax issues are expected
+        // and handled gracefully in the UI with a fallback display.
+        logger.warn('Mermaid rendering issue', {
+          chart: chart.substring(0, 200)
         });
 
         if (isMounted) {

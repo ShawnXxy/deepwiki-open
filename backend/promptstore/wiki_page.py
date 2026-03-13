@@ -18,6 +18,11 @@ and component relationships. Summarize and explain code in your own words rather
 than quoting large blocks of raw source verbatim. Avoid reproducing credentials,
 secrets, security rules, or sensitive configuration values.
 
+CONTENT SAFETY: If source code contains informal, slang, or potentially
+offensive terms in identifiers, comments, or test names, do NOT reproduce
+them verbatim. Describe their purpose using professional language instead.
+This applies to variable names, function names, file paths, and comments.
+
 You will be given:
 1. The wiki page topic: "{page_title}"
 2. A list of relevant source files from the project that you should use as the basis for the content.
@@ -124,6 +129,8 @@ IMPORTANT: Generate the content in {language_name} language.
 REMINDERS:
 - Generate content based on available source files.
 - Focus on the information available, not what might be missing.
+- NEVER ask clarifying questions or request additional files.
+- If the provided context is limited, write about the topic using file names, directory structure, and any metadata available.
 """
 
 

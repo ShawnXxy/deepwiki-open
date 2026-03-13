@@ -5,30 +5,37 @@ When ``finish_reason=content_filter`` truncates a streaming response, we
 may have partial XML that is missing closing tags.  This module attempts to
 repair the XML so the frontend can still parse a usable wiki structure.
 
-Expected XML format (comprehensive)::
+Expected XML format (comprehensive with numbered IDs)::
 
     <wiki_structure>
       <title>...</title>
       <description>...</description>
       <sections>
-        <section id="...">
+        <section id="1">
           <title>...</title>
-          <pages><page_ref>page-1</page_ref></pages>
+          <pages><page_ref>1</page_ref></pages>
+          <subsections>
+            <section id="1.1">
+              <title>...</title>
+              <pages><page_ref>1.1</page_ref></pages>
+            </section>
+          </subsections>
         </section>
       </sections>
       <pages>
-        <page id="page-1">
+        <page id="1">
           <title>...</title>
           <description>...</description>
           <importance>...</importance>
           <relevant_files><file_path>...</file_path></relevant_files>
           <related_pages><related>...</related></related_pages>
-          <parent_section>...</parent_section>
+          <parent_section>1</parent_section>
         </page>
       </pages>
     </wiki_structure>
 
 The concise format omits ``<sections>`` but is otherwise identical.
+Supports both numbered IDs (1, 2.1, 2.1.1) and legacy slug IDs (page-1).
 """
 
 import re
@@ -111,8 +118,10 @@ def repair_wiki_structure_xml(partial: str) -> Optional[str]:
     if last_section_end > 0:
         truncated = working[:last_section_end + len('</section>')]
 
-        # Extract page_ref IDs from sections
-        page_refs = re.findall(r'<page_ref>(page-\d+)</page_ref>', truncated)
+        # Extract page_ref IDs from sections (numbered or slug format)
+        page_refs = re.findall(
+            r'<page_ref>([\w.-]+)</page_ref>', truncated
+        )
 
         # Close sections tag if open
         needs_sections_close = (

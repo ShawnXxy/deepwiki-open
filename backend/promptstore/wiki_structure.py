@@ -14,13 +14,18 @@ Note: These prompts use placeholders that need to be filled in:
 """
 
 # Comprehensive wiki structure prompt (includes sections)
-WIKI_STRUCTURE_PROMPT = """Analyze this GitHub repository {owner}/{repo} and create a wiki structure for it.
+WIKI_STRUCTURE_PROMPT = """Analyze this repository {owner}/{repo} and create a wiki structure for it.
 
 NOTE: The file tree and README below are provided as structural context only.
 Focus on file names, directory structure, and high-level descriptions.
 Do NOT reproduce or quote raw code, credentials, security rules,
 or sensitive content from the repository. Your task is purely to
 design a wiki table of contents.
+
+CONTENT SAFETY: When creating page titles and descriptions, use clean
+professional language only. Do NOT reproduce file or variable names that
+contain informal, slang, or potentially offensive terms. Paraphrase them
+with professional descriptions instead.
 
 1. The complete file tree of the project:
 <file_tree>
@@ -44,18 +49,41 @@ When designing the wiki structure, include pages that would benefit from visual 
 - State machines
 - Class hierarchies
 
-Create a structured wiki with the following main sections:
+Create a structured wiki with UP TO 3 LEVELS of hierarchy using the following categories as guidance (include only those relevant to this repository):
 - Overview (general information about the project)
 - System Architecture (how the system is designed)
-- Core Features (key functionality)
-- Data Management/Flow: If applicable, how data is stored, processed, accessed, and managed (e.g., database schema, data pipelines, state management).
-- Frontend Components (UI elements, if applicable.)
+- Core Features (key functionality, broken into sub-topics)
+- Data Management/Flow (database schema, data pipelines, state management)
+- Frontend Components (UI elements, if applicable)
 - Backend Systems (server-side components)
-- Model Integration (AI model connections)
-- Deployment/Infrastructure (how to deploy, what's the infrastructure like)
-- Extensibility and Customization: If the project architecture supports it, explain how to extend or customize its functionality (e.g., plugins, theming, custom modules, hooks).
+- Model Integration (AI model connections, if applicable)
+- Testing and Quality Assurance (test frameworks, coverage, CI checks)
+- Deployment/Infrastructure (how to deploy, CI/CD pipeline, containerization)
+- Development Workflow (contributing, local setup, code style)
+- Extensibility and Customization (plugins, theming, custom modules, hooks)
 
-Each section MUST contain one or more pages. EVERY page you define MUST be assigned to exactly one section via <page_ref>. For example, the "Frontend Components" section might include pages for "Home Page", "Repository Wiki Page", "Ask Component", etc.
+NUMBERING SYSTEM: Use numbered IDs that encode position in the hierarchy:
+- Top-level sections: 1, 2, 3, ...
+- Sub-sections: 2.1, 2.2, 2.3, ...
+- Pages within a section get the section's number: section 2 contains page "2", section 2.1 contains page "2.1"
+
+Each section MUST contain one or more pages. EVERY page you define MUST be assigned to exactly one section via <page_ref>.
+
+Sections can contain <subsections> with nested <section> elements for 3-level depth. Example:
+  <section id="2">
+    <title>Core Framework</title>
+    <pages><page_ref>2</page_ref></pages>
+    <subsections>
+      <section id="2.1">
+        <title>Routing System</title>
+        <pages><page_ref>2.1</page_ref></pages>
+      </section>
+      <section id="2.2">
+        <title>Middleware</title>
+        <pages><page_ref>2.2</page_ref></pages>
+      </section>
+    </subsections>
+  </section>
 
 Return your analysis in the following XML format:
 
@@ -63,20 +91,22 @@ Return your analysis in the following XML format:
   <title>[Overall title for the wiki]</title>
   <description>[Brief description of the repository]</description>
   <sections>
-    <section id="section-1">
+    <section id="1">
       <title>[Section title]</title>
       <pages>
-        <page_ref>page-1</page_ref>
-        <page_ref>page-2</page_ref>
+        <page_ref>1</page_ref>
       </pages>
       <subsections>
-        <section_ref>section-2</section_ref>
+        <section id="1.1">
+          <title>[Subsection title]</title>
+          <pages><page_ref>1.1</page_ref></pages>
+        </section>
       </subsections>
     </section>
     <!-- More sections as needed -->
   </sections>
   <pages>
-    <page id="page-1">
+    <page id="1">
       <title>[Page title]</title>
       <description>[Brief description of what this page will cover]</description>
       <importance>high|medium|low</importance>
@@ -85,10 +115,10 @@ Return your analysis in the following XML format:
         <!-- More file paths as needed -->
       </relevant_files>
       <related_pages>
-        <related>page-2</related>
+        <related>2.1</related>
         <!-- More related page IDs as needed -->
       </related_pages>
-      <parent_section>section-1</parent_section>
+      <parent_section>1</parent_section>
     </page>
     <!-- More pages as needed -->
   </pages>
@@ -103,11 +133,14 @@ IMPORTANT FORMATTING INSTRUCTIONS:
 
 CRITICAL VALIDATION RULES:
 1. Create {page_count} pages that would make a comprehensive wiki for this repository
-2. Each page should focus on a specific aspect of the codebase (e.g., architecture, key features, setup)
-3. The relevant_files should be actual files from the repository that would be used to generate that page
-4. **EVERY page MUST be assigned to exactly one section** - each page's id (e.g., "page-1") MUST appear as a <page_ref> in one of the <section> elements
-5. Verify before returning: count of <page> elements MUST equal count of <page_ref> elements across all sections
-6. Return ONLY valid XML with the structure specified above, with no markdown code block delimiters"""
+2. Use numbered IDs (1, 2.1, 2.1.1) that match position in the hierarchy
+3. Each page should focus on a specific aspect of the codebase
+4. The relevant_files should be actual files from the repository that would be used to generate that page
+5. **EVERY page MUST be assigned to exactly one section** - each page's id MUST appear as a <page_ref> in one of the <section> elements
+6. Verify before returning: count of <page> elements MUST equal count of <page_ref> elements across all sections
+7. Do NOT create a generic "Additional Topics" or "Miscellaneous" section. Every page must belong to a meaningful, descriptive section
+8. Do NOT generate duplicate pages covering the same topic under different IDs
+9. Return ONLY valid XML with the structure specified above, with no markdown code block delimiters"""
 
 # Concise wiki structure prompt (no sections, simpler structure)
 WIKI_STRUCTURE_CONCISE_PROMPT = """Analyze this GitHub repository {owner}/{repo} and create a wiki structure for it.
@@ -117,7 +150,10 @@ Focus on file names, directory structure, and high-level descriptions.
 Do NOT reproduce or quote raw code, credentials, security rules,
 or sensitive content from the repository. Your task is purely to
 design a wiki table of contents.
-
+CONTENT SAFETY: When creating page titles and descriptions, use clean
+professional language only. Do NOT reproduce file or variable names that
+contain informal, slang, or potentially offensive terms. Paraphrase them
+with professional descriptions instead.
 1. The complete file tree of the project:
 <file_tree>
 {file_tree}

@@ -55,6 +55,25 @@ LANGUAGE_DISPLAY_NAMES = {
 }
 
 
+def _file_tree_dirs_only(file_tree: str) -> str:
+    """Reduce a file tree to directory names only.
+
+    Strips individual file names — keeps only lines that end with '/'
+    or contain no file extension.  This prevents the LLM from
+    referencing specific file names that may trigger Azure's
+    profanity content filter in its output.
+    """
+    if not file_tree:
+        return ''
+    lines = []
+    for line in file_tree.split('\n'):
+        stripped = line.rstrip()
+        # Keep directory lines (end with /) or top-level descriptors
+        if stripped.endswith('/') or '.' not in stripped.split('/')[-1]:
+            lines.append(stripped)
+    return '\n'.join(lines) if lines else file_tree
+
+
 def build_wiki_structure_prompt(
     request: ChatCompletionRequest,
     owner: str,
@@ -80,7 +99,7 @@ def build_wiki_structure_prompt(
     language_name = LANGUAGE_DISPLAY_NAMES.get(lang, 'English')
 
     # Determine page count based on mode
-    page_count = '8-12' if request.comprehensive else '4-6'
+    page_count = '15-25' if request.comprehensive else '4-6'
 
     file_tree = request.file_tree or ''
     readme = request.readme or ''
@@ -540,6 +559,7 @@ async def handle_websocket_chat(websocket: WebSocket):
             total_text = ""
             chunk_count = 0
             finish_reason = None
+            content_filter_category = None
             async for chunk in response:
                 chunk_count += 1
                 choices = getattr(chunk, "choices", [])
@@ -548,6 +568,14 @@ async def handle_websocket_chat(websocket: WebSocket):
                     # Track finish_reason
                     if hasattr(choice, "finish_reason") and choice.finish_reason:
                         finish_reason = choice.finish_reason
+                    # Capture content filter annotations for debugging
+                    cfr = getattr(choice, "content_filter_results", None)
+                    if cfr:
+                        for cat in ('profanity', 'hate', 'sexual',
+                                    'violence', 'self_harm'):
+                            entry = getattr(cfr, cat, None)
+                            if entry and getattr(entry, 'filtered', False):
+                                content_filter_category = cat
                     delta = getattr(choice, "delta", None)
                     if delta is not None:
                         text = getattr(delta, "content", None)
@@ -564,11 +592,66 @@ async def handle_websocket_chat(websocket: WebSocket):
             # can handle truncated content (e.g. repair XML, use partial).
             # (ref: handling_embedder_ref.md — log warning, skip & continue)
             if finish_reason == "content_filter":
+                filter_detail = (
+                    f"category={content_filter_category}"
+                    if content_filter_category else "category=unknown"
+                )
                 logger.warning(
                     "Response truncated by content filter "
-                    f"({len(total_text)} chars received). "
+                    f"({len(total_text)} chars received, "
+                    f"{filter_detail}). "
                     "Sending WARNING marker to frontend."
                 )
+
+                # For wiki structure requests, retry with a
+                # directory-only file tree so the LLM doesn't
+                # reference file names that trigger the filter.
+                if (request.wiki_structure_request
+                        and not getattr(request, '_retry_attempted',
+                                        False)):
+                    logger.info(
+                        "Retrying wiki structure with "
+                        "directory-only file tree..."
+                    )
+                    request._retry_attempted = True
+                    dir_tree = _file_tree_dirs_only(
+                        request.file_tree or ''
+                    )
+                    request.file_tree = dir_tree
+                    request.readme = (
+                        '(README omitted for content safety)'
+                    )
+                    parts = (request.repo_url or '').rstrip('/').split('/')
+                    r_owner = parts[-2] if len(parts) >= 2 else 'unknown'
+                    r_repo = parts[-1] if len(parts) >= 1 else 'unknown'
+                    retry_prompt = build_wiki_structure_prompt(
+                        request, r_owner, r_repo
+                    )
+                    request.messages[-1].content = retry_prompt
+                    retry_kwargs = model.convert_inputs_to_api_kwargs(
+                        input=f"/no_think {retry_prompt}",
+                        model_kwargs=model_kwargs,
+                        model_type=ModelType.LLM,
+                    )
+                    retry_response = await model.acall(
+                        api_kwargs=retry_kwargs,
+                        model_type=ModelType.LLM,
+                    )
+                    async for rchunk in retry_response:
+                        rchoices = getattr(rchunk, "choices", [])
+                        if rchoices:
+                            rdelta = getattr(
+                                rchoices[0], "delta", None
+                            )
+                            if rdelta:
+                                rtext = getattr(
+                                    rdelta, "content", None
+                                )
+                                if rtext:
+                                    await websocket.send_text(rtext)
+                    await websocket.close()
+                    return  # Skip the WARNING marker
+
                 await websocket.send_text("\n[CONTENT_FILTER_WARNING]")
 
             await websocket.close()

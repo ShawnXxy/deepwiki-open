@@ -23,7 +23,11 @@ class WikiSection(BaseModel):
     id: str
     title: str
     pages: List[str]
-    subsections: Optional[List[str]] = None
+    subsections: Optional[List['WikiSection']] = None
+
+
+# Resolve forward reference for self-referencing model
+WikiSection.model_rebuild()
 
 
 class WikiStructureModel(BaseModel):

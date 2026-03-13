@@ -824,6 +824,8 @@ IMPORTANT: Generate the content in ${language === 'en' ? 'English' :
 REMINDERS:
 - Generate content based on available source files.
 - Focus on the information available, not what might be missing.
+- NEVER ask clarifying questions. NEVER request additional files. Generate the best wiki page you can from the context provided.
+- If the source context is limited, write about the topic based on file names, directory structure, and any available metadata.
 `;
 
         // Prepare request body
@@ -1005,6 +1007,25 @@ REMINDERS:
           if (content.length === 0) {
             throw new Error('No content received from backend - possible connection interruption');
           }
+        }
+
+        // Detect LLM asking a question instead of generating content.
+        // This happens when RAG context is thin and the model requests
+        // more information instead of writing the wiki page.
+        const looksLikeQuestion = (
+          !content.includes('# ') &&
+          (content.startsWith('Could you') ||
+           content.startsWith('Please provide') ||
+           content.startsWith('I need') ||
+           content.startsWith('Can you') ||
+           content.includes('provide the list of relevant source files'))
+        );
+        if (looksLikeQuestion) {
+          logger.warn('LLM returned a question instead of content, generating placeholder', { page: page.title, content: content.substring(0, 200) });
+          content = `# ${page.title}\n\n` +
+            '> This page could not be generated because the source files for this topic ' +
+            'did not contain enough indexable content (e.g., binary files, images, or empty directories). ' +
+            'Try refreshing the wiki or adding more relevant source files to this page\'s file list.\n';
         }
 
         // Store the FINAL generated content
@@ -1332,6 +1353,12 @@ REMINDERS:
 
       if (!xmlMatch) {
         console.error('Full response text:', responseText);
+        // If content was filtered and XML couldn't be parsed/repaired,
+        // throw a specific error so the catch block can show actionable guidance
+        if (wasContentFiltered) {
+          console.warn('Wiki structure failed due to content filter — insufficient XML recovered');
+          throw new Error('RETRY_WITH_REDUCED_CONTEXT');
+        }
         // Provide a more specific error message based on response content
         const isShortResponse = responseText.trim().length < 200;
         const errorDetail = isShortResponse
@@ -1458,6 +1485,26 @@ REMINDERS:
       });
       } // Close else block for DOM parsing
 
+      // Deduplicate pages by ID — LLM may generate duplicate IDs.
+      // Keep the first occurrence; append a suffix to duplicates.
+      const seenIds = new Set<string>();
+      pages = pages.reduce<WikiPage[]>((acc, page) => {
+        if (seenIds.has(page.id)) {
+          // Generate a unique ID by appending a suffix
+          let newId = page.id;
+          let suffix = 2;
+          while (seenIds.has(newId)) {
+            newId = `${page.id}-${suffix}`;
+            suffix++;
+          }
+          console.warn(`Duplicate page ID "${page.id}" renamed to "${newId}" (title: "${page.title}")`);
+          page = { ...page, id: newId };
+        }
+        seenIds.add(page.id);
+        acc.push(page);
+        return acc;
+      }, []);
+
       // Extract sections if they exist in the XML
       const sections: WikiSection[] = [];
       const rootSections: string[] = [];
@@ -1475,24 +1522,46 @@ REMINDERS:
         });
 
         if (sectionsEls && sectionsEls.length > 0) {
-          // Process sections
+          // Process sections — only pick up direct page_ref children to avoid
+          // counting nested subsection refs in the parent
           sectionsEls.forEach(sectionEl => {
             const id = sectionEl.getAttribute('id') || `section-${sections.length + 1}`;
             const titleEl = sectionEl.querySelector('title');
-            const pageRefEls = sectionEl.querySelectorAll('page_ref');
-            const sectionRefEls = sectionEl.querySelectorAll('section_ref');
 
-            const title = titleEl ? titleEl.textContent || '' : '';
+            // Only collect page_refs that are direct children of this section's
+            // <pages> element, not from nested subsections
             const sectionPages: string[] = [];
-            const subsections: string[] = [];
-
-            pageRefEls.forEach(el => {
-              if (el.textContent) sectionPages.push(el.textContent);
-            });
+            const pagesContainer = sectionEl.querySelector(':scope > pages');
+            if (pagesContainer) {
+              pagesContainer.querySelectorAll('page_ref').forEach(el => {
+                if (el.textContent) sectionPages.push(el.textContent);
+              });
+            } else {
+              // Fallback: collect all page_refs but try to exclude those from nested sections
+              const nestedSectionIds = new Set<string>();
+              sectionEl.querySelectorAll(':scope > subsections section').forEach(nested => {
+                nested.querySelectorAll('page_ref').forEach(el => {
+                  if (el.textContent) nestedSectionIds.add(el.textContent);
+                });
+              });
+              sectionEl.querySelectorAll('page_ref').forEach(el => {
+                if (el.textContent && !nestedSectionIds.has(el.textContent)) {
+                  sectionPages.push(el.textContent);
+                }
+              });
+            }
             
             console.log(`Section "${id}" has page_refs:`, sectionPages);
 
+            const title = titleEl ? titleEl.textContent || '' : '';
+            const subsections: string[] = [];
+            const sectionRefEls = sectionEl.querySelectorAll(':scope > subsections > section');
             sectionRefEls.forEach(el => {
+              const subId = el.getAttribute('id');
+              if (subId) subsections.push(subId);
+            });
+            // Also check for legacy section_ref elements
+            sectionEl.querySelectorAll(':scope > subsections > section_ref').forEach(el => {
               if (el.textContent) subsections.push(el.textContent);
             });
 
@@ -1543,15 +1612,49 @@ REMINDERS:
           if (unassignedPages.length > 0) {
             console.warn(`Found ${unassignedPages.length} pages not assigned to any section:`, unassignedPages.map(p => p.id));
             
-            // Create an "Additional Topics" section for orphaned pages
-            const additionalSectionId = 'section-additional';
-            sections.push({
-              id: additionalSectionId,
-              title: 'Additional Topics',
-              pages: unassignedPages.map(p => p.id)
+            // Distribute orphaned pages into the most relevant existing section
+            // based on their ID prefix (e.g., page "3.4" → section "3")
+            // This avoids a catch-all "Additional Topics" bucket.
+            for (const orphan of unassignedPages) {
+              let bestSection: typeof sections[0] | null = null;
+
+              // Strategy 1: Match by ID prefix (page "3.4" → section "3")
+              const idParts = orphan.id.split(/[-.]/).filter(Boolean);
+              for (let len = idParts.length - 1; len >= 1; len--) {
+                const prefix = idParts.slice(0, len).join('.');
+                bestSection = sections.find(s => s.id === prefix) || null;
+                if (bestSection) break;
+              }
+
+              // Strategy 2: Match by parent_section from page metadata
+              if (!bestSection) {
+                // The page's filePaths or title might hint at which section it belongs to
+                // Fall back to the last section as a reasonable default
+                bestSection = sections[sections.length - 1] || null;
+              }
+
+              if (bestSection) {
+                bestSection.pages.push(orphan.id);
+                console.log(`Orphan page "${orphan.id}" (${orphan.title}) → section "${bestSection.id}" (${bestSection.title})`);
+              }
+            }
+
+            // After distribution, check if any pages are still truly orphaned
+            const stillUnassigned = unassignedPages.filter(p => {
+              return !sections.some(s => s.pages.includes(p.id));
             });
-            rootSections.push(additionalSectionId);
-            console.log(`Created "${additionalSectionId}" section for unassigned pages`);
+
+            if (stillUnassigned.length > 0) {
+              // Only create catch-all as absolute last resort
+              const additionalSectionId = 'section-additional';
+              sections.push({
+                id: additionalSectionId,
+                title: 'Additional Topics',
+                pages: stillUnassigned.map(p => p.id)
+              });
+              rootSections.push(additionalSectionId);
+              console.log(`Created "${additionalSectionId}" for ${stillUnassigned.length} truly orphaned pages`);
+            }
           }
         }
       }
@@ -1689,6 +1792,26 @@ REMINDERS:
 
         // Start processing the queue
         processQueue();
+
+        // Resume queue processing when browser tab becomes visible again.
+        // Browsers throttle setTimeout in background tabs, which stalls
+        // the page generation pipeline. This listener fires immediately
+        // when the user switches back to the tab.
+        const onVisibilityChange = () => {
+          if (document.visibilityState === 'visible' && queue.length > 0 && activeRequests < MAX_CONCURRENT) {
+            console.log('[Wiki] Tab became visible — resuming page generation queue');
+            processQueue();
+          }
+        };
+        document.addEventListener('visibilitychange', onVisibilityChange);
+
+        // Clean up listener when all pages are done
+        const checkCompletion = setInterval(() => {
+          if (queue.length === 0 && activeRequests === 0) {
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            clearInterval(checkCompletion);
+          }
+        }, 5000);
       } else {
         // Set loading to false if there were no pages found
         setIsLoading(false);
@@ -1696,10 +1819,23 @@ REMINDERS:
       }
 
     } catch (error) {
-      console.error('Error determining wiki structure:', error);
-      setIsLoading(false);
-      setError(error instanceof Error ? error.message : 'An unknown error occurred');
-      setLoadingMessage(undefined);
+      // Content filter retry: show actionable message
+      if (error instanceof Error && error.message === 'RETRY_WITH_REDUCED_CONTEXT') {
+        console.warn('Wiki structure blocked by content filter');
+        setIsLoading(false);
+        setError('Wiki structure generation was blocked by Azure content filtering. ' +
+          'The repository may contain code patterns (security rules, credentials, firewall configs) ' +
+          'that trigger safety checks. Try one of:\n' +
+          '• Switch to "Concise" mode (fewer pages, less context)\n' +
+          '• Exclude sensitive directories (e.g., Test, Security) via the filter settings\n' +
+          '• Click "Refresh Wiki" to retry');
+        setLoadingMessage(undefined);
+      } else {
+        console.error('Error determining wiki structure:', error);
+        setIsLoading(false);
+        setError(error instanceof Error ? error.message : 'An unknown error occurred');
+        setLoadingMessage(undefined);
+      }
     } finally {
       setStructureRequestInProgress(false);
     }
