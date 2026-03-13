@@ -6,6 +6,7 @@ Provides the WebSocket /ws/chat endpoint with keepalive support.
 
 import asyncio
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 from urllib.parse import unquote
@@ -451,51 +452,137 @@ async def handle_websocket_chat(websocket: WebSocket):
         # Get language information
         language_code, language_name = get_language_info(request.language)
 
-        # Create system prompt based on research mode
-        system_prompt = build_chat_system_prompt(
-            is_deep_research, research_iteration, repo_type,
-            repo_url, repo_name, language_name
-        )
+        # --- Wiki page generation: build prompt server-side ---
+        # When wiki_page_request=True, the backend constructs the full
+        # prompt from promptstore templates, injecting server-side data
+        # (commit hash, page catalog, context) that the frontend can't.
+        if request.wiki_page_request and request.page_title:
+            from backend.promptstore.wiki_page import (
+                build_wiki_page_prompt
+            )
+            from backend.modules.repository.git_ops import (
+                get_head_commit_hash
+            )
 
-        # Fetch file content if provided
-        file_content = ""
-        if request.filePath:
+            # Get commit hash from the cloned repo
+            commit_hash = ""
             try:
-                file_content = get_file_content(
-                    request.repo_url, request.filePath,
-                    request.type, request.token
+                from backend.utils.paths import get_adalflow_root_path
+                from backend.modules.rag.database import DatabaseManager
+                # Construct local path the same way the DB manager does
+                dm = DatabaseManager()
+                repo_name = dm._extract_repo_name_from_url(
+                    request.repo_url, request.type
                 )
-                logger.info(f"Retrieved content for file: {request.filePath}")
+                local_repo_path = os.path.join(
+                    get_adalflow_root_path(), "repos", repo_name
+                )
+                if os.path.isdir(local_repo_path):
+                    commit_hash = get_head_commit_hash(
+                        local_repo_path
+                    )
+                    if commit_hash:
+                        logger.info(
+                            f"Commit hash: {commit_hash[:8]}"
+                        )
             except Exception as e:
-                logger.error(f"Error retrieving file content: {str(e)}")
+                logger.debug(
+                    f"Could not get commit hash: {e}"
+                )
 
-        # Format conversation history
-        conversation_history = format_conversation_history(request_rag.memory())
+            # Build page catalog from the request
+            page_catalog = ""
+            if request.page_related_pages:
+                # Use related pages as a minimal catalog
+                page_catalog = "\n".join([
+                    f"- {pid}" for pid in request.page_related_pages
+                    if pid != (request.page_id or "")
+                ])
 
-        # Build the prompt
-        prompt = f"/no_think {system_prompt}\n\n"
-
-        if conversation_history:
-            prompt += (
-                f"<conversation_history>\n{conversation_history}"
-                f"</conversation_history>\n\n"
+            # Build prompt from backend promptstore
+            wiki_prompt = build_wiki_page_prompt(
+                page_title=request.page_title,
+                page_id=request.page_id or "",
+                file_paths=request.page_file_paths or [],
+                context_text=context_text,
+                repo_url=request.repo_url,
+                commit_hash=commit_hash,
+                page_catalog=page_catalog if page_catalog else None,
+                language_name=language_name,
             )
 
-        if file_content:
-            prompt += (
-                f"<currentFileContent path=\"{request.filePath}\">\n"
-                f"{file_content}\n</currentFileContent>\n\n"
+            # Use the backend-built prompt, prepend /no_think
+            prompt = f"/no_think {wiki_prompt}"
+            logger.info(
+                f"Wiki page prompt built server-side for: "
+                f"{request.page_title} "
+                f"(commit={commit_hash[:8] if commit_hash else 'none'}, "
+                f"context={len(context_text)} chars)"
             )
-
-        CONTEXT_START = "<START_OF_CONTEXT>"
-        CONTEXT_END = "<END_OF_CONTEXT>"
-        if context_text.strip():
-            prompt += f"{CONTEXT_START}\n{context_text}\n{CONTEXT_END}\n\n"
         else:
-            logger.info("No context available from RAG")
-            prompt += "<note>Answering without retrieval augmentation.</note>\n\n"
+            # --- Standard chat/Q&A prompt assembly ---
 
-        prompt += f"<query>\n{query}\n</query>\n\nAssistant: "
+            # Create system prompt based on research mode
+            system_prompt = build_chat_system_prompt(
+                is_deep_research, research_iteration, repo_type,
+                repo_url, repo_name, language_name
+            )
+
+            # Fetch file content if provided
+            file_content = ""
+            if request.filePath:
+                try:
+                    file_content = get_file_content(
+                        request.repo_url, request.filePath,
+                        request.type, request.token
+                    )
+                    logger.info(
+                        f"Retrieved content for file: "
+                        f"{request.filePath}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Error retrieving file content: {str(e)}"
+                    )
+
+            # Format conversation history
+            conversation_history = format_conversation_history(
+                request_rag.memory()
+            )
+
+            # Build the prompt
+            prompt = f"/no_think {system_prompt}\n\n"
+
+            if conversation_history:
+                prompt += (
+                    f"<conversation_history>\n"
+                    f"{conversation_history}"
+                    f"</conversation_history>\n\n"
+                )
+
+            if file_content:
+                prompt += (
+                    f"<currentFileContent path=\"{request.filePath}\">\n"
+                    f"{file_content}\n</currentFileContent>\n\n"
+                )
+
+            CONTEXT_START = "<START_OF_CONTEXT>"
+            CONTEXT_END = "<END_OF_CONTEXT>"
+            if context_text.strip():
+                prompt += (
+                    f"{CONTEXT_START}\n{context_text}\n"
+                    f"{CONTEXT_END}\n\n"
+                )
+            else:
+                logger.info("No context available from RAG")
+                prompt += (
+                    "<note>Answering without retrieval "
+                    "augmentation.</note>\n\n"
+                )
+
+            prompt += (
+                f"<query>\n{query}\n</query>\n\nAssistant: "
+            )
 
         logger.info(f"Using Azure OpenAI with model: {request.model}")
 
@@ -551,6 +638,8 @@ async def handle_websocket_chat(websocket: WebSocket):
 
         # Process Azure response
         try:
+            import time as _time
+            _stream_start = _time.time()
             logger.info("Making Azure AI API call")
             response = await model.acall(
                 api_kwargs=api_kwargs, model_type=ModelType.LLM
@@ -582,10 +671,12 @@ async def handle_websocket_chat(websocket: WebSocket):
                         if text is not None:
                             total_text += text
                             await websocket.send_text(text)
+            _stream_elapsed = _time.time() - _stream_start
             logger.info(
                 f"Streaming complete: {chunk_count} chunks, "
                 f"{len(total_text)} chars, "
-                f"finish_reason={finish_reason}"
+                f"finish_reason={finish_reason}, "
+                f"elapsed={_stream_elapsed:.1f}s"
             )
 
             # Content filter finish reason — signal the frontend so it

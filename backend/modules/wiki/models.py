@@ -3,7 +3,7 @@ Pydantic models for wiki operations.
 """
 
 from typing import List, Optional, Dict, Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.modules.repository.models import RepoInfo
 
@@ -23,7 +23,25 @@ class WikiSection(BaseModel):
     id: str
     title: str
     pages: List[str]
-    subsections: Optional[List['WikiSection']] = None
+    subsections: Optional[List[Any]] = None
+
+    @field_validator('subsections', mode='before')
+    @classmethod
+    def accept_string_or_section(cls, v):
+        """Accept both string IDs (frontend) and WikiSection dicts."""
+        if v is None:
+            return None
+        result = []
+        for item in v:
+            if isinstance(item, str):
+                # Legacy format: subsection ID as string — skip
+                # (frontend uses flat section refs, not nested objects)
+                continue
+            elif isinstance(item, dict):
+                result.append(item)
+            else:
+                result.append(item)
+        return result if result else None
 
 
 # Resolve forward reference for self-referencing model

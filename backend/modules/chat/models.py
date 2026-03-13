@@ -78,6 +78,9 @@ class ChatCompletionRequest(BaseModel):
         False, description="If True, generate wiki page with "
         "file-path-aware retrieval"
     )
+    page_id: Optional[str] = Field(
+        None, description="Numbered ID of the wiki page (e.g., 2.1)"
+    )
     page_title: Optional[str] = Field(
         None, description="Title of the wiki page to generate"
     )

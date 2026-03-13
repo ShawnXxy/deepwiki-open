@@ -134,24 +134,107 @@ REMINDERS:
 """
 
 
-def format_file_paths_list(file_paths: list, repo_url: str = "", branch: str = "main") -> str:
+def format_file_paths_list(
+    file_paths: list,
+    repo_url: str = "",
+    branch: str = "main",
+    commit_hash: str = None,
+) -> str:
     """
     Format a list of file paths as markdown links for the wiki page header.
-    
-    Args:
-        file_paths: List of file paths
-        repo_url: Repository URL for generating links
-        branch: Branch name for the links
-        
-    Returns:
-        Formatted markdown string with file path links
+    Uses commit-pinned URLs when commit_hash is provided.
     """
     if not file_paths:
         return "- No source files specified"
-    
-    if repo_url:
-        # Generate clickable links
-        return "\n".join([f"- [{path}]({repo_url}/blob/{branch}/{path})" for path in file_paths])
+
+    if repo_url and commit_hash:
+        # Commit-pinned Azure DevOps URLs
+        links = []
+        for path in file_paths:
+            url = (
+                f"{repo_url}?path=/{path}"
+                f"&version=GC{commit_hash}"
+            )
+            links.append(f"- [{path}]({url})")
+        return "\n".join(links)
+    elif repo_url:
+        return "\n".join([
+            f"- [{path}]({repo_url}?path=/{path}&version=GB{branch})"
+            for path in file_paths
+        ])
     else:
-        # Just list the paths without links
         return "\n".join([f"- {path}" for path in file_paths])
+
+
+def format_page_catalog(
+    pages: list, current_page_id: str = ""
+) -> str:
+    """
+    Format a list of wiki pages for cross-referencing.
+
+    Args:
+        pages: List of dicts with 'id' and 'title' keys
+        current_page_id: ID of the current page (excluded)
+
+    Returns:
+        Formatted catalog string for prompt injection
+    """
+    lines = []
+    for page in pages:
+        pid = page.get('id', '') if isinstance(page, dict) else getattr(page, 'id', '')
+        title = page.get('title', '') if isinstance(page, dict) else getattr(page, 'title', '')
+        if pid and pid != current_page_id:
+            lines.append(f"- {pid}: {title}")
+    return "\n".join(lines)
+
+
+def build_wiki_page_prompt(
+    page_title: str,
+    page_id: str,
+    file_paths: list,
+    context_text: str,
+    repo_url: str = "",
+    commit_hash: str = None,
+    page_catalog: str = None,
+    file_summaries: str = None,
+    language_name: str = "English",
+) -> str:
+    """
+    Build the complete wiki page generation prompt.
+
+    Single source of truth — replaces the frontend template.
+    Injects server-side data (commit hash, page catalog,
+    file summaries) that the frontend can't access.
+    """
+    file_paths_list = format_file_paths_list(
+        file_paths, repo_url, commit_hash=commit_hash
+    )
+
+    prompt = WIKI_PAGE_CONTENT_PROMPT.format(
+        page_title=page_title,
+        file_paths_list=file_paths_list,
+        language_name=language_name,
+    )
+
+    # Cross-page references
+    if page_catalog:
+        prompt += (
+            "\n\nOTHER WIKI PAGES (for cross-referencing):\n"
+            "When relevant, create inline links using the format "
+            "[Page Title](deepwiki://page_id).\n"
+            "Example: \"For details, see "
+            "[Dependency Injection](deepwiki://2.2).\"\n\n"
+            f"{page_catalog}\n"
+        )
+
+    # File summaries for architectural context
+    if file_summaries:
+        prompt += f"\n\nFILE SUMMARIES:\n{file_summaries}\n"
+
+    # Source code context from RAG
+    if context_text and context_text.strip():
+        prompt += (
+            f"\n\nSOURCE CODE CONTEXT:\n{context_text}\n"
+        )
+
+    return prompt

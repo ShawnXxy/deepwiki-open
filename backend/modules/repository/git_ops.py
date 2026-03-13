@@ -14,6 +14,26 @@ from urllib.parse import urlparse, urlunparse, quote
 logger = logging.getLogger(__name__)
 
 
+def get_head_commit_hash(local_path: str) -> str:
+    """Get the HEAD commit hash from a cloned repository.
+
+    Args:
+        local_path: Path to the cloned repository
+
+    Returns:
+        str: Full SHA commit hash, or empty string on failure
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, cwd=local_path
+        )
+        return result.stdout.strip()
+    except Exception as e:
+        logger.warning(f"Could not get HEAD commit hash: {e}")
+        return ""
+
+
 def detect_default_branch(local_path: str) -> str:
     """
     Detect the default branch of a cloned repository.

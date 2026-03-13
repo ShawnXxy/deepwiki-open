@@ -24,7 +24,7 @@ interface WikiSection {
   id: string;
   title: string;
   pages: string[];
-  subsections?: string[];
+  subsections?: WikiSection[] | string[];
 }
 
 interface WikiPage {
@@ -711,134 +711,23 @@ export default function RepoWikiPage() {
         // Get repository URL
         const repoUrl = getRepoUrl(effectiveRepoInfo);
 
-        // Create the prompt content - simplified to avoid message dialogs
- const promptContent =
-`You are an expert technical writer and software architect.
-Your task is to generate a comprehensive and accurate technical wiki page in Markdown format about "${page.title}" within the given software project.
+        // Wiki page prompt is built server-side by the backend promptstore.
+        // The frontend sends only page metadata — the backend injects
+        // commit-pinned URLs, page catalog, file summaries, and RAG context.
+        // The message content is just the page title (used as RAG query).
 
-NOTE: When describing code, focus on architecture, design patterns, data flow,
-and component relationships. Summarize and explain code in your own words rather
-than quoting large blocks of raw source verbatim. Avoid reproducing credentials,
-secrets, security rules, or sensitive configuration values.
-
-You will be given:
-1. The wiki page topic: "${page.title}"
-2. A list of relevant source files from the project that you should use as the basis for the content.
-
-INSTRUCTIONS:
-- Generate the wiki content based on the provided files, even if there are only 1-2 files.
-- Focus on the information available in the source files.
-- Work with whatever source files are provided.
-
-CRITICAL STARTING INSTRUCTION:
-The very first thing on the page MUST be a \`<details>\` block listing ALL the relevant source files you used to generate the content.
-Format it exactly like this:
-<details>
-<summary>Relevant source files</summary>
-
-The following files were used as context for generating this wiki page:
-
-${filePaths.map(path => `- [${path}](${generateFileUrl(path, effectiveRepoInfo, detectCurrentBranch(effectiveRepoInfo, 'master') || 'master')})`).join('\n')}
-</details>
-
-Immediately after the \`<details>\` block, the main title of the page should be a H1 Markdown heading: \`# ${page.title}\`.
-
-Based on the content of the relevant source files:
-
-1.  **Introduction:** Start with a concise introduction (1-2 paragraphs) explaining the purpose, scope, and high-level overview of "${page.title}" within the context of the overall project.
-
-2.  **Detailed Sections:** Break down "${page.title}" into logical sections using H2 (\`##\`) and H3 (\`###\`) Markdown headings. For each section:
-    *   Explain the architecture, components, data flow, or logic relevant to the section's focus, as evidenced in the source files.
-    *   Identify key functions, classes, data structures, API endpoints, or configuration elements pertinent to that section.
-
-3.  **Mermaid Diagrams:**
-    *   Use Mermaid diagrams (e.g., \`flowchart TD\`, \`sequenceDiagram\`, \`classDiagram\`, \`erDiagram\`, \`graph TD\`) to visually represent architectures, flows, relationships, and schemas found in the source files.
-    *   Ensure diagrams are accurate and directly derived from the source files.
-    *   Provide a brief explanation before or after each diagram to give context.
-    *   CRITICAL: All diagrams MUST follow strict vertical orientation:
-       - Use "graph TD" (top-down) directive for flow diagrams
-       - NEVER use "graph LR" (left-right)
-       - Maximum node width should be 3-4 words
-       - For sequence diagrams:
-         - Start with "sequenceDiagram" directive on its own line
-         - Define ALL participants at the beginning using "participant" keyword
-         - Optionally specify participant types: actor, boundary, control, entity, database, collections, queue
-         - Use descriptive but concise participant names, or use aliases: "participant A as Alice"
-         - Use the correct Mermaid arrow syntax (8 types available):
-           - -> solid line without arrow (rarely used)
-           - --> dotted line without arrow (rarely used)
-           - ->> solid line with arrowhead (most common for requests/calls)
-           - -->> dotted line with arrowhead (most common for responses/returns)
-           - ->x solid line with X at end (failed/error message)
-           - -->x dotted line with X at end (failed/error response)
-           - -) solid line with open arrow (async message, fire-and-forget)
-           - --) dotted line with open arrow (async response)
-           - Examples: A->>B: Request, B-->>A: Response, A->xB: Error, A-)B: Async event
-         - Use +/- suffix for activation boxes: A->>+B: Start (activates B), B-->>-A: End (deactivates B)
-         - Group related participants using "box": box GroupName ... end
-         - Use structural elements for complex flows:
-           - loop LoopText ... end (for iterations)
-           - alt ConditionText ... else ... end (for conditionals)
-           - opt OptionalText ... end (for optional flows)
-           - par ParallelText ... and ... end (for parallel actions)
-           - critical CriticalText ... option ... end (for critical regions)
-           - break BreakText ... end (for breaking flows/exceptions)
-         - Add notes for clarification: "Note over A,B: Description", "Note right of A: Detail"
-         - Use autonumber directive to add sequence numbers to messages
-         - NEVER use flowchart-style labels like A--|label|-->B. Always use a colon for labels: A->>B: My Label
-
-4.  **Tables:**
-    *   Use Markdown tables to summarize information such as:
-        *   Key features or components and their descriptions.
-        *   API endpoint parameters, types, and descriptions.
-        *   Configuration options, their types, and default values.
-        *   Data model fields, types, constraints, and descriptions.
-
-5.  **Code Snippets (OPTIONAL):**
-    *   Include short, relevant code snippets (e.g., Python, Java, JavaScript, SQL, JSON, YAML) directly from the relevant source files to illustrate key implementation details, data structures, or configurations.
-    *   Ensure snippets are well-formatted within Markdown code blocks with appropriate language identifiers.
-
-6.  **Source Citations:**
-    *   When possible, cite the specific source file(s) from which the information was derived.
-    *   Place citations at the end of the paragraph, under the diagram/table, or after the code snippet.
-    *   Use the format: \`Sources: [filename.ext]()\` or \`Sources: [filename.ext:line_number]()\`.
-
-7.  **Technical Accuracy:** Base all information on the provided source files. If information is limited, focus on what IS available rather than what's missing.
-
-8.  **Clarity and Conciseness:** Use clear, professional, and concise technical language suitable for other developers working on or learning about the project.
-
-9.  **Conclusion/Summary:** End with a brief summary paragraph if appropriate for "${page.title}".
-
-IMPORTANT: Generate the content in ${language === 'en' ? 'English' :
-            language === 'ja' ? 'Japanese (日本語)' :
-            language === 'zh' ? 'Mandarin Chinese (中文)' :
-            language === 'zh-tw' ? 'Traditional Chinese (繁體中文)' :
-            language === 'es' ? 'Spanish (Español)' :
-            language === 'kr' ? 'Korean (한국어)' :
-            language === 'vi' ? 'Vietnamese (Tiếng Việt)' : 
-            language === "pt-br" ? "Brazilian Portuguese (Português Brasileiro)" :
-            language === "fr" ? "Français (French)" :
-            language === "ru" ? "Русский (Russian)" :
-            'English'} language.
-
-REMINDERS:
-- Generate content based on available source files.
-- Focus on the information available, not what might be missing.
-- NEVER ask clarifying questions. NEVER request additional files. Generate the best wiki page you can from the context provided.
-- If the source context is limited, write about the topic based on file names, directory structure, and any available metadata.
-`;
-
-        // Prepare request body
+        // Prepare request body — backend builds the full prompt
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const requestBody: Record<string, any> = {
           repo_url: repoUrl,
           type: effectiveRepoInfo.type,
           messages: [{
             role: 'user',
-            content: promptContent
+            content: page.title
           }],
-          // Enable file-path-aware retrieval for wiki page generation
+          // Enable file-path-aware retrieval + backend prompt building
           wiki_page_request: true,
+          page_id: page.id,
           page_title: page.title,
           page_file_paths: page.filePaths,
           page_related_pages: page.relatedPages || [],
@@ -1513,94 +1402,67 @@ REMINDERS:
 
       // Try to parse sections if we're in comprehensive view
       if (isComprehensiveView) {
-        const sectionsEls = xmlDoc.querySelectorAll('section');
+        // Only pick up direct children of <sections>, not nested
+        // subsections — querySelectorAll('section') would pick ALL
+        const sectionsContainer = xmlDoc.querySelector('sections');
+        const topSectionEls = sectionsContainer
+          ? Array.from(sectionsContainer.children).filter(
+              el => el.tagName.toLowerCase() === 'section'
+            )
+          : [];
         
-        // DEBUG: Log raw section XML to understand parsing
-        console.log(`Found ${sectionsEls.length} section elements in XML`);
-        sectionsEls.forEach((el, i) => {
-          console.log(`Section ${i} raw XML:`, el.outerHTML?.substring(0, 300));
-        });
+        console.log(`Found ${topSectionEls.length} top-level section elements`);
 
-        if (sectionsEls && sectionsEls.length > 0) {
-          // Process sections — only pick up direct page_ref children to avoid
-          // counting nested subsection refs in the parent
-          sectionsEls.forEach(sectionEl => {
+        if (topSectionEls.length > 0) {
+          // Recursively parse sections (supports nesting)
+          const parseSection = (sectionEl: Element): WikiSection => {
             const id = sectionEl.getAttribute('id') || `section-${sections.length + 1}`;
-            const titleEl = sectionEl.querySelector('title');
+            const titleEl = sectionEl.querySelector(':scope > title');
+            const title = titleEl ? titleEl.textContent || '' : '';
 
-            // Only collect page_refs that are direct children of this section's
-            // <pages> element, not from nested subsections
+            // Collect page_refs from this section's <pages> element
             const sectionPages: string[] = [];
             const pagesContainer = sectionEl.querySelector(':scope > pages');
             if (pagesContainer) {
               pagesContainer.querySelectorAll('page_ref').forEach(el => {
                 if (el.textContent) sectionPages.push(el.textContent);
               });
-            } else {
-              // Fallback: collect all page_refs but try to exclude those from nested sections
-              const nestedSectionIds = new Set<string>();
-              sectionEl.querySelectorAll(':scope > subsections section').forEach(nested => {
-                nested.querySelectorAll('page_ref').forEach(el => {
-                  if (el.textContent) nestedSectionIds.add(el.textContent);
-                });
-              });
-              sectionEl.querySelectorAll('page_ref').forEach(el => {
-                if (el.textContent && !nestedSectionIds.has(el.textContent)) {
-                  sectionPages.push(el.textContent);
+            }
+
+            // Parse nested subsections
+            const subsectionEls = sectionEl.querySelector(':scope > subsections');
+            const childSections: WikiSection[] = [];
+            if (subsectionEls) {
+              Array.from(subsectionEls.children).forEach(child => {
+                if (child.tagName.toLowerCase() === 'section') {
+                  const childSection = parseSection(child);
+                  childSections.push(childSection);
+                  // Add child to flat list only if not already present
+                  if (!sections.some(s => s.id === childSection.id)) {
+                    sections.push(childSection);
+                  }
                 }
               });
             }
-            
-            console.log(`Section "${id}" has page_refs:`, sectionPages);
 
-            const title = titleEl ? titleEl.textContent || '' : '';
-            const subsections: string[] = [];
-            const sectionRefEls = sectionEl.querySelectorAll(':scope > subsections > section');
-            sectionRefEls.forEach(el => {
-              const subId = el.getAttribute('id');
-              if (subId) subsections.push(subId);
-            });
-            // Also check for legacy section_ref elements
-            sectionEl.querySelectorAll(':scope > subsections > section_ref').forEach(el => {
-              if (el.textContent) subsections.push(el.textContent);
-            });
-
-            sections.push({
+            return {
               id,
               title,
               pages: sectionPages,
-              subsections: subsections.length > 0 ? subsections : undefined
-            });
+              subsections: childSections.length > 0 ? childSections : undefined
+            };
+          };
 
-            // Check if this is a root section (not referenced by any other section)
-            let isReferenced = false;
-            sectionsEls.forEach(otherSection => {
-              const otherSectionRefs = otherSection.querySelectorAll('section_ref');
-              otherSectionRefs.forEach(ref => {
-                if (ref.textContent === id) {
-                  isReferenced = true;
-                }
-              });
-            });
-
-            if (!isReferenced) {
-              rootSections.push(id);
+          // Parse top-level sections
+          topSectionEls.forEach(sectionEl => {
+            const section = parseSection(sectionEl);
+            if (!sections.some(s => s.id === section.id)) {
+              sections.push(section);
+            }
+            if (!rootSections.includes(section.id)) {
+              rootSections.push(section.id);
             }
           });
-          
-          // FLATTEN STRUCTURE: Make all sections root-level (no nesting)
-          // This ensures all sections appear at the same level in the sidebar
-          // If you want nested sections in the future, remove this block
-          if (rootSections.length < sections.length) {
-            console.log(`Flattening section hierarchy: ${rootSections.length} root -> ${sections.length} total`);
-            // Clear subsections and make all sections root
-            sections.forEach(section => {
-              section.subsections = undefined;
-              if (!rootSections.includes(section.id)) {
-                rootSections.push(section.id);
-              }
-            });
-          }
           
           // Validate: Check for pages not assigned to any section
           const assignedPageIds = new Set<string>();

@@ -406,7 +406,24 @@ def transform_documents_and_save_as_json(
         transformer=embed_pipeline, key="embed_only"
     )
     db.load(enriched_chunks)
+
+    import time
+    batch_size = configs.get("embedder", {}).get("batch_size", 10)
+    total_batches = (len(enriched_chunks) + batch_size - 1) // batch_size
+    logger.info(
+        f"[Vec] Starting embedding: {len(enriched_chunks)} chunks "
+        f"in ~{total_batches} batches (batch_size={batch_size})"
+    )
+    embed_start = time.time()
+
     db.transform(key="embed_only")
+
+    embed_elapsed = time.time() - embed_start
+    logger.info(
+        f"[Vec] Embedding completed in {embed_elapsed:.1f}s "
+        f"({len(enriched_chunks) / max(embed_elapsed, 0.1):.0f} "
+        f"chunks/sec)"
+    )
 
     # Get transformed documents with embeddings
     transformed_docs = db.get_transformed_data(key="embed_only")

@@ -21,7 +21,7 @@ interface WikiSection {
   id: string;
   title: string;
   pages: string[];
-  subsections?: string[];
+  subsections?: WikiSection[] | string[];
 }
 
 interface WikiStructure {
@@ -122,8 +122,60 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
             })}
 
             {/* Render subsections recursively */}
-            {section.subsections?.map(subsectionId =>
-              renderSection(subsectionId, level + 1)
+            {section.subsections?.map(sub => {
+              if (typeof sub === 'string') {
+                // Legacy: subsection is a string ID
+                return renderSection(sub, level + 1);
+              } else {
+                // New: subsection is a WikiSection object
+                return renderSectionObj(sub, level + 1);
+              }
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Render a WikiSection object directly (for nested subsections)
+  const renderSectionObj = (section: WikiSection, level: number) => {
+    const isExpanded = expandedSections.has(section.id);
+
+    return (
+      <div key={section.id} className="mb-1">
+        <button
+          className="flex items-center w-full text-left px-2 py-1 rounded-md text-sm font-medium text-[var(--foreground)] hover:bg-[var(--background)]/70 transition-colors"
+          onClick={(e) => toggleSection(section.id, e)}
+        >
+          {section.pages.length > 0 || (section.subsections && section.subsections.length > 0) ? (
+            isExpanded ? <FaChevronDown className="mr-2 text-xs" /> : <FaChevronRight className="mr-2 text-xs" />
+          ) : <span className="mr-4" />}
+          <span className="truncate">{section.id} {section.title}</span>
+        </button>
+
+        {isExpanded && (
+          <div className={`ml-4 mt-1 space-y-1 pl-2 border-l border-[var(--border-color)]/30`}>
+            {section.pages.map(pageId => {
+              const page = wikiStructure.pages.find(p => p.id === pageId);
+              if (!page) return null;
+              return (
+                <button
+                  key={pageId}
+                  className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors ${
+                    currentPageId === pageId
+                      ? 'bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] border border-[var(--accent-primary)]/30'
+                      : 'text-[var(--foreground)] hover:bg-[var(--background)] border border-transparent'
+                  }`}
+                  onClick={() => onPageSelect(pageId)}
+                >
+                  <span className="truncate">{page.id} {page.title}</span>
+                </button>
+              );
+            })}
+            {section.subsections?.map(sub =>
+              typeof sub === 'string'
+                ? renderSection(sub, level + 1)
+                : renderSectionObj(sub, level + 1)
             )}
           </div>
         )}
