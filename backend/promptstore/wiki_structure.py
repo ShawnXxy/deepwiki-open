@@ -65,7 +65,15 @@ Create a structured wiki with UP TO 3 LEVELS of hierarchy using the following ca
 NUMBERING SYSTEM: Use numbered IDs that encode position in the hierarchy:
 - Top-level sections: 1, 2, 3, ...
 - Sub-sections: 2.1, 2.2, 2.3, ...
-- Pages within a section get the section's number: section 2 contains page "2", section 2.1 contains page "2.1"
+- Third-level: 2.1.1, 2.1.2, ...
+- Use ONLY dots as separators (NEVER use dashes like "2-2"). Example of valid IDs: 1, 1.1, 2, 2.1, 3, 3.1, 3.2
+- Page "2" is the overview page for section 2. Pages "2.1", "2.2" are sub-pages within section 2.
+
+HIERARCHY RULES:
+- Each single-digit page ID (1, 2, 3, ...) defines a TOP-LEVEL section.
+- A section ONLY contains pages whose ID starts with that section's number. Section 2 contains pages 2, 2.1, 2.2 — NEVER pages from section 3 or 4.
+- The section's title should match the corresponding overview page's title. Section 2 title = Page 2 title.
+- Aim for 5-9 top-level sections with 2-4 sub-pages each. Do NOT create one mega-section that contains most of the pages.
 
 Each section MUST contain one or more pages. EVERY page you define MUST be assigned to exactly one section via <page_ref>.
 
@@ -133,14 +141,17 @@ IMPORTANT FORMATTING INSTRUCTIONS:
 
 CRITICAL VALIDATION RULES:
 1. Create {page_count} pages that would make a comprehensive wiki for this repository
-2. Use numbered IDs (1, 2.1, 2.1.1) that match position in the hierarchy
-3. Each page should focus on a specific aspect of the codebase
-4. The relevant_files should be actual files from the repository that would be used to generate that page
-5. **EVERY page MUST be assigned to exactly one section** - each page's id MUST appear as a <page_ref> in one of the <section> elements
-6. Verify before returning: count of <page> elements MUST equal count of <page_ref> elements across all sections
-7. Do NOT create a generic "Additional Topics" or "Miscellaneous" section. Every page must belong to a meaningful, descriptive section
-8. Do NOT generate duplicate pages covering the same topic under different IDs
-9. Return ONLY valid XML with the structure specified above, with no markdown code block delimiters"""
+2. Use ONLY dotted numeric IDs (1, 2.1, 2.1.1). NEVER use dashes or letters in IDs
+3. Each single-digit ID (1, 2, 3, ...) MUST be a root <section>. If you have pages 4, 4.1, 4.2, then section 4 MUST be a root section — do NOT nest it under section 3
+4. Each section ONLY contains pages whose ID prefix matches. Section 3 contains ONLY pages 3, 3.1, 3.2, etc. — NEVER pages 4.x, 5.x, etc.
+5. The relevant_files should be actual files from the repository that would be used to generate that page
+6. **EVERY page MUST be assigned to exactly one section** - each page's id MUST appear as a <page_ref> in one of the <section> elements
+7. Verify before returning: count of <page> elements MUST equal count of <page_ref> elements across all sections
+8. Do NOT create a generic "Additional Topics" or "Miscellaneous" section. Every page must belong to a meaningful, descriptive section
+9. Do NOT generate duplicate pages covering the same topic under different IDs
+10. Section titles MUST match their corresponding overview page title (e.g., section 2's title = page 2's title)
+11. Do NOT create empty sections with no pages
+12. Return ONLY valid XML with the structure specified above, with no markdown code block delimiters"""
 
 # Concise wiki structure prompt (no sections, simpler structure)
 WIKI_STRUCTURE_CONCISE_PROMPT = """Analyze this GitHub repository {owner}/{repo} and create a wiki structure for it.

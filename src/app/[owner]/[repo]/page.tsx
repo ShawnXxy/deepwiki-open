@@ -355,10 +355,20 @@ export default function RepoWikiPage() {
   const lastCheckpointTime = useRef<number>(0);
   const CHECKPOINT_INTERVAL_MS = 10000; // Save checkpoint at most every 10 seconds
 
+  // Commit hash received from backend via WebSocket metadata
+  const wikiCommitHashRef = useRef<string>('');
+  const [wikiIndexedAt, setWikiIndexedAt] = useState<string>('');
+  const [wikiCommitHash, setWikiCommitHash] = useState<string>('');
+
   // Keepalive worker ref — prevents browser from freezing the tab
   // during long wiki generation (embedding + page generation).
   // Web Workers are not throttled by background-tab rules.
   const keepAliveWorkerRef = useRef<Worker | null>(null);
+
+  // Ref to the active page-generation queue processor.
+  // The keepalive worker calls this to resume the queue when the browser
+  // would otherwise freeze setTimeout/Promise callbacks in a background tab.
+  const processQueueRef = useRef<(() => void) | null>(null);
   
   // Track if we're resuming from a partial cache
   const [isResumingFromPartial, setIsResumingFromPartial] = useState(false);
@@ -384,11 +394,18 @@ export default function RepoWikiPage() {
     }
     // Start a keepalive worker when wiki generation is in progress
     try {
-      const code = 'setInterval(function(){postMessage(0)},15000)';
+      const code = 'setInterval(function(){postMessage(0)},5000)';
       const blob = new Blob([code], { type: 'text/javascript' });
       const url = URL.createObjectURL(blob);
       const worker = new Worker(url);
-      worker.onmessage = () => {}; // Receiving messages keeps main thread alive
+      worker.onmessage = () => {
+        // Web Worker messages are NOT throttled in background tabs.
+        // This wakes the main thread and prods the page generation queue
+        // in case a .then() callback was frozen by the browser.
+        if (processQueueRef.current) {
+          processQueueRef.current();
+        }
+      };
       keepAliveWorkerRef.current = worker;
       return () => {
         worker.terminate();
@@ -547,6 +564,12 @@ export default function RepoWikiPage() {
         
         // Clear generation started flag
         setIsGenerationStarted(false);
+
+        // Capture commit hash and timestamp from generation
+        if (wikiCommitHashRef.current) {
+          setWikiCommitHash(wikiCommitHashRef.current);
+        }
+        setWikiIndexedAt(new Date().toISOString());
         
         // Show completion notification if minimized
         if (isMinimized) {
@@ -629,7 +652,9 @@ export default function RepoWikiPage() {
         generated_pages: pages,
         provider: selectedProviderState,
         model: selectedModelState,
-        is_partial: isPartial
+        is_partial: isPartial,
+        commit_hash: wikiCommitHashRef.current || undefined,
+        indexed_at: isPartial ? undefined : new Date().toISOString(),
       };
       
       // Use fire-and-forget pattern with short timeout to not block UI
@@ -796,9 +821,15 @@ export default function RepoWikiPage() {
           await new Promise<void>((resolve, reject) => {
             // Handle incoming messages
             ws.onmessage = (event) => {
-              // Filter out keepalive messages (HTML comments used to keep connection alive during embedding)
+              // Filter out keepalive and metadata messages (HTML comments)
               const data = event.data;
-              if (data && !data.startsWith('<!-- keepalive')) {
+              if (data && data.startsWith('<!-- meta:commit_hash=')) {
+                // Extract commit hash from metadata message
+                const match = data.match(/commit_hash=([a-f0-9]+)/);
+                if (match) {
+                  wikiCommitHashRef.current = match[1];
+                }
+              } else if (data && !data.startsWith('<!-- keepalive')) {
                 content += data;
               }
             };
@@ -1342,7 +1373,13 @@ export default function RepoWikiPage() {
       } else {
         // DOM parsing succeeded
         pagesEls.forEach(pageEl => {
-        const id = pageEl.getAttribute('id') || `page-${pages.length + 1}`;
+        let id = pageEl.getAttribute('id') || `page-${pages.length + 1}`;
+        // Normalize IDs with dashes between numeric parts to dots (e.g., "2-2" → "2.2", "1.1-2" → "1.1.2")
+        if (/\d-\d/.test(id)) {
+          const normalized = id.replace(/-(?=\d)/g, '.');
+          console.warn(`Normalized page ID "${id}" → "${normalized}"`);
+          id = normalized;
+        }
         const titleEl = pageEl.querySelector('title');
         const importanceEl = pageEl.querySelector('importance');
         const filePathEls = pageEl.querySelectorAll('file_path');
@@ -1375,16 +1412,20 @@ export default function RepoWikiPage() {
       } // Close else block for DOM parsing
 
       // Deduplicate pages by ID — LLM may generate duplicate IDs.
-      // Keep the first occurrence; append a suffix to duplicates.
+      // Keep the first occurrence; assign next sibling ID to duplicates.
+      // E.g., duplicate "1.1" becomes "1.2", then "1.3", etc.
       const seenIds = new Set<string>();
       pages = pages.reduce<WikiPage[]>((acc, page) => {
         if (seenIds.has(page.id)) {
-          // Generate a unique ID by appending a suffix
+          // Increment the last numeric component to find a unique sibling ID
+          const parts = page.id.split('.');
+          const lastIdx = parts.length - 1;
+          let lastNum = parseInt(parts[lastIdx], 10) || 0;
           let newId = page.id;
-          let suffix = 2;
           while (seenIds.has(newId)) {
-            newId = `${page.id}-${suffix}`;
-            suffix++;
+            lastNum++;
+            parts[lastIdx] = String(lastNum);
+            newId = parts.join('.');
           }
           console.warn(`Duplicate page ID "${page.id}" renamed to "${newId}" (title: "${page.title}")`);
           page = { ...page, id: newId };
@@ -1425,7 +1466,14 @@ export default function RepoWikiPage() {
             const pagesContainer = sectionEl.querySelector(':scope > pages');
             if (pagesContainer) {
               pagesContainer.querySelectorAll('page_ref').forEach(el => {
-                if (el.textContent) sectionPages.push(el.textContent);
+                if (el.textContent) {
+                  // Normalize dash IDs in page_refs too
+                  let ref = el.textContent;
+                  if (/^\d+(-\d+)+$/.test(ref)) {
+                    ref = ref.replace(/-/g, '.');
+                  }
+                  sectionPages.push(ref);
+                }
               });
             }
 
@@ -1461,6 +1509,35 @@ export default function RepoWikiPage() {
             }
             if (!rootSections.includes(section.id)) {
               rootSections.push(section.id);
+            }
+          });
+
+          // Remove subsection IDs from rootSections — they should only
+          // appear nested under their parent, not as root-level entries.
+          // Also remove duplicate flat entries for sections that are
+          // already represented as subsections of a parent.
+          const subsectionIds = new Set<string>();
+          sections.forEach(s => {
+            if (s.subsections) {
+              s.subsections.forEach((sub) => {
+                if (typeof sub === 'object' && sub.id) {
+                  subsectionIds.add(sub.id);
+                }
+              });
+            }
+          });
+          // Remove subsections from rootSections
+          const cleanedRootSections = rootSections.filter(id => !subsectionIds.has(id));
+          rootSections.length = 0;
+          cleanedRootSections.forEach(id => rootSections.push(id));
+
+          // Sync section titles with their overview page titles.
+          // Cognition's DeepWiki uses identical titles for section and
+          // its overview page (e.g., section "2" title = page "2" title).
+          sections.forEach(s => {
+            const overviewPage = pages.find(p => p.id === s.id);
+            if (overviewPage && overviewPage.title && s.title !== overviewPage.title) {
+              s.title = overviewPage.title;
             }
           });
           
@@ -1519,6 +1596,66 @@ export default function RepoWikiPage() {
             }
           }
         }
+      }
+
+      // Post-process: enforce that each top-level page (single-digit ID like "1", "2", "3")
+      // has its own root section. Fixes LLM mistakes where sections 4-8 get nested under section 3.
+      if (sections.length > 0) {
+        // Find all top-level page IDs (single-digit, no dots)
+        const topLevelPageIds = pages
+          .filter(p => /^\d+$/.test(p.id))
+          .map(p => p.id);
+
+        for (const tlId of topLevelPageIds) {
+          // Check if this top-level page is already a root section
+          const isRoot = rootSections.includes(tlId);
+          if (isRoot) continue;
+
+          // Check if it's wrongly nested as a page inside another section
+          const wrongParent = sections.find(
+            s => s.pages.includes(tlId) && s.id !== tlId
+          );
+          if (wrongParent) {
+            // Remove this page AND all its sub-pages from the wrong parent
+            const prefix = tlId + '.';
+            const ownPages = wrongParent.pages.filter(
+              pid => pid === tlId || pid.startsWith(prefix)
+            );
+            wrongParent.pages = wrongParent.pages.filter(
+              pid => pid !== tlId && !pid.startsWith(prefix)
+            );
+
+            // Create a proper section for this top-level page
+            const existingSection = sections.find(s => s.id === tlId);
+            if (existingSection) {
+              // Section exists but isn't root — promote it
+              for (const pid of ownPages) {
+                if (!existingSection.pages.includes(pid)) {
+                  existingSection.pages.push(pid);
+                }
+              }
+            } else {
+              // Create new section
+              const page = pages.find(p => p.id === tlId);
+              sections.push({
+                id: tlId,
+                title: page?.title || `Section ${tlId}`,
+                pages: ownPages,
+              });
+            }
+            if (!rootSections.includes(tlId)) {
+              rootSections.push(tlId);
+            }
+            console.log(`Promoted top-level page "${tlId}" to root section (was nested under "${wrongParent.id}")`);
+          }
+        }
+
+        // Sort rootSections numerically
+        rootSections.sort((a, b) => {
+          const na = parseFloat(a) || 0;
+          const nb = parseFloat(b) || 0;
+          return na - nb;
+        });
       }
 
       // Create wiki structure
@@ -1618,6 +1755,7 @@ export default function RepoWikiPage() {
 
                   // Check if all work is done (queue empty and no active requests)
                   if (queue.length === 0 && activeRequests === 0) {
+                    processQueueRef.current = null;
                     if (failedPages.length > 0) {
                       logger.warn('Wiki generation completed with failures', { 
                         failedPages: failedPages.map(p => p.title),
@@ -1653,6 +1791,7 @@ export default function RepoWikiPage() {
         };
 
         // Start processing the queue
+        processQueueRef.current = processQueue;
         processQueue();
 
         // Resume queue processing when browser tab becomes visible again.
@@ -2556,6 +2695,15 @@ export default function RepoWikiPage() {
               setWikiStructure(cachedStructure);
               setGeneratedPages(cachedData.generated_pages);
               setCurrentPageId(cachedStructure.pages.length > 0 ? cachedStructure.pages[0].id : undefined);
+
+              // Load commit hash and indexing timestamp from cache
+              if (cachedData.commit_hash) {
+                wikiCommitHashRef.current = cachedData.commit_hash;
+                setWikiCommitHash(cachedData.commit_hash);
+              }
+              if (cachedData.indexed_at) {
+                setWikiIndexedAt(cachedData.indexed_at);
+              }
               
               // If partial cache, set up for resumption and continue generation
               if (isPartialCache) {
@@ -2641,6 +2789,7 @@ export default function RepoWikiPage() {
                             
                             // Check if all work is done
                             if (queue.length === 0 && activeRequests === 0) {
+                              processQueueRef.current = null;
                               if (failedPages.length > 0) {
                                 console.warn(`[Partial Cache Resume] Completed with ${failedPages.length} failures`);
                               } else {
@@ -2657,6 +2806,7 @@ export default function RepoWikiPage() {
                   };
                   
                   // Start processing
+                  processQueueRef.current = processQueue;
                   processQueue();
                 } else {
                   // No pages to generate (shouldn't happen for partial cache, but handle it)
@@ -3058,6 +3208,12 @@ export default function RepoWikiPage() {
                 <h4 className="text-md font-semibold text-[var(--foreground)] mb-3">
                   {messages.repoPage?.pages || 'Pages'}
                 </h4>
+                {wikiIndexedAt && (
+                  <p className="text-xs text-[var(--muted)] mb-3">
+                    Last indexed: {new Date(wikiIndexedAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    {wikiCommitHash && ` (${wikiCommitHash.slice(0, 7)})`}
+                  </p>
+                )}
                 <WikiTreeView
                   wikiStructure={wikiStructure}
                   currentPageId={currentPageId}
@@ -3083,6 +3239,7 @@ export default function RepoWikiPage() {
                           effectiveRepoInfo, 
                           detectCurrentBranch(effectiveRepoInfo, 'master') || 'master'
                         )}
+                        onNavigateToPage={(pageId) => setCurrentPageId(pageId)}
                       />
                     </div>
 

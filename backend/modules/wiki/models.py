@@ -68,6 +68,8 @@ class WikiCacheData(BaseModel):
     model: Optional[str] = None
     comprehensive: bool = True  # Whether this is a comprehensive wiki
     is_partial: bool = False  # Whether this is a partial/checkpoint cache
+    commit_hash: Optional[str] = None  # HEAD commit used during indexing
+    indexed_at: Optional[str] = None   # ISO timestamp of wiki generation
 
 
 class WikiCacheRequest(BaseModel):
@@ -80,6 +82,8 @@ class WikiCacheRequest(BaseModel):
     provider: str
     model: str
     is_partial: bool = False
+    commit_hash: Optional[str] = None
+    indexed_at: Optional[str] = None
 
 
 class WikiExportRequest(BaseModel):

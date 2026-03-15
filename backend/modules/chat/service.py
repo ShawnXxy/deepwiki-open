@@ -139,7 +139,12 @@ def _sanitize_for_content_filter(text: str) -> str:
     return text
 
 
-def format_context_text(retrieved_documents) -> str:
+def format_context_text(
+    retrieved_documents,
+    repo_url: str = "",
+    commit_hash: str = "",
+    repo_type: str = "github",
+) -> str:
     """
     Format retrieved documents into context text for LLM consumption.
 
@@ -147,8 +152,14 @@ def format_context_text(retrieved_documents) -> str:
     includes structural metadata like section type, function names,
     and class names. Falls back to basic format for legacy chunks.
 
+    When repo_url and commit_hash are provided, appends a commit-pinned
+    source URL per chunk so the LLM can produce accurate citations.
+
     Args:
         retrieved_documents: Documents retrieved from RAG
+        repo_url: Repository URL for generating source links
+        commit_hash: Commit SHA for pinning source links
+        repo_type: Repository type (github, azuredevops, etc.)
 
     Returns:
         str: Formatted context text with structural headers
@@ -222,6 +233,19 @@ def format_context_text(retrieved_documents) -> str:
                 chunk_texts.append(f"{chunk_header}\n{raw_text}")
             else:
                 chunk_texts.append(raw_text)
+
+            # Append per-chunk source URL for LLM citation
+            if repo_url and start_line is not None:
+                from backend.utils.source_url import build_source_url
+                sl = start_line + 1  # 0-based → 1-based
+                el = (end_line + 1) if end_line is not None else sl
+                src_url = build_source_url(
+                    repo_url, file_path, commit_hash,
+                    repo_type, sl, el,
+                )
+                chunk_texts.append(
+                    f"Source: [{file_path} L{sl}-L{el}]({src_url})"
+                )
 
         content = "\n\n".join(chunk_texts)
         context_parts.append(f"{header}\n{content}")

@@ -8,6 +8,7 @@ import Mermaid from './Mermaid';
 
 interface MarkdownProps {
   content: string;
+  onNavigateToPage?: (pageId: string) => void;
 }
 
 /**
@@ -123,7 +124,7 @@ function wrapUnfencedMermaid(md: string): string {
   return result.join('\n');
 }
 
-const Markdown: React.FC<MarkdownProps> = ({ content }) => {
+const Markdown: React.FC<MarkdownProps> = ({ content, onNavigateToPage }) => {
   // Pre-process: wrap unfenced Mermaid diagrams in code fences
   const processedContent = React.useMemo(() => wrapUnfencedMermaid(content), [content]);
   // Define markdown components
@@ -184,6 +185,23 @@ const Markdown: React.FC<MarkdownProps> = ({ content }) => {
       return <li className="mb-2 text-sm leading-relaxed dark:text-white" {...props}>{children}</li>;
     },
     a({ children, href, ...props }: { children?: React.ReactNode; href?: string }) {
+      // Cross-page wiki links: deepwiki://page_id
+      if (href?.startsWith('deepwiki://') && onNavigateToPage) {
+        const pageId = href.replace('deepwiki://', '');
+        return (
+          <a
+            href="#"
+            className="text-purple-600 dark:text-purple-400 hover:underline font-medium"
+            onClick={(e) => {
+              e.preventDefault();
+              onNavigateToPage(pageId);
+            }}
+            {...props}
+          >
+            {children}
+          </a>
+        );
+      }
       // In-page anchor links: scroll to heading, don't open new tab
       if (href?.startsWith('#')) {
         return (

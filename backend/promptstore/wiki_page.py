@@ -51,6 +51,7 @@ The source files provided may include structural metadata to help you write more
 - **Structural summaries** like `(Type: py | Classes: MyClass | Functions: init, process)` list key components defined in the file.
 - **Section markers** like `### [function]` or `### [class]` indicate what type of code block follows.
 - **Line references** like `(lines 45-120)` indicate where in the source file the code appears.
+- **Source URLs** like `Source: [file.py L45-L120](https://...)` provide commit-pinned permalink URLs. COPY THESE EXACTLY into your citations.
 Use this structural information to write more precise descriptions and cite specific components accurately.
 
 Based on the content of the relevant source files:
@@ -113,10 +114,12 @@ Based on the content of the relevant source files:
     *   Ensure snippets are well-formatted within Markdown code blocks with appropriate language identifiers.
 
 6.  **Source Citations:**
-    *   When possible, cite the specific source file(s) from which the information was derived.
-    *   If line numbers are available in the context (e.g., from section markers), reference them.
-    *   Place citations at the end of the paragraph, under the diagram/table, or after the code snippet.
-    *   Use the format: `Sources: [filename.ext]()` or `Sources: [filename.ext:line_number]()`.
+    *   Each code chunk in the SOURCE CODE CONTEXT may include a `Source:` line with a permalink URL.
+    *   COPY THE EXACT URL from these `Source:` lines when citing. Do not modify or fabricate URLs.
+    *   Place citations at the end of each major section (after each H2 or H3).
+    *   Use the format: `Sources: [filename.ext L10-L25](url)`.
+    *   Multiple citations on one line: `Sources: [a.py L10-L25](url1), [b.py L30-L45](url2)`.
+    *   If no `Source:` URL is available for a chunk, use an empty URL: `Sources: [filename.ext]()`.
     *   When structural metadata lists specific functions or classes, reference them by name in your explanations.
 7.  **Technical Accuracy:** Base all information on the provided source files. If information is limited, focus on what IS available rather than what's missing.
 
@@ -139,6 +142,7 @@ def format_file_paths_list(
     repo_url: str = "",
     branch: str = "main",
     commit_hash: str = None,
+    repo_type: str = "github",
 ) -> str:
     """
     Format a list of file paths as markdown links for the wiki page header.
@@ -148,12 +152,11 @@ def format_file_paths_list(
         return "- No source files specified"
 
     if repo_url and commit_hash:
-        # Commit-pinned Azure DevOps URLs
+        from backend.utils.source_url import build_source_url
         links = []
         for path in file_paths:
-            url = (
-                f"{repo_url}?path=/{path}"
-                f"&version=GC{commit_hash}"
+            url = build_source_url(
+                repo_url, path, commit_hash, repo_type
             )
             links.append(f"- [{path}]({url})")
         return "\n".join(links)
@@ -198,6 +201,7 @@ def build_wiki_page_prompt(
     page_catalog: str = None,
     file_summaries: str = None,
     language_name: str = "English",
+    repo_type: str = "github",
 ) -> str:
     """
     Build the complete wiki page generation prompt.
@@ -207,7 +211,8 @@ def build_wiki_page_prompt(
     file summaries) that the frontend can't access.
     """
     file_paths_list = format_file_paths_list(
-        file_paths, repo_url, commit_hash=commit_hash
+        file_paths, repo_url, commit_hash=commit_hash,
+        repo_type=repo_type,
     )
 
     prompt = WIKI_PAGE_CONTENT_PROMPT.format(

@@ -41,6 +41,28 @@ _executor = ThreadPoolExecutor(max_workers=4)
 logger = logging.getLogger(__name__)
 
 
+async def _safe_send(websocket: WebSocket, text: str) -> bool:
+    """Send text over WebSocket, returning False if the client disconnected.
+
+    Catches all disconnect-related exceptions so callers can simply
+    check the return value and stop streaming when it returns False.
+    """
+    try:
+        await websocket.send_text(text)
+        return True
+    except (WebSocketDisconnect, RuntimeError, ConnectionError, Exception) as exc:
+        logger.debug(f"Client disconnected during send: {type(exc).__name__}")
+        return False
+
+
+async def _safe_close(websocket: WebSocket) -> None:
+    """Close the WebSocket gracefully, ignoring errors if already closed."""
+    try:
+        await websocket.close()
+    except Exception:
+        pass
+
+
 # Language display names for wiki structure prompts
 LANGUAGE_DISPLAY_NAMES = {
     'en': 'English',
@@ -402,6 +424,41 @@ async def handle_websocket_chat(websocket: WebSocket):
         # Get the query from the last message
         query = last_message.content
 
+        # Get repository information (needed before RAG for citation URLs)
+        repo_url = request.repo_url
+        repo_name = repo_url.split("/")[-1] if "/" in repo_url else repo_url
+        repo_type = request.type
+
+        # Get commit hash early — needed for citation URLs in context
+        commit_hash = ""
+        if request.wiki_page_request and request.page_title:
+            try:
+                from backend.modules.repository.git_ops import (
+                    get_head_commit_hash
+                )
+                from backend.utils.paths import get_adalflow_root_path
+                from backend.modules.rag.database import DatabaseManager
+                dm = DatabaseManager()
+                repo_name_for_path = dm._extract_repo_name_from_url(
+                    request.repo_url, request.type
+                )
+                local_repo_path = os.path.join(
+                    get_adalflow_root_path(), "repos",
+                    repo_name_for_path
+                )
+                if os.path.isdir(local_repo_path):
+                    commit_hash = get_head_commit_hash(
+                        local_repo_path
+                    )
+                    if commit_hash:
+                        logger.info(
+                            f"Commit hash: {commit_hash[:8]}"
+                        )
+            except Exception as e:
+                logger.debug(
+                    f"Could not get commit hash: {e}"
+                )
+
         # Only retrieve documents if input is not too large
         context_text = ""
         retrieved_documents = None
@@ -434,7 +491,12 @@ async def handle_websocket_chat(websocket: WebSocket):
                         retrieved_documents = request_rag(
                             rag_query, language=request.language
                         )
-                    context_text = format_context_text(retrieved_documents)
+                    context_text = format_context_text(
+                        retrieved_documents,
+                        repo_url=repo_url if request.wiki_page_request else "",
+                        commit_hash=commit_hash,
+                        repo_type=repo_type,
+                    )
                     if not context_text:
                         logger.warning("No documents retrieved from RAG")
                 except Exception as e:
@@ -443,11 +505,6 @@ async def handle_websocket_chat(websocket: WebSocket):
             except Exception as e:
                 logger.error(f"Error retrieving documents: {str(e)}")
                 context_text = ""
-
-        # Get repository information
-        repo_url = request.repo_url
-        repo_name = repo_url.split("/")[-1] if "/" in repo_url else repo_url
-        repo_type = request.type
 
         # Get language information
         language_code, language_name = get_language_info(request.language)
@@ -460,35 +517,6 @@ async def handle_websocket_chat(websocket: WebSocket):
             from backend.promptstore.wiki_page import (
                 build_wiki_page_prompt
             )
-            from backend.modules.repository.git_ops import (
-                get_head_commit_hash
-            )
-
-            # Get commit hash from the cloned repo
-            commit_hash = ""
-            try:
-                from backend.utils.paths import get_adalflow_root_path
-                from backend.modules.rag.database import DatabaseManager
-                # Construct local path the same way the DB manager does
-                dm = DatabaseManager()
-                repo_name = dm._extract_repo_name_from_url(
-                    request.repo_url, request.type
-                )
-                local_repo_path = os.path.join(
-                    get_adalflow_root_path(), "repos", repo_name
-                )
-                if os.path.isdir(local_repo_path):
-                    commit_hash = get_head_commit_hash(
-                        local_repo_path
-                    )
-                    if commit_hash:
-                        logger.info(
-                            f"Commit hash: {commit_hash[:8]}"
-                        )
-            except Exception as e:
-                logger.debug(
-                    f"Could not get commit hash: {e}"
-                )
 
             # Build page catalog from the request
             page_catalog = ""
@@ -509,6 +537,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                 commit_hash=commit_hash,
                 page_catalog=page_catalog if page_catalog else None,
                 language_name=language_name,
+                repo_type=repo_type,
             )
 
             # Use the backend-built prompt, prepend /no_think
@@ -641,6 +670,15 @@ async def handle_websocket_chat(websocket: WebSocket):
             import time as _time
             _stream_start = _time.time()
             logger.info("Making Azure AI API call")
+
+            # Send commit hash metadata before streaming (wiki pages only)
+            if request.wiki_page_request and commit_hash:
+                if not await _safe_send(
+                    websocket,
+                    f"<!-- meta:commit_hash={commit_hash} -->"
+                ):
+                    return
+
             response = await model.acall(
                 api_kwargs=api_kwargs, model_type=ModelType.LLM
             )
@@ -649,7 +687,10 @@ async def handle_websocket_chat(websocket: WebSocket):
             chunk_count = 0
             finish_reason = None
             content_filter_category = None
+            _client_connected = True
             async for chunk in response:
+                if not _client_connected:
+                    break
                 chunk_count += 1
                 choices = getattr(chunk, "choices", [])
                 if len(choices) > 0:
@@ -670,7 +711,9 @@ async def handle_websocket_chat(websocket: WebSocket):
                         text = getattr(delta, "content", None)
                         if text is not None:
                             total_text += text
-                            await websocket.send_text(text)
+                            if not await _safe_send(websocket, text):
+                                _client_connected = False
+                                break
             _stream_elapsed = _time.time() - _stream_start
             logger.info(
                 f"Streaming complete: {chunk_count} chunks, "
@@ -678,6 +721,17 @@ async def handle_websocket_chat(websocket: WebSocket):
                 f"finish_reason={finish_reason}, "
                 f"elapsed={_stream_elapsed:.1f}s"
             )
+
+            # If client already disconnected during streaming,
+            # skip post-stream sends and just clean up.
+            if not _client_connected:
+                logger.info(
+                    "Client disconnected during streaming "
+                    f"({chunk_count} chunks, {len(total_text)} chars sent "
+                    "before disconnect)"
+                )
+                await _safe_close(websocket)
+                return
 
             # Content filter finish reason — signal the frontend so it
             # can handle truncated content (e.g. repair XML, use partial).
@@ -739,13 +793,18 @@ async def handle_websocket_chat(websocket: WebSocket):
                                     rdelta, "content", None
                                 )
                                 if rtext:
-                                    await websocket.send_text(rtext)
-                    await websocket.close()
+                                    if not await _safe_send(
+                                        websocket, rtext
+                                    ):
+                                        break
+                    await _safe_close(websocket)
                     return  # Skip the WARNING marker
 
-                await websocket.send_text("\n[CONTENT_FILTER_WARNING]")
+                await _safe_send(
+                    websocket, "\n[CONTENT_FILTER_WARNING]"
+                )
 
-            await websocket.close()
+            await _safe_close(websocket)
         except Exception as e_azure:
             logger.error(f"Error with Azure AI API: {str(e_azure)}")
             error_message = str(e_azure).lower()
@@ -759,11 +818,10 @@ async def handle_websocket_chat(websocket: WebSocket):
                     f"Content filter triggered: {e_azure}. "
                     "Sending WARNING marker to frontend."
                 )
-                try:
-                    await websocket.send_text("\n[CONTENT_FILTER_WARNING]")
-                except Exception:
-                    pass
-                await websocket.close()
+                await _safe_send(
+                    websocket, "\n[CONTENT_FILTER_WARNING]"
+                )
+                await _safe_close(websocket)
             # Check for token limit errors
             elif ("maximum context length" in error_message or
                     "token limit" in error_message or
@@ -779,18 +837,19 @@ async def handle_websocket_chat(websocket: WebSocket):
                     "Please check your AZURE_OPENAI_API_KEY, "
                     "AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_VERSION."
                 )
-                await websocket.send_text(error_msg)
-                await websocket.close()
+                await _safe_send(websocket, error_msg)
+                await _safe_close(websocket)
 
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
     except Exception as e:
-        logger.error(f"Error in WebSocket handler: {str(e)}")
-        try:
-            await websocket.send_text(f"Error: {str(e)}")
-            await websocket.close()
-        except Exception:
-            pass
+        import traceback
+        logger.error(
+            f"Error in WebSocket handler: {str(e)}\n"
+            f"{traceback.format_exc()}"
+        )
+        await _safe_send(websocket, f"Error: {str(e)}")
+        await _safe_close(websocket)
 
 
 async def _handle_fallback_request(
@@ -840,16 +899,17 @@ async def _handle_fallback_request(
                 if delta is not None:
                     text = getattr(delta, "content", None)
                     if text is not None:
-                        await websocket.send_text(text)
+                        if not await _safe_send(websocket, text):
+                            break
 
         if finish_reason == "content_filter":
             logger.warning(
                 "Fallback response truncated by content filter. "
                 "Sending WARNING marker to frontend."
             )
-            await websocket.send_text("\n[CONTENT_FILTER_WARNING]")
+            await _safe_send(websocket, "\n[CONTENT_FILTER_WARNING]")
 
-        await websocket.close()
+        await _safe_close(websocket)
     except Exception as e_fallback:
         logger.error(f"Error with Azure AI API fallback: {str(e_fallback)}")
         error_message = str(e_fallback).lower()
@@ -862,15 +922,14 @@ async def _handle_fallback_request(
                 f"Content filter triggered in fallback: {e_fallback}. "
                 "Sending WARNING marker to frontend."
             )
-            try:
-                await websocket.send_text("\n[CONTENT_FILTER_WARNING]")
-            except Exception:
-                pass
-            await websocket.close()
+            await _safe_send(
+                websocket, "\n[CONTENT_FILTER_WARNING]"
+            )
+            await _safe_close(websocket)
         else:
             error_msg = (
                 f"\nError with Azure AI API fallback: {str(e_fallback)}\n\n"
                 "Please check your Azure OpenAI configuration."
             )
-            await websocket.send_text(error_msg)
-            await websocket.close()
+            await _safe_send(websocket, error_msg)
+            await _safe_close(websocket)
