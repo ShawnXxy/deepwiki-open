@@ -679,9 +679,48 @@ async def handle_websocket_chat(websocket: WebSocket):
                 ):
                     return
 
-            response = await model.acall(
-                api_kwargs=api_kwargs, model_type=ModelType.LLM
-            )
+            # Start a keepalive task that pings every 15s while waiting
+            # for the LLM to respond. Reasoning models (o4-mini) can
+            # take 30-130s before the first chunk — without pings the
+            # browser closes the idle WebSocket on inactive tabs.
+            _llm_keepalive_active = True
+            _llm_ping_count = 0
+
+            async def _llm_keepalive():
+                nonlocal _llm_ping_count
+                while _llm_keepalive_active:
+                    await asyncio.sleep(15)
+                    if not _llm_keepalive_active:
+                        break
+                    _llm_ping_count += 1
+                    logger.debug(
+                        f"Sending LLM keepalive ping #{_llm_ping_count}"
+                    )
+                    if not await _safe_send(
+                        websocket,
+                        f"<!-- llm-keepalive {_llm_ping_count} -->"
+                    ):
+                        break
+
+            keepalive_task = asyncio.create_task(_llm_keepalive())
+
+            try:
+                response = await model.acall(
+                    api_kwargs=api_kwargs, model_type=ModelType.LLM
+                )
+            finally:
+                # Stop keepalive once we have the response iterator
+                _llm_keepalive_active = False
+                keepalive_task.cancel()
+                try:
+                    await keepalive_task
+                except asyncio.CancelledError:
+                    pass
+                if _llm_ping_count > 0:
+                    logger.info(
+                        f"LLM responded after {_llm_ping_count} "
+                        "keepalive pings"
+                    )
             # Handle streaming response from Azure AI
             total_text = ""
             chunk_count = 0
