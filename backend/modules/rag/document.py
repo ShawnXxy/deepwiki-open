@@ -14,12 +14,15 @@ from adalflow.core.types import Document
 from adalflow.components.data_process import TextSplitter, ToEmbeddings
 from adalflow.core.db import LocalDB
 
-from backend.config import configs, get_file_filters_config
+from backend.config import (
+    configs, get_file_filters_config,
+)
 from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
 from backend.clients.vector_storage import get_vector_storage
 from backend.types import FileFilter
 from backend.tools.embedder import get_embedder
 from backend.modules.rag.utils import safe_read_file, count_tokens, MAX_EMBEDDING_TOKENS
+from backend.modules.rag.code_splitter import split_and_enrich_documents
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +68,9 @@ def read_all_documents(
     doc_extensions = [".md", ".txt", ".rst", ".json", ".yaml", ".yml"]
 
     # Initialize FileFilter with inclusion/exclusion rules
-    if (included_dirs is not None and len(included_dirs) > 0) or (included_files is not None and len(included_files) > 0):
+    has_dirs = included_dirs is not None and len(included_dirs) > 0
+    has_files = included_files is not None and len(included_files) > 0
+    if has_dirs or has_files:
         # Inclusion mode: only process specified directories and files
         file_filter = FileFilter(
             included_dirs=set(included_dirs) if included_dirs else set(),
@@ -102,32 +107,32 @@ def read_all_documents(
         """Helper to compute the file URL based on repo settings."""
         if not repo_url or not repo_url.startswith(("http://", "https://")):
             return relative_path
-        
+
         # Normalize relative path (forward slashes)
         file_path = relative_path.replace("\\", "/")
         if not file_path.startswith("/"):
             file_path = "/" + file_path
-            
+
         branch_name = branch if branch and branch.strip() else "main"
-        
+
         if repo_type == "azuredevops":
             # Format: .../_git/repo?version=GB{branch}&path=/{path}
             return f"{repo_url.rstrip('/')}?version=GB{branch_name}&path={file_path}"
-             
+
         elif repo_type in ["github", "gitlab"]:
             # Format: .../blob/{branch}/{path}
             base_url = repo_url
             if base_url.endswith(".git"):
                 base_url = base_url[:-4]
             return f"{base_url.rstrip('/')}/blob/{branch_name}{file_path}"
-             
+
         elif repo_type == "bitbucket":
             # Format: .../src/{branch}/{path}
             base_url = repo_url
             if base_url.endswith(".git"):
                 base_url = base_url[:-4]
             return f"{base_url.rstrip('/')}/src/{branch_name}{file_path}"
-             
+
         return relative_path
 
     # Process code files first
@@ -151,11 +156,16 @@ def read_all_documents(
                     and "test" not in relative_path.lower()
                 )
 
-                # Check token count
+                # Log token count for large files — no skip needed since
+                # split_code_at_boundaries() handles any file size by
+                # splitting into ~2000-token chunks at logical boundaries.
                 token_count = count_tokens(content, embedder_type)
                 if token_count > MAX_EMBEDDING_TOKENS * 10:
-                    logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
-                    continue
+                    logger.info(
+                        f"Large code file {relative_path}: "
+                        f"{token_count} tokens "
+                        f"(will be split into ~{token_count // 2000} chunks)"
+                    )
 
                 doc = Document(
                     text=content,
@@ -187,9 +197,12 @@ def read_all_documents(
                 # Use safe_read_file for automatic encoding detection
                 content = safe_read_file(file_path)
 
-                # Check token count
+                # Check token count — doc files are split by
+                # _split_doc_text() so moderate sizes are fine.
+                # Skip only extremely large docs (likely auto-generated
+                # data files like vectors.txt, test fixtures, etc.)
                 token_count = count_tokens(content, embedder_type)
-                if token_count > MAX_EMBEDDING_TOKENS:
+                if token_count > MAX_EMBEDDING_TOKENS * 10:
                     logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
                     continue
 
@@ -216,6 +229,8 @@ def read_all_documents(
 def prepare_data_pipeline(embedder_type: str = None, is_ollama_embedder: bool = None):
     """
     Creates and returns the data transformation pipeline.
+    DEPRECATED: Used only for legacy pkl format. New code uses
+    prepare_embed_only_pipeline() with code-aware pre-splitting.
 
     Args:
         embedder_type (str, optional): Kept for backward compatibility, ignored.
@@ -243,6 +258,28 @@ def prepare_data_pipeline(embedder_type: str = None, is_ollama_embedder: bool = 
     return data_transformer
 
 
+def prepare_embed_only_pipeline():
+    """
+    Creates a pipeline that only embeds (no splitting).
+
+    Used with code-aware pre-splitting where documents
+    are already split into enriched chunks before embedding.
+
+    Returns:
+        ToEmbeddings: The embedding transformer
+    """
+    from backend.config import get_embedder_config
+
+    embedder_config = get_embedder_config()
+    embedder = get_embedder()
+    batch_size = embedder_config.get("batch_size", 500)
+
+    embedder_transformer = ToEmbeddings(
+        embedder=embedder, batch_size=batch_size
+    )
+    return embedder_transformer
+
+
 def transform_documents_and_save_to_db(
     documents: List[Document],
     db_path: str,
@@ -252,8 +289,8 @@ def transform_documents_and_save_to_db(
 ) -> LocalDB:
     """
     Transforms a list of documents and saves them to storage (Azure Blob or local).
-    
-    DEPRECATED: This function uses pickle format. New code should use 
+
+    DEPRECATED: This function uses pickle format. New code should use
     transform_documents_and_save_as_json() for memory-efficient JSON storage.
 
     Args:
@@ -262,7 +299,7 @@ def transform_documents_and_save_to_db(
         embedder_type (str, optional): Kept for backward compatibility, ignored.
         is_ollama_embedder (bool, optional): DEPRECATED. Kept for backward compatibility.
         blob_path (str, optional): Path in blob storage (e.g., "databases/owner_repo.pkl")
-    
+
     Returns:
         LocalDB: The transformed database
     """
@@ -274,7 +311,7 @@ def transform_documents_and_save_to_db(
     db.register_transformer(transformer=data_transformer, key="split_and_embed")
     db.load(documents)
     db.transform(key="split_and_embed")
-    
+
     # Save to Azure Blob Storage when configured (no fallback to local)
     if blob_path and is_blob_storage_configured():
         try:
@@ -283,7 +320,7 @@ def transform_documents_and_save_to_db(
                 error_msg = "Azure Blob Storage is configured but failed to create client. Check MSI configuration."
                 logger.error(error_msg)
                 raise ConnectionError(error_msg)
-            
+
             if blob_client.save_pickle(blob_path, db):
                 logger.info(f"Database saved to Azure Blob Storage: {blob_path}")
                 return db
@@ -297,7 +334,7 @@ def transform_documents_and_save_to_db(
             error_msg = f"Failed to connect to Azure Blob Storage for saving: {e}"
             logger.error(error_msg)
             raise ConnectionError(error_msg) from e
-    
+
     # Local storage mode (blob not configured)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     db.save_state(filepath=db_path)
@@ -313,12 +350,16 @@ def transform_documents_and_save_as_json(
 ) -> List[Document]:
     """
     Transforms documents and saves them as JSON chunk files.
-    
-    This is the new memory-efficient approach that:
-    - Splits documents into chunks
-    - Generates embeddings
-    - Saves each chunk as a separate JSON file organized by source file
-    
+
+    Uses code-aware splitting (processor_design approach) for code files:
+    - Splits at function/class boundaries instead of arbitrary token positions
+    - Enriches embedding text with file context and structural metadata
+    - Extracts code elements (functions, classes) for richer retrieval
+
+    For documentation files:
+    - Splits at heading/paragraph boundaries
+    - Adds file path context to embedding text
+
     Storage structure:
         vectors/{repo_name}_{branch}/
             └── {source_file_path}_chunk_001.json
@@ -330,44 +371,87 @@ def transform_documents_and_save_as_json(
         repo_name: Repository name (owner_repo format)
         branch: Branch name
         progress_callback: Optional callback(saved, total) for progress updates
-    
+
     Returns:
         List of transformed Document objects with embeddings
-        
+
     Raises:
         ConnectionError: If Azure Blob Storage is configured but connection fails
         ValueError: If transformation or saving fails
     """
-    logger.info(f"[Vec] Transforming {len(documents)} documents for {repo_name}_{branch}")
-    
-    # Get the data transformer
-    data_transformer = prepare_data_pipeline()
+    logger.info(
+        f"[Vec] Transforming {len(documents)} documents for "
+        f"{repo_name}_{branch} (code-aware splitting)"
+    )
 
-    # Create a temporary LocalDB for transformation
-    db = LocalDB()
-    db.register_transformer(transformer=data_transformer, key="split_and_embed")
-    db.load(documents)
-    db.transform(key="split_and_embed")
-    
-    # Get transformed documents
-    transformed_docs = db.get_transformed_data(key="split_and_embed")
-    
-    if not transformed_docs:
-        logger.warning("[Vec] No documents after transformation")
+    # Step 1: Code-aware splitting + structural enrichment
+    # This replaces the naive TextSplitter with boundary-aware splitting
+    # and enriches each chunk with file context for better embedding quality
+    enriched_chunks = split_and_enrich_documents(documents)
+
+    if not enriched_chunks:
+        logger.warning("[Vec] No chunks after splitting")
         return []
-    
-    logger.info(f"[Vec] Generated {len(transformed_docs)} chunks, saving as JSON...")
-    
-    # Save to JSON vector storage
+
+    logger.info(
+        f"[Vec] Code-aware split: {len(documents)} files -> "
+        f"{len(enriched_chunks)} enriched chunks"
+    )
+
+    # Step 2: Embed the enriched chunks (splitting already done)
+    embed_pipeline = prepare_embed_only_pipeline()
+
+    db = LocalDB()
+    db.register_transformer(
+        transformer=embed_pipeline, key="embed_only"
+    )
+    db.load(enriched_chunks)
+
+    import time
+    batch_size = configs.get("embedder", {}).get("batch_size", 10)
+    total_batches = (len(enriched_chunks) + batch_size - 1) // batch_size
+    logger.info(
+        f"[Vec] Starting embedding: {len(enriched_chunks)} chunks "
+        f"in ~{total_batches} batches (batch_size={batch_size})"
+    )
+    embed_start = time.time()
+
+    db.transform(key="embed_only")
+
+    embed_elapsed = time.time() - embed_start
+    logger.info(
+        f"[Vec] Embedding completed in {embed_elapsed:.1f}s "
+        f"({len(enriched_chunks) / max(embed_elapsed, 0.1):.0f} "
+        f"chunks/sec)"
+    )
+
+    # Get transformed documents with embeddings
+    transformed_docs = db.get_transformed_data(key="embed_only")
+
+    if not transformed_docs:
+        logger.warning("[Vec] No documents after embedding")
+        return []
+
+    logger.info(
+        f"[Vec] Generated embeddings for {len(transformed_docs)} chunks, "
+        f"saving as JSON..."
+    )
+
+    # Step 4: Save to JSON vector storage
     vector_storage = get_vector_storage()
-    
+
     if not vector_storage.save_documents(
         transformed_docs,
         repo_name,
         branch,
         progress_callback=progress_callback
     ):
-        raise ValueError(f"[Vec] Failed to save vectors for {repo_name}_{branch}")
-    
-    logger.info(f"[Vec] Successfully saved {len(transformed_docs)} chunks as JSON")
+        raise ValueError(
+            f"[Vec] Failed to save vectors for {repo_name}_{branch}"
+        )
+
+    logger.info(
+        f"[Vec] Successfully saved {len(transformed_docs)} "
+        f"enriched chunks as JSON"
+    )
     return transformed_docs

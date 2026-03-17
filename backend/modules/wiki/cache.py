@@ -209,7 +209,9 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
         provider=data.provider,
         model=data.model,
         comprehensive=data.comprehensive,
-        is_partial=data.is_partial
+        is_partial=data.is_partial,
+        commit_hash=data.commit_hash,
+        indexed_at=data.indexed_at,
     )
     
     # Log size of data to be cached

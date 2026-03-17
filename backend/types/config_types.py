@@ -82,6 +82,7 @@ class EmbedderModelConfig(BaseModel):
 class RetrieverConfig(BaseModel):
     """Retriever configuration for RAG."""
     top_k: int = 20
+    top_k_wiki: int = 40
 
 
 class TextSplitterConfig(BaseModel):

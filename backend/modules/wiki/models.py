@@ -3,7 +3,7 @@ Pydantic models for wiki operations.
 """
 
 from typing import List, Optional, Dict, Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.modules.repository.models import RepoInfo
 
@@ -23,7 +23,29 @@ class WikiSection(BaseModel):
     id: str
     title: str
     pages: List[str]
-    subsections: Optional[List[str]] = None
+    subsections: Optional[List[Any]] = None
+
+    @field_validator('subsections', mode='before')
+    @classmethod
+    def accept_string_or_section(cls, v):
+        """Accept both string IDs (frontend) and WikiSection dicts."""
+        if v is None:
+            return None
+        result = []
+        for item in v:
+            if isinstance(item, str):
+                # Legacy format: subsection ID as string — skip
+                # (frontend uses flat section refs, not nested objects)
+                continue
+            elif isinstance(item, dict):
+                result.append(item)
+            else:
+                result.append(item)
+        return result if result else None
+
+
+# Resolve forward reference for self-referencing model
+WikiSection.model_rebuild()
 
 
 class WikiStructureModel(BaseModel):
@@ -46,6 +68,8 @@ class WikiCacheData(BaseModel):
     model: Optional[str] = None
     comprehensive: bool = True  # Whether this is a comprehensive wiki
     is_partial: bool = False  # Whether this is a partial/checkpoint cache
+    commit_hash: Optional[str] = None  # HEAD commit used during indexing
+    indexed_at: Optional[str] = None   # ISO timestamp of wiki generation
 
 
 class WikiCacheRequest(BaseModel):
@@ -58,6 +82,8 @@ class WikiCacheRequest(BaseModel):
     provider: str
     model: str
     is_partial: bool = False
+    commit_hash: Optional[str] = None
+    indexed_at: Optional[str] = None
 
 
 class WikiExportRequest(BaseModel):

@@ -24,7 +24,7 @@ interface WikiSection {
   id: string;
   title: string;
   pages: string[];
-  subsections?: string[];
+  subsections?: WikiSection[] | string[];
 }
 
 interface WikiPage {
@@ -354,6 +354,21 @@ export default function RepoWikiPage() {
   // Track last checkpoint save time to avoid too-frequent saves
   const lastCheckpointTime = useRef<number>(0);
   const CHECKPOINT_INTERVAL_MS = 10000; // Save checkpoint at most every 10 seconds
+
+  // Commit hash received from backend via WebSocket metadata
+  const wikiCommitHashRef = useRef<string>('');
+  const [wikiIndexedAt, setWikiIndexedAt] = useState<string>('');
+  const [wikiCommitHash, setWikiCommitHash] = useState<string>('');
+
+  // Keepalive worker ref — prevents browser from freezing the tab
+  // during long wiki generation (embedding + page generation).
+  // Web Workers are not throttled by background-tab rules.
+  const keepAliveWorkerRef = useRef<Worker | null>(null);
+
+  // Ref to the active page-generation queue processor.
+  // The keepalive worker calls this to resume the queue when the browser
+  // would otherwise freeze setTimeout/Promise callbacks in a background tab.
+  const processQueueRef = useRef<(() => void) | null>(null);
   
   // Track if we're resuming from a partial cache
   const [isResumingFromPartial, setIsResumingFromPartial] = useState(false);
@@ -363,6 +378,45 @@ export default function RepoWikiPage() {
   useEffect(() => {
     progressRef.current = progress;
   }, [progress]);
+
+  // Keepalive worker: prevents browser from freezing/suspending the tab
+  // during long-running wiki generation (embedding can take 30+ minutes).
+  // A Web Worker's setInterval is NOT throttled by background-tab rules;
+  // its postMessage wakes up the main thread's event loop.
+  useEffect(() => {
+    if (!isLoading) {
+      // Not loading — terminate any existing keepalive worker
+      if (keepAliveWorkerRef.current) {
+        keepAliveWorkerRef.current.terminate();
+        keepAliveWorkerRef.current = null;
+      }
+      return;
+    }
+    // Start a keepalive worker when wiki generation is in progress
+    try {
+      const code = 'setInterval(function(){postMessage(0)},5000)';
+      const blob = new Blob([code], { type: 'text/javascript' });
+      const url = URL.createObjectURL(blob);
+      const worker = new Worker(url);
+      worker.onmessage = () => {
+        // Web Worker messages are NOT throttled in background tabs.
+        // This wakes the main thread and prods the page generation queue
+        // in case a .then() callback was frozen by the browser.
+        if (processQueueRef.current) {
+          processQueueRef.current();
+        }
+      };
+      keepAliveWorkerRef.current = worker;
+      return () => {
+        worker.terminate();
+        URL.revokeObjectURL(url);
+        keepAliveWorkerRef.current = null;
+      };
+    } catch {
+      // Web Workers may be unavailable (e.g., SSR, restrictive CSP)
+      console.warn('Could not create keepalive worker');
+    }
+  }, [isLoading]);
 
   // Sync isComprehensiveView when URL params change (useState only uses initial value once)
   useEffect(() => {
@@ -510,6 +564,12 @@ export default function RepoWikiPage() {
         
         // Clear generation started flag
         setIsGenerationStarted(false);
+
+        // Capture commit hash and timestamp from generation
+        if (wikiCommitHashRef.current) {
+          setWikiCommitHash(wikiCommitHashRef.current);
+        }
+        setWikiIndexedAt(new Date().toISOString());
         
         // Show completion notification if minimized
         if (isMinimized) {
@@ -592,7 +652,9 @@ export default function RepoWikiPage() {
         generated_pages: pages,
         provider: selectedProviderState,
         model: selectedModelState,
-        is_partial: isPartial
+        is_partial: isPartial,
+        commit_hash: wikiCommitHashRef.current || undefined,
+        indexed_at: isPartial ? undefined : new Date().toISOString(),
       };
       
       // Use fire-and-forget pattern with short timeout to not block UI
@@ -674,128 +736,26 @@ export default function RepoWikiPage() {
         // Get repository URL
         const repoUrl = getRepoUrl(effectiveRepoInfo);
 
-        // Create the prompt content - simplified to avoid message dialogs
- const promptContent =
-`You are an expert technical writer and software architect.
-Your task is to generate a comprehensive and accurate technical wiki page in Markdown format about "${page.title}" within the given software project.
+        // Wiki page prompt is built server-side by the backend promptstore.
+        // The frontend sends only page metadata — the backend injects
+        // commit-pinned URLs, page catalog, file summaries, and RAG context.
+        // The message content is just the page title (used as RAG query).
 
-You will be given:
-1. The wiki page topic: "${page.title}"
-2. A list of relevant source files from the project that you should use as the basis for the content.
-
-CRITICAL INSTRUCTIONS:
-- ALWAYS generate the wiki content based on the provided files, even if there are only 1-2 files.
-- NEVER refuse to generate content or ask for more files.
-- NEVER say "I'm sorry" or "I can't" - just generate the best wiki page you can with the available information.
-- Work with whatever source files are provided.
-
-CRITICAL STARTING INSTRUCTION:
-The very first thing on the page MUST be a \`<details>\` block listing ALL the relevant source files you used to generate the content.
-Format it exactly like this:
-<details>
-<summary>Relevant source files</summary>
-
-The following files were used as context for generating this wiki page:
-
-${filePaths.map(path => `- [${path}](${generateFileUrl(path, effectiveRepoInfo, detectCurrentBranch(effectiveRepoInfo, 'master') || 'master')})`).join('\n')}
-</details>
-
-Immediately after the \`<details>\` block, the main title of the page should be a H1 Markdown heading: \`# ${page.title}\`.
-
-Based on the content of the relevant source files:
-
-1.  **Introduction:** Start with a concise introduction (1-2 paragraphs) explaining the purpose, scope, and high-level overview of "${page.title}" within the context of the overall project.
-
-2.  **Detailed Sections:** Break down "${page.title}" into logical sections using H2 (\`##\`) and H3 (\`###\`) Markdown headings. For each section:
-    *   Explain the architecture, components, data flow, or logic relevant to the section's focus, as evidenced in the source files.
-    *   Identify key functions, classes, data structures, API endpoints, or configuration elements pertinent to that section.
-
-3.  **Mermaid Diagrams:**
-    *   Use Mermaid diagrams (e.g., \`flowchart TD\`, \`sequenceDiagram\`, \`classDiagram\`, \`erDiagram\`, \`graph TD\`) to visually represent architectures, flows, relationships, and schemas found in the source files.
-    *   Ensure diagrams are accurate and directly derived from the source files.
-    *   Provide a brief explanation before or after each diagram to give context.
-    *   CRITICAL: All diagrams MUST follow strict vertical orientation:
-       - Use "graph TD" (top-down) directive for flow diagrams
-       - NEVER use "graph LR" (left-right)
-       - Maximum node width should be 3-4 words
-       - For sequence diagrams:
-         - Start with "sequenceDiagram" directive on its own line
-         - Define ALL participants at the beginning using "participant" keyword
-         - Optionally specify participant types: actor, boundary, control, entity, database, collections, queue
-         - Use descriptive but concise participant names, or use aliases: "participant A as Alice"
-         - Use the correct Mermaid arrow syntax (8 types available):
-           - -> solid line without arrow (rarely used)
-           - --> dotted line without arrow (rarely used)
-           - ->> solid line with arrowhead (most common for requests/calls)
-           - -->> dotted line with arrowhead (most common for responses/returns)
-           - ->x solid line with X at end (failed/error message)
-           - -->x dotted line with X at end (failed/error response)
-           - -) solid line with open arrow (async message, fire-and-forget)
-           - --) dotted line with open arrow (async response)
-           - Examples: A->>B: Request, B-->>A: Response, A->xB: Error, A-)B: Async event
-         - Use +/- suffix for activation boxes: A->>+B: Start (activates B), B-->>-A: End (deactivates B)
-         - Group related participants using "box": box GroupName ... end
-         - Use structural elements for complex flows:
-           - loop LoopText ... end (for iterations)
-           - alt ConditionText ... else ... end (for conditionals)
-           - opt OptionalText ... end (for optional flows)
-           - par ParallelText ... and ... end (for parallel actions)
-           - critical CriticalText ... option ... end (for critical regions)
-           - break BreakText ... end (for breaking flows/exceptions)
-         - Add notes for clarification: "Note over A,B: Description", "Note right of A: Detail"
-         - Use autonumber directive to add sequence numbers to messages
-         - NEVER use flowchart-style labels like A--|label|-->B. Always use a colon for labels: A->>B: My Label
-
-4.  **Tables:**
-    *   Use Markdown tables to summarize information such as:
-        *   Key features or components and their descriptions.
-        *   API endpoint parameters, types, and descriptions.
-        *   Configuration options, their types, and default values.
-        *   Data model fields, types, constraints, and descriptions.
-
-5.  **Code Snippets (OPTIONAL):**
-    *   Include short, relevant code snippets (e.g., Python, Java, JavaScript, SQL, JSON, YAML) directly from the relevant source files to illustrate key implementation details, data structures, or configurations.
-    *   Ensure snippets are well-formatted within Markdown code blocks with appropriate language identifiers.
-
-6.  **Source Citations:**
-    *   When possible, cite the specific source file(s) from which the information was derived.
-    *   Place citations at the end of the paragraph, under the diagram/table, or after the code snippet.
-    *   Use the format: \`Sources: [filename.ext]()\` or \`Sources: [filename.ext:line_number]()\`.
-
-7.  **Technical Accuracy:** Base all information on the provided source files. If information is limited, focus on what IS available rather than what's missing.
-
-8.  **Clarity and Conciseness:** Use clear, professional, and concise technical language suitable for other developers working on or learning about the project.
-
-9.  **Conclusion/Summary:** End with a brief summary paragraph if appropriate for "${page.title}".
-
-IMPORTANT: Generate the content in ${language === 'en' ? 'English' :
-            language === 'ja' ? 'Japanese (日本語)' :
-            language === 'zh' ? 'Mandarin Chinese (中文)' :
-            language === 'zh-tw' ? 'Traditional Chinese (繁體中文)' :
-            language === 'es' ? 'Spanish (Español)' :
-            language === 'kr' ? 'Korean (한국어)' :
-            language === 'vi' ? 'Vietnamese (Tiếng Việt)' : 
-            language === "pt-br" ? "Brazilian Portuguese (Português Brasileiro)" :
-            language === "fr" ? "Français (French)" :
-            language === "ru" ? "Русский (Russian)" :
-            'English'} language.
-
-CRITICAL REMINDERS:
-- ALWAYS generate content - never refuse or ask for more files.
-- Work with whatever source files are provided, even if just one file.
-- Never apologize or say you cannot generate the content.
-- Focus on the information available, not what might be missing.
-`;
-
-        // Prepare request body
+        // Prepare request body — backend builds the full prompt
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const requestBody: Record<string, any> = {
           repo_url: repoUrl,
           type: effectiveRepoInfo.type,
           messages: [{
             role: 'user',
-            content: promptContent
-          }]
+            content: page.title
+          }],
+          // Enable file-path-aware retrieval + backend prompt building
+          wiki_page_request: true,
+          page_id: page.id,
+          page_title: page.title,
+          page_file_paths: page.filePaths,
+          page_related_pages: page.relatedPages || [],
         };
 
         // Add tokens if available - use effectiveToken to handle race condition
@@ -861,9 +821,15 @@ CRITICAL REMINDERS:
           await new Promise<void>((resolve, reject) => {
             // Handle incoming messages
             ws.onmessage = (event) => {
-              // Filter out keepalive messages (HTML comments used to keep connection alive during embedding)
+              // Filter out keepalive and metadata messages (HTML comments)
               const data = event.data;
-              if (data && !data.startsWith('<!-- keepalive')) {
+              if (data && data.startsWith('<!-- meta:commit_hash=')) {
+                // Extract commit hash from metadata message
+                const match = data.match(/commit_hash=([a-f0-9]+)/);
+                if (match) {
+                  wikiCommitHashRef.current = match[1];
+                }
+              } else if (data && !data.startsWith('<!-- keepalive')) {
                 content += data;
               }
             };
@@ -928,6 +894,25 @@ CRITICAL REMINDERS:
         // Clean up markdown delimiters
         content = content.replace(/^```markdown\s*/i, '').replace(/```\s*$/i, '');
 
+        // Strip content filter warning — use the partial content that was received
+        // and append a visible note so the user knows the page was truncated
+        if (content.includes('[CONTENT_FILTER_WARNING]')) {
+          logger.warn('Page content was partially truncated by content filter', { page: page.title, contentLength: content.length });
+          content = content.replace(/\n*\[CONTENT_FILTER_WARNING][^]*/m, '');
+          // Check if the remaining content is meaningful (more than just the <details> header)
+          // Strip the <details>...</details> block to check actual content length
+          const withoutDetails = content.replace(/<details>[\s\S]*?<\/details>/i, '').trim();
+          if (withoutDetails.length < 100) {
+            // Near-empty page — show a meaningful placeholder
+            content = `# ${page.title}\n\n` +
+              '> This page could not be generated due to Azure OpenAI content filtering. ' +
+              'The source files for this topic may contain terms that triggered automated safety checks. ' +
+              'This does not indicate any issue with the source code itself.\n';
+          } else {
+            content += '\n\n---\n\n> **Note:** This page was partially truncated by Azure OpenAI content filtering. The content above may be incomplete.\n';
+          }
+        }
+
         logger.info('Received content', { page: page.title, contentLength: content.length });
         
         // Check for error responses from the backend
@@ -942,6 +927,25 @@ CRITICAL REMINDERS:
           if (content.length === 0) {
             throw new Error('No content received from backend - possible connection interruption');
           }
+        }
+
+        // Detect LLM asking a question instead of generating content.
+        // This happens when RAG context is thin and the model requests
+        // more information instead of writing the wiki page.
+        const looksLikeQuestion = (
+          !content.includes('# ') &&
+          (content.startsWith('Could you') ||
+           content.startsWith('Please provide') ||
+           content.startsWith('I need') ||
+           content.startsWith('Can you') ||
+           content.includes('provide the list of relevant source files'))
+        );
+        if (looksLikeQuestion) {
+          logger.warn('LLM returned a question instead of content, generating placeholder', { page: page.title, content: content.substring(0, 200) });
+          content = `# ${page.title}\n\n` +
+            '> This page could not be generated because the source files for this topic ' +
+            'did not contain enough indexable content (e.g., binary files, images, or empty directories). ' +
+            'Try refreshing the wiki or adding more relevant source files to this page\'s file list.\n';
         }
 
         // Store the FINAL generated content
@@ -1208,13 +1212,13 @@ CRITICAL REMINDERS:
          throw new Error('The specified Ollama embedding model was not found. Please ensure the model is installed locally or select a different embedding model in the configuration.');
        }
 
-      // Handle content filter errors from Azure OpenAI
-      if (responseText.includes('[CONTENT_FILTER_ERROR]')) {
-        throw new Error(
-          'Azure OpenAI content safety filter truncated the response. ' +
-          'The repository content may have triggered automated safety checks. ' +
-          'Please try again — content filter triggers can be intermittent.'
-        );
+      // Handle content filter warning — strip marker, keep partial content
+      // The backend sends [CONTENT_FILTER_WARNING] when finish_reason=content_filter
+      let wasContentFiltered = false;
+      if (responseText.includes('[CONTENT_FILTER_WARNING]')) {
+        console.warn('Wiki structure response was partially truncated by content filter');
+        wasContentFiltered = true;
+        responseText = responseText.replace(/\n*\[CONTENT_FILTER_WARNING][^]*/m, '');
       }
 
       // Clean up markdown delimiters
@@ -1232,9 +1236,49 @@ CRITICAL REMINDERS:
       console.log('Wiki structure response (last 500 chars):', responseText.substring(responseText.length - 500));
 
       // Extract wiki structure from response
-      const xmlMatch = responseText.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
+      let xmlMatch = responseText.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
+
+      // If XML is incomplete (truncated by content filter), attempt repair
+      if (!xmlMatch && responseText.includes('<wiki_structure>')) {
+        console.warn('Incomplete wiki_structure XML detected, attempting repair...');
+        // Close any open tags so the XML becomes parseable.
+        // Strategy: append closing tags for all unclosed elements.
+        let repaired = responseText;
+        // Collect open tags in order (we need to close them in reverse)
+        const openTagStack: string[] = [];
+        const tagRegex = /<(\/?)([\w_]+)(?:\s[^>]*)?>/g;
+        let m;
+        while ((m = tagRegex.exec(repaired)) !== null) {
+          const isClosing = m[1] === '/';
+          const tagName = m[2];
+          if (isClosing) {
+            // Pop from stack if matching
+            const idx = openTagStack.lastIndexOf(tagName);
+            if (idx !== -1) openTagStack.splice(idx, 1);
+          } else {
+            openTagStack.push(tagName);
+          }
+        }
+        // Close remaining open tags in reverse order
+        for (let i = openTagStack.length - 1; i >= 0; i--) {
+          repaired += `</${openTagStack[i]}>`;
+        }
+        xmlMatch = repaired.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
+        if (xmlMatch) {
+          console.log('XML repair successful — extracted partial wiki structure');
+        } else {
+          console.warn('XML repair did not produce a valid wiki_structure block');
+        }
+      }
+
       if (!xmlMatch) {
         console.error('Full response text:', responseText);
+        // If content was filtered and XML couldn't be parsed/repaired,
+        // throw a specific error so the catch block can show actionable guidance
+        if (wasContentFiltered) {
+          console.warn('Wiki structure failed due to content filter — insufficient XML recovered');
+          throw new Error('RETRY_WITH_REDUCED_CONTEXT');
+        }
         // Provide a more specific error message based on response content
         const isShortResponse = responseText.trim().length < 200;
         const errorDetail = isShortResponse
@@ -1329,7 +1373,13 @@ CRITICAL REMINDERS:
       } else {
         // DOM parsing succeeded
         pagesEls.forEach(pageEl => {
-        const id = pageEl.getAttribute('id') || `page-${pages.length + 1}`;
+        let id = pageEl.getAttribute('id') || `page-${pages.length + 1}`;
+        // Normalize IDs with dashes between numeric parts to dots (e.g., "2-2" → "2.2", "1.1-2" → "1.1.2")
+        if (/\d-\d/.test(id)) {
+          const normalized = id.replace(/-(?=\d)/g, '.');
+          console.warn(`Normalized page ID "${id}" → "${normalized}"`);
+          id = normalized;
+        }
         const titleEl = pageEl.querySelector('title');
         const importanceEl = pageEl.querySelector('importance');
         const filePathEls = pageEl.querySelectorAll('file_path');
@@ -1361,6 +1411,30 @@ CRITICAL REMINDERS:
       });
       } // Close else block for DOM parsing
 
+      // Deduplicate pages by ID — LLM may generate duplicate IDs.
+      // Keep the first occurrence; assign next sibling ID to duplicates.
+      // E.g., duplicate "1.1" becomes "1.2", then "1.3", etc.
+      const seenIds = new Set<string>();
+      pages = pages.reduce<WikiPage[]>((acc, page) => {
+        if (seenIds.has(page.id)) {
+          // Increment the last numeric component to find a unique sibling ID
+          const parts = page.id.split('.');
+          const lastIdx = parts.length - 1;
+          let lastNum = parseInt(parts[lastIdx], 10) || 0;
+          let newId = page.id;
+          while (seenIds.has(newId)) {
+            lastNum++;
+            parts[lastIdx] = String(lastNum);
+            newId = parts.join('.');
+          }
+          console.warn(`Duplicate page ID "${page.id}" renamed to "${newId}" (title: "${page.title}")`);
+          page = { ...page, id: newId };
+        }
+        seenIds.add(page.id);
+        acc.push(page);
+        return acc;
+      }, []);
+
       // Extract sections if they exist in the XML
       const sections: WikiSection[] = [];
       const rootSections: string[] = [];
@@ -1369,72 +1443,103 @@ CRITICAL REMINDERS:
 
       // Try to parse sections if we're in comprehensive view
       if (isComprehensiveView) {
-        const sectionsEls = xmlDoc.querySelectorAll('section');
+        // Only pick up direct children of <sections>, not nested
+        // subsections — querySelectorAll('section') would pick ALL
+        const sectionsContainer = xmlDoc.querySelector('sections');
+        const topSectionEls = sectionsContainer
+          ? Array.from(sectionsContainer.children).filter(
+              el => el.tagName.toLowerCase() === 'section'
+            )
+          : [];
         
-        // DEBUG: Log raw section XML to understand parsing
-        console.log(`Found ${sectionsEls.length} section elements in XML`);
-        sectionsEls.forEach((el, i) => {
-          console.log(`Section ${i} raw XML:`, el.outerHTML?.substring(0, 300));
-        });
+        console.log(`Found ${topSectionEls.length} top-level section elements`);
 
-        if (sectionsEls && sectionsEls.length > 0) {
-          // Process sections
-          sectionsEls.forEach(sectionEl => {
+        if (topSectionEls.length > 0) {
+          // Recursively parse sections (supports nesting)
+          const parseSection = (sectionEl: Element): WikiSection => {
             const id = sectionEl.getAttribute('id') || `section-${sections.length + 1}`;
-            const titleEl = sectionEl.querySelector('title');
-            const pageRefEls = sectionEl.querySelectorAll('page_ref');
-            const sectionRefEls = sectionEl.querySelectorAll('section_ref');
-
+            const titleEl = sectionEl.querySelector(':scope > title');
             const title = titleEl ? titleEl.textContent || '' : '';
+
+            // Collect page_refs from this section's <pages> element
             const sectionPages: string[] = [];
-            const subsections: string[] = [];
+            const pagesContainer = sectionEl.querySelector(':scope > pages');
+            if (pagesContainer) {
+              pagesContainer.querySelectorAll('page_ref').forEach(el => {
+                if (el.textContent) {
+                  // Normalize dash IDs in page_refs too
+                  let ref = el.textContent;
+                  if (/^\d+(-\d+)+$/.test(ref)) {
+                    ref = ref.replace(/-/g, '.');
+                  }
+                  sectionPages.push(ref);
+                }
+              });
+            }
 
-            pageRefEls.forEach(el => {
-              if (el.textContent) sectionPages.push(el.textContent);
-            });
-            
-            console.log(`Section "${id}" has page_refs:`, sectionPages);
+            // Parse nested subsections
+            const subsectionEls = sectionEl.querySelector(':scope > subsections');
+            const childSections: WikiSection[] = [];
+            if (subsectionEls) {
+              Array.from(subsectionEls.children).forEach(child => {
+                if (child.tagName.toLowerCase() === 'section') {
+                  const childSection = parseSection(child);
+                  childSections.push(childSection);
+                  // Add child to flat list only if not already present
+                  if (!sections.some(s => s.id === childSection.id)) {
+                    sections.push(childSection);
+                  }
+                }
+              });
+            }
 
-            sectionRefEls.forEach(el => {
-              if (el.textContent) subsections.push(el.textContent);
-            });
-
-            sections.push({
+            return {
               id,
               title,
               pages: sectionPages,
-              subsections: subsections.length > 0 ? subsections : undefined
-            });
+              subsections: childSections.length > 0 ? childSections : undefined
+            };
+          };
 
-            // Check if this is a root section (not referenced by any other section)
-            let isReferenced = false;
-            sectionsEls.forEach(otherSection => {
-              const otherSectionRefs = otherSection.querySelectorAll('section_ref');
-              otherSectionRefs.forEach(ref => {
-                if (ref.textContent === id) {
-                  isReferenced = true;
-                }
-              });
-            });
-
-            if (!isReferenced) {
-              rootSections.push(id);
+          // Parse top-level sections
+          topSectionEls.forEach(sectionEl => {
+            const section = parseSection(sectionEl);
+            if (!sections.some(s => s.id === section.id)) {
+              sections.push(section);
+            }
+            if (!rootSections.includes(section.id)) {
+              rootSections.push(section.id);
             }
           });
-          
-          // FLATTEN STRUCTURE: Make all sections root-level (no nesting)
-          // This ensures all sections appear at the same level in the sidebar
-          // If you want nested sections in the future, remove this block
-          if (rootSections.length < sections.length) {
-            console.log(`Flattening section hierarchy: ${rootSections.length} root -> ${sections.length} total`);
-            // Clear subsections and make all sections root
-            sections.forEach(section => {
-              section.subsections = undefined;
-              if (!rootSections.includes(section.id)) {
-                rootSections.push(section.id);
-              }
-            });
-          }
+
+          // Remove subsection IDs from rootSections — they should only
+          // appear nested under their parent, not as root-level entries.
+          // Also remove duplicate flat entries for sections that are
+          // already represented as subsections of a parent.
+          const subsectionIds = new Set<string>();
+          sections.forEach(s => {
+            if (s.subsections) {
+              s.subsections.forEach((sub) => {
+                if (typeof sub === 'object' && sub.id) {
+                  subsectionIds.add(sub.id);
+                }
+              });
+            }
+          });
+          // Remove subsections from rootSections
+          const cleanedRootSections = rootSections.filter(id => !subsectionIds.has(id));
+          rootSections.length = 0;
+          cleanedRootSections.forEach(id => rootSections.push(id));
+
+          // Sync section titles with their overview page titles.
+          // Cognition's DeepWiki uses identical titles for section and
+          // its overview page (e.g., section "2" title = page "2" title).
+          sections.forEach(s => {
+            const overviewPage = pages.find(p => p.id === s.id);
+            if (overviewPage && overviewPage.title && s.title !== overviewPage.title) {
+              s.title = overviewPage.title;
+            }
+          });
           
           // Validate: Check for pages not assigned to any section
           const assignedPageIds = new Set<string>();
@@ -1446,17 +1551,111 @@ CRITICAL REMINDERS:
           if (unassignedPages.length > 0) {
             console.warn(`Found ${unassignedPages.length} pages not assigned to any section:`, unassignedPages.map(p => p.id));
             
-            // Create an "Additional Topics" section for orphaned pages
-            const additionalSectionId = 'section-additional';
-            sections.push({
-              id: additionalSectionId,
-              title: 'Additional Topics',
-              pages: unassignedPages.map(p => p.id)
+            // Distribute orphaned pages into the most relevant existing section
+            // based on their ID prefix (e.g., page "3.4" → section "3")
+            // This avoids a catch-all "Additional Topics" bucket.
+            for (const orphan of unassignedPages) {
+              let bestSection: typeof sections[0] | null = null;
+
+              // Strategy 1: Match by ID prefix (page "3.4" → section "3")
+              const idParts = orphan.id.split(/[-.]/).filter(Boolean);
+              for (let len = idParts.length - 1; len >= 1; len--) {
+                const prefix = idParts.slice(0, len).join('.');
+                bestSection = sections.find(s => s.id === prefix) || null;
+                if (bestSection) break;
+              }
+
+              // Strategy 2: Match by parent_section from page metadata
+              if (!bestSection) {
+                // The page's filePaths or title might hint at which section it belongs to
+                // Fall back to the last section as a reasonable default
+                bestSection = sections[sections.length - 1] || null;
+              }
+
+              if (bestSection) {
+                bestSection.pages.push(orphan.id);
+                console.log(`Orphan page "${orphan.id}" (${orphan.title}) → section "${bestSection.id}" (${bestSection.title})`);
+              }
+            }
+
+            // After distribution, check if any pages are still truly orphaned
+            const stillUnassigned = unassignedPages.filter(p => {
+              return !sections.some(s => s.pages.includes(p.id));
             });
-            rootSections.push(additionalSectionId);
-            console.log(`Created "${additionalSectionId}" section for unassigned pages`);
+
+            if (stillUnassigned.length > 0) {
+              // Only create catch-all as absolute last resort
+              const additionalSectionId = 'section-additional';
+              sections.push({
+                id: additionalSectionId,
+                title: 'Additional Topics',
+                pages: stillUnassigned.map(p => p.id)
+              });
+              rootSections.push(additionalSectionId);
+              console.log(`Created "${additionalSectionId}" for ${stillUnassigned.length} truly orphaned pages`);
+            }
           }
         }
+      }
+
+      // Post-process: enforce that each top-level page (single-digit ID like "1", "2", "3")
+      // has its own root section. Fixes LLM mistakes where sections 4-8 get nested under section 3.
+      if (sections.length > 0) {
+        // Find all top-level page IDs (single-digit, no dots)
+        const topLevelPageIds = pages
+          .filter(p => /^\d+$/.test(p.id))
+          .map(p => p.id);
+
+        for (const tlId of topLevelPageIds) {
+          // Check if this top-level page is already a root section
+          const isRoot = rootSections.includes(tlId);
+          if (isRoot) continue;
+
+          // Check if it's wrongly nested as a page inside another section
+          const wrongParent = sections.find(
+            s => s.pages.includes(tlId) && s.id !== tlId
+          );
+          if (wrongParent) {
+            // Remove this page AND all its sub-pages from the wrong parent
+            const prefix = tlId + '.';
+            const ownPages = wrongParent.pages.filter(
+              pid => pid === tlId || pid.startsWith(prefix)
+            );
+            wrongParent.pages = wrongParent.pages.filter(
+              pid => pid !== tlId && !pid.startsWith(prefix)
+            );
+
+            // Create a proper section for this top-level page
+            const existingSection = sections.find(s => s.id === tlId);
+            if (existingSection) {
+              // Section exists but isn't root — promote it
+              for (const pid of ownPages) {
+                if (!existingSection.pages.includes(pid)) {
+                  existingSection.pages.push(pid);
+                }
+              }
+            } else {
+              // Create new section
+              const page = pages.find(p => p.id === tlId);
+              sections.push({
+                id: tlId,
+                title: page?.title || `Section ${tlId}`,
+                pages: ownPages,
+              });
+            }
+            if (!rootSections.includes(tlId)) {
+              rootSections.push(tlId);
+            }
+            console.log(`Promoted top-level page "${tlId}" to root section (was nested under "${wrongParent.id}")`);
+          }
+        }
+
+        // Sort rootSections numerically
+        rootSections.sort((a, b) => {
+          const na = parseFloat(a) || 0;
+          const nb = parseFloat(b) || 0;
+          return na - nb;
+        });
       }
 
       // Create wiki structure
@@ -1468,6 +1667,20 @@ CRITICAL REMINDERS:
         sections,
         rootSections
       };
+
+      // If wiki structure was content-filtered, log and warn about fewer pages
+      if (wasContentFiltered) {
+        const expectedMin = isComprehensiveView ? 8 : 5;
+        if (pages.length < expectedMin) {
+          console.warn(
+            `Wiki structure was truncated by content filter: got ${pages.length} pages (expected ~${expectedMin}). ` +
+            'Proceeding with available pages.'
+          );
+        }
+        // Update description to note truncation
+        wikiStructure.description = (wikiStructure.description || '') +
+          ' (Note: Wiki structure was partially truncated by content filtering. Some pages may be missing.)';
+      }
 
       setWikiStructure(wikiStructure);
       setCurrentPageId(pages.length > 0 ? pages[0].id : undefined);
@@ -1542,6 +1755,7 @@ CRITICAL REMINDERS:
 
                   // Check if all work is done (queue empty and no active requests)
                   if (queue.length === 0 && activeRequests === 0) {
+                    processQueueRef.current = null;
                     if (failedPages.length > 0) {
                       logger.warn('Wiki generation completed with failures', { 
                         failedPages: failedPages.map(p => p.title),
@@ -1577,7 +1791,28 @@ CRITICAL REMINDERS:
         };
 
         // Start processing the queue
+        processQueueRef.current = processQueue;
         processQueue();
+
+        // Resume queue processing when browser tab becomes visible again.
+        // Browsers throttle setTimeout in background tabs, which stalls
+        // the page generation pipeline. This listener fires immediately
+        // when the user switches back to the tab.
+        const onVisibilityChange = () => {
+          if (document.visibilityState === 'visible' && queue.length > 0 && activeRequests < MAX_CONCURRENT) {
+            console.log('[Wiki] Tab became visible — resuming page generation queue');
+            processQueue();
+          }
+        };
+        document.addEventListener('visibilitychange', onVisibilityChange);
+
+        // Clean up listener when all pages are done
+        const checkCompletion = setInterval(() => {
+          if (queue.length === 0 && activeRequests === 0) {
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+            clearInterval(checkCompletion);
+          }
+        }, 5000);
       } else {
         // Set loading to false if there were no pages found
         setIsLoading(false);
@@ -1585,10 +1820,23 @@ CRITICAL REMINDERS:
       }
 
     } catch (error) {
-      console.error('Error determining wiki structure:', error);
-      setIsLoading(false);
-      setError(error instanceof Error ? error.message : 'An unknown error occurred');
-      setLoadingMessage(undefined);
+      // Content filter retry: show actionable message
+      if (error instanceof Error && error.message === 'RETRY_WITH_REDUCED_CONTEXT') {
+        console.warn('Wiki structure blocked by content filter');
+        setIsLoading(false);
+        setError('Wiki structure generation was blocked by Azure content filtering. ' +
+          'The repository may contain code patterns (security rules, credentials, firewall configs) ' +
+          'that trigger safety checks. Try one of:\n' +
+          '• Switch to "Concise" mode (fewer pages, less context)\n' +
+          '• Exclude sensitive directories (e.g., Test, Security) via the filter settings\n' +
+          '• Click "Refresh Wiki" to retry');
+        setLoadingMessage(undefined);
+      } else {
+        console.error('Error determining wiki structure:', error);
+        setIsLoading(false);
+        setError(error instanceof Error ? error.message : 'An unknown error occurred');
+        setLoadingMessage(undefined);
+      }
     } finally {
       setStructureRequestInProgress(false);
     }
@@ -2447,6 +2695,15 @@ CRITICAL REMINDERS:
               setWikiStructure(cachedStructure);
               setGeneratedPages(cachedData.generated_pages);
               setCurrentPageId(cachedStructure.pages.length > 0 ? cachedStructure.pages[0].id : undefined);
+
+              // Load commit hash and indexing timestamp from cache
+              if (cachedData.commit_hash) {
+                wikiCommitHashRef.current = cachedData.commit_hash;
+                setWikiCommitHash(cachedData.commit_hash);
+              }
+              if (cachedData.indexed_at) {
+                setWikiIndexedAt(cachedData.indexed_at);
+              }
               
               // If partial cache, set up for resumption and continue generation
               if (isPartialCache) {
@@ -2532,6 +2789,7 @@ CRITICAL REMINDERS:
                             
                             // Check if all work is done
                             if (queue.length === 0 && activeRequests === 0) {
+                              processQueueRef.current = null;
                               if (failedPages.length > 0) {
                                 console.warn(`[Partial Cache Resume] Completed with ${failedPages.length} failures`);
                               } else {
@@ -2548,6 +2806,7 @@ CRITICAL REMINDERS:
                   };
                   
                   // Start processing
+                  processQueueRef.current = processQueue;
                   processQueue();
                 } else {
                   // No pages to generate (shouldn't happen for partial cache, but handle it)
@@ -2949,6 +3208,12 @@ CRITICAL REMINDERS:
                 <h4 className="text-md font-semibold text-[var(--foreground)] mb-3">
                   {messages.repoPage?.pages || 'Pages'}
                 </h4>
+                {wikiIndexedAt && (
+                  <p className="text-xs text-[var(--muted)] mb-3">
+                    Last indexed: {new Date(wikiIndexedAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    {wikiCommitHash && ` (${wikiCommitHash.slice(0, 7)})`}
+                  </p>
+                )}
                 <WikiTreeView
                   wikiStructure={wikiStructure}
                   currentPageId={currentPageId}
@@ -2974,6 +3239,7 @@ CRITICAL REMINDERS:
                           effectiveRepoInfo, 
                           detectCurrentBranch(effectiveRepoInfo, 'master') || 'master'
                         )}
+                        onNavigateToPage={(pageId) => setCurrentPageId(pageId)}
                       />
                     </div>
 

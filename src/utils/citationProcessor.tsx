@@ -103,8 +103,8 @@ export function processCitations(content: string, repoInfo: RepoInfo, defaultBra
     return content;
   }
 
-  // Pattern to match citation links in the format: Sources: [filename.ext:line-range]() or [filename.ext:line]()
-  // This handles both single files and multiple citations
+  // Pattern to match citation links with empty URLs: Sources: [filename.ext:line-range]()
+  // Skip citations that already have URLs (non-empty parens)
   const citationPattern = /Sources:\s*(?:\[([^\]]+)\]\(\)(?:,\s*)?)+/g;
   const singleCitationPattern = /\[([^\]]+)\]\(\)/g;
 
@@ -119,10 +119,16 @@ export function processCitations(content: string, repoInfo: RepoInfo, defaultBra
     while ((citationMatch = singleCitationPattern.exec(fullMatch)) !== null) {
       const citationContent = citationMatch[1];
       
-      // Extract just the filename (before the colon if present)
-      const filename = citationContent.includes(':') 
-        ? citationContent.split(':')[0] 
-        : citationContent;
+      // Extract just the filename (before colon or space+L for line refs)
+      // Handles: "file.py", "file.py:45", "file.py L45-L120"
+      let filename = citationContent;
+      const colonIdx = citationContent.indexOf(':');
+      const lineRefIdx = citationContent.indexOf(' L');
+      if (colonIdx > 0) {
+        filename = citationContent.substring(0, colonIdx);
+      } else if (lineRefIdx > 0) {
+        filename = citationContent.substring(0, lineRefIdx);
+      }
       
       // Generate the proper URL for this file
       const fileUrl = generateFileUrl(filename, repoInfo, defaultBranch);

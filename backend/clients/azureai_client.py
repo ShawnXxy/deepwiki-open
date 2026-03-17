@@ -100,7 +100,6 @@ def parse_stream_response(completion: ChatCompletionChunk) -> str:
 def handle_streaming_response(generator: Stream[ChatCompletionChunk]):
     r"""Handle the streaming response."""
     for completion in generator:
-        log.debug(f"Raw chunk completion: {completion}")
         parsed_content = parse_stream_response(completion)
         yield parsed_content
 
@@ -184,6 +183,21 @@ def azure_openai_retry_with_delay(func):
                     raise
             except (APITimeoutError, InternalServerError,
                     UnprocessableEntityError, BadRequestError) as e:
+                # Content filter errors are permanent — skip retry
+                error_msg = str(e).lower()
+                if isinstance(e, BadRequestError) and any(
+                    kw in error_msg for kw in [
+                        "content_filter",
+                        "content management policy",
+                        "content filtering",
+                        "responsibleaipolicy",
+                    ]
+                ):
+                    log.warning(
+                        "Content filter error (non-retryable), "
+                        f"raising immediately: {e}"
+                    )
+                    raise
                 # For other errors, use simple exponential backoff
                 if retry_count < max_retries - 1:
                     retry_count += 1
@@ -237,6 +251,21 @@ def azure_openai_async_retry_with_delay(func):
                     raise
             except (APITimeoutError, InternalServerError,
                     UnprocessableEntityError, BadRequestError) as e:
+                # Content filter errors are permanent — skip retry
+                error_msg = str(e).lower()
+                if isinstance(e, BadRequestError) and any(
+                    kw in error_msg for kw in [
+                        "content_filter",
+                        "content management policy",
+                        "content filtering",
+                        "responsibleaipolicy",
+                    ]
+                ):
+                    log.warning(
+                        "Content filter error (non-retryable), "
+                        f"raising immediately: {e}"
+                    )
+                    raise
                 # For other errors, use simple exponential backoff
                 if retry_count < max_retries - 1:
                     retry_count += 1
@@ -483,7 +512,7 @@ class AzureAIClient(ModelClient):
         completion: Union[ChatCompletion, Generator[ChatCompletionChunk, None, None]],
     ) -> "GeneratorOutput":
         """Parse the completion, and put it into the raw_response."""
-        log.debug(f"completion: {completion}, parser: {self.chat_completion_parser}")
+        log.debug(f"completion type: {type(completion).__name__}, parser: {self.chat_completion_parser.__name__ if self.chat_completion_parser else None}")
         try:
             data = self.chat_completion_parser(completion)
             usage = self.track_completion_usage(completion)
@@ -607,22 +636,20 @@ class AzureAIClient(ModelClient):
         """
         kwargs is the combined input and model_kwargs.  Support streaming call.
         """
-        # Safely log api_kwargs without special characters that cause encoding
+        # Log api_kwargs summary without full message/input content
         try:
-            safe_kwargs = {}
+            debug_kwargs = {}
             for k, v in api_kwargs.items():
-                if k == 'input':
+                if k == 'messages':
+                    debug_kwargs[k] = f"[{len(v)} messages]"
+                elif k == 'input':
                     if isinstance(v, list):
-                        safe_kwargs[k] = f"[{len(v)} texts]"
+                        debug_kwargs[k] = f"[{len(v)} texts]"
                     else:
-                        str_v = str(v)
-                        if len(str_v) > 100:
-                            safe_kwargs[k] = str_v[:100] + "..."
-                        else:
-                            safe_kwargs[k] = v
+                        debug_kwargs[k] = f"[{len(str(v))} chars]"
                 else:
-                    safe_kwargs[k] = v
-            log.debug(f"api_kwargs: {safe_kwargs}")
+                    debug_kwargs[k] = v
+            log.debug(f"api_kwargs: {debug_kwargs}")
         except Exception as e:
             log.debug(f"api_kwargs logging failed: {str(e)}")
         
@@ -793,15 +820,18 @@ class AzureBatchEmbedder(DataComponent):
                     self._save_checkpoint(embeddings, current_batch_idx + 1, n)
 
             except Exception as e:
-                log.error(f"Batch {current_batch_idx + 1} processing exception: {e}")
+                log.error(
+                    f"Batch {current_batch_idx + 1} "
+                    f"processing exception: {e}"
+                )
                 # Save checkpoint before recording error
-                self._save_checkpoint(embeddings, current_batch_idx, n)
-                
-                # Create error embedding output
+                self._save_checkpoint(
+                    embeddings, current_batch_idx, n
+                )
                 error_output = EmbedderOutput(
                     data=[],
                     error=str(e),
-                    raw_response=None
+                    raw_response=None,
                 )
                 embeddings.append(error_output)
 
@@ -893,9 +923,13 @@ class AzureToEmbeddings(DataComponent):
         ):
             if batch_output.error:
                 # Create empty vectors for documents in error batches
-                batch_size_actual = min(self.batch_size, len(output) - doc_idx)
-                log.warning(f"Creating empty vectors for {batch_size_actual} documents in batch {batch_idx}")
-
+                batch_size_actual = min(
+                    self.batch_size, len(output) - doc_idx
+                )
+                log.warning(
+                    f"Batch {batch_idx} error: {batch_output.error}. "
+                    f"Skipping {batch_size_actual} documents."
+                )
                 for i in range(batch_size_actual):
                     if doc_idx < len(output):
                         output[doc_idx].vector = []
@@ -904,14 +938,24 @@ class AzureToEmbeddings(DataComponent):
                 # Assign normal embedding vectors
                 for embedding in batch_output.data:
                     if doc_idx < len(output):
-                        log.info(f"DEBUG: embedding type: {type(embedding)}")
                         if hasattr(embedding, 'embedding'):
-                            output[doc_idx].vector = embedding.embedding
+                            vec = embedding.embedding
                         elif isinstance(embedding, list):
-                            output[doc_idx].vector = embedding
+                            vec = embedding
                         else:
-                            log.warning(f"Invalid embedding format for document {doc_idx}: {type(embedding)}")
-                            output[doc_idx].vector = []
+                            log.warning(
+                                f"Invalid embedding format "
+                                f"for doc {doc_idx}: "
+                                f"{type(embedding)}"
+                            )
+                            vec = []
+
+                        if not vec:
+                            log.debug(
+                                f"Empty embedding vector "
+                                f"for doc {doc_idx}"
+                            )
+                        output[doc_idx].vector = vec
                         doc_idx += 1
 
         # Validate results

@@ -35,6 +35,8 @@ from backend.promptstore.wiki_structure import (
 )
 
 from backend.promptstore.wiki_page import WIKI_PAGE_CONTENT_PROMPT
+from backend.promptstore.wiki_page import build_wiki_page_prompt
+from backend.promptstore.wiki_page import format_page_catalog
 
 # Chat system prompt builder
 from backend.promptstore.chat_system import build_chat_system_prompt

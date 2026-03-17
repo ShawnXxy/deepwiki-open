@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from backend.config import configs, WIKI_AUTH_MODE, WIKI_AUTH_CODE
@@ -59,8 +59,14 @@ async def get_cached_wiki(
 
 
 @router.post("/api/wiki_cache")
-async def store_wiki_cache(request_data: WikiCacheRequest):
+async def store_wiki_cache(request: Request):
     """Stores generated wiki data to the server-side cache."""
+    try:
+        body = await request.json()
+        request_data = WikiCacheRequest(**body)
+    except Exception as e:
+        logger.error(f"Wiki cache validation error: {e}")
+        raise HTTPException(status_code=422, detail=str(e))
     # Language validation
     supported_langs = configs["lang_config"]["supported_languages"]
 

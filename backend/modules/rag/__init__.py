@@ -22,8 +22,14 @@ from backend.modules.rag.utils import safe_read_file, count_tokens, MAX_EMBEDDIN
 from backend.modules.rag.document import (
     read_all_documents,
     prepare_data_pipeline,
+    prepare_embed_only_pipeline,
     transform_documents_and_save_to_db,
     transform_documents_and_save_as_json,
+)
+from backend.modules.rag.code_splitter import (
+    split_and_enrich_documents,
+    split_code_at_boundaries,
+    extract_code_elements,
 )
 
 # Aliases for backward compatibility
@@ -45,10 +51,14 @@ __all__ = [
     "count_tokens",
     "read_all_documents",
     "prepare_data_pipeline",
+    "prepare_embed_only_pipeline",
     "transform_documents_and_save_to_db",
     "transform_documents_and_save_as_json",
     "transform",
     "transform_documents_from_api",
+    "split_and_enrich_documents",
+    "split_code_at_boundaries",
+    "extract_code_elements",
     # Constants
     "MAX_EMBEDDING_TOKENS",
     "MAX_INPUT_TOKENS",
