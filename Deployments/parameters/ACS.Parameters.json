@@ -8,6 +8,9 @@
         "searchServiceName": {
             "value": "{{search_service_name}}"
         },
+        "storageAccountName": {
+            "value": "{{storage_account_name}}"
+        },
         "deepWikiIdentityName": {
             "value": "{{dri_copilot_identity_name}}"
         },

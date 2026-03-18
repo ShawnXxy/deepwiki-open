@@ -23,9 +23,38 @@
             }
         },
         "machineLearningWorkspaceSubComponentsNamePrefix": {
+            "defaultValue": "",
             "type": "string",
             "metadata": {
-                "description": "Specifies the name prefix for AML-related components (lower case, no space, one word, no numbers)."
+                "description": "Fallback name prefix for AML sub-components. Only used for components not specified by existing*Name parameters."
+            }
+        },
+        "existingStorageAccountName": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Name of existing storage account to link to AML. If empty, creates new one from prefix."
+            }
+        },
+        "existingKeyVaultName": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Name of existing Key Vault to link to AML. If empty, creates new one from prefix."
+            }
+        },
+        "existingApplicationInsightsName": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Name of existing Application Insights to link to AML. If empty, creates new one from prefix."
+            }
+        },
+        "existingLogAnalyticsWorkspaceName": {
+            "defaultValue": "",
+            "type": "string",
+            "metadata": {
+                "description": "Name of existing Log Analytics workspace for App Insights. If empty, creates new one from prefix."
             }
         },
         "deepWikiIdentityName": {
@@ -108,18 +137,22 @@
         "containerRegistryName": "[format('cr{0}', parameters('machineLearningWorkspaceSubComponentsNamePrefix'))]",
         "containerRegistryId": "[resourceId('Microsoft.ContainerRegistry/registries', format('cr{0}', parameters('machineLearningWorkspaceSubComponentsNamePrefix')))]",
 
-        "storageAccountName": "[concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'storage')]",
+        "storageAccountName": "[if(not(empty(parameters('existingStorageAccountName'))), parameters('existingStorageAccountName'), concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'storage'))]",
         "storageAccountId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+        "createStorage": "[empty(parameters('existingStorageAccountName'))]",
         "storageNetworkAcls": "[if(parameters('isCreatingVnetForAzureML'), json('{ \"defaultAction\": \"Deny\", \"bypass\": \"AzureServices\" }'), json('null'))]",
 
-        "keyVaultName": "[concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'keyvault')]",
+        "keyVaultName": "[if(not(empty(parameters('existingKeyVaultName'))), parameters('existingKeyVaultName'), concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'keyvault'))]",
         "keyVaultId": "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+        "createKeyVault": "[empty(parameters('existingKeyVaultName'))]",
 
-        "logAnalyticsName": "[concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'loganalytics')]",
+        "logAnalyticsName": "[if(not(empty(parameters('existingLogAnalyticsWorkspaceName'))), parameters('existingLogAnalyticsWorkspaceName'), concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'loganalytics'))]",
         "logAnalyticsId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('logAnalyticsName'))]",
+        "createLogAnalytics": "[empty(parameters('existingLogAnalyticsWorkspaceName'))]",
 
-        "applicationInsightsName": "[concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'appinsights')]",
+        "applicationInsightsName": "[if(not(empty(parameters('existingApplicationInsightsName'))), parameters('existingApplicationInsightsName'), concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'appinsights'))]",
         "applicationInsightId": "[resourceId('Microsoft.Insights/components', variables('applicationInsightsName'))]",
+        "createAppInsights": "[empty(parameters('existingApplicationInsightsName'))]",
         "actionGroupName": "[concat('DeepWikiAlerts-ActionGroup-', variables('applicationInsightsName'))]",
 
         "openAiResourceId": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAiResourceName'))]",
@@ -147,6 +180,7 @@
             "tags": "[parameters('resourceTags')]"
         },
         {
+            "condition": "[variables('createStorage')]",
             "type": "Microsoft.Storage/storageAccounts",
             "apiVersion": "2023-01-01",
             "name": "[variables('storageAccountName')]",
@@ -168,6 +202,7 @@
             }
         },
         {
+            "condition": "[variables('createStorage')]",
             "type": "Microsoft.Storage/storageAccounts/blobServices",
             "apiVersion": "2023-01-01",
             "name": "[concat(variables('storageAccountName'), '/default')]",
@@ -206,6 +241,7 @@
             ]
         },
         {
+            "condition": "[variables('createLogAnalytics')]",
             "name": "[variables('logAnalyticsName')]",
             "type": "Microsoft.OperationalInsights/workspaces",
             "apiVersion": "2021-12-01-preview",
@@ -227,6 +263,7 @@
             }
         },
         {
+            "condition": "[variables('createAppInsights')]",
             "type": "Microsoft.Insights/components",
             "apiVersion": "2020-02-02",
             "name": "[variables('applicationInsightsName')]",
@@ -247,6 +284,7 @@
             }
         },
         {
+            "condition": "[variables('createKeyVault')]",
             "type": "Microsoft.KeyVault/vaults",
             "apiVersion": "2022-07-01",
             "name": "[variables('keyVaultName')]",
@@ -294,6 +332,7 @@
             ]
         },
         {
+            "condition": "[variables('createStorage')]",
             "type": "Microsoft.Insights/diagnosticSettings",
             "name": "[concat(variables('storageAccountName'), '-diagnostics')]",
             "apiVersion": "2021-05-01-preview",
@@ -342,6 +381,7 @@
             }
         },
         {
+            "condition": "[variables('createKeyVault')]",
             "type": "Microsoft.Insights/diagnosticSettings",
             "name": "[concat(variables('keyVaultName'), '-diagnostics')]",
             "apiVersion": "2021-05-01-preview",
@@ -496,6 +536,7 @@
             }
         },
         {
+            "condition": "[variables('createStorage')]",
             "type": "Microsoft.Authorization/roleAssignments",
             "apiVersion": "2022-04-01",
             "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('deepWikiIdentityName'), variables('storageAccountContributorRoleId')))]",
@@ -511,6 +552,7 @@
             }
         },
         {
+            "condition": "[variables('createStorage')]",
             "type": "Microsoft.Authorization/roleAssignments",
             "apiVersion": "2022-04-01",
             "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('deepWikiIdentityName'), variables('storageAccountFileDataPrivilegedContributorRoleId')))]",
@@ -526,6 +568,7 @@
             }
         },
         {
+            "condition": "[variables('createStorage')]",
             "type": "Microsoft.Authorization/roleAssignments",
             "apiVersion": "2022-04-01",
             "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('deploymentIdentityPrincipalId'), variables('storageAccountContributorRoleId')))]",
@@ -540,6 +583,7 @@
             }
         },
         {
+            "condition": "[variables('createStorage')]",
             "type": "Microsoft.Authorization/roleAssignments",
             "apiVersion": "2022-04-01",
             "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('deploymentIdentityPrincipalId'), variables('storageAccountFileDataPrivilegedContributorRoleId')))]",
@@ -723,7 +767,7 @@
             }
         },
         {
-            "condition": "[parameters('isCreatingVnetForAzureML')]",
+            "condition": "[and(variables('createStorage'), parameters('isCreatingVnetForAzureML'))]",
             "type": "Microsoft.Authorization/roleAssignments",
             "apiVersion": "2022-04-01",
             "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('deepWikiIdentityName'), variables('azureAiEnterpriseNetworkConnectionApproverRoleId')))]",

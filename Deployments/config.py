@@ -155,25 +155,20 @@ resource_tags = {"Owner" : "DaP CN Orcas"}
 # This will be the name of your machine learning workspace.
 # It has to be unique within Azure.
 # EXAMPLE: dricopilot-aml
-machine_learning_workspace_name = ""
+machine_learning_workspace_name = "aml-orcas-codewiki"
 
 # As part of deploying a Azure Machine Learning workspace, we will also create a set of required resources.
 # Those are: a storage account, a container registry, a key vault, and an application insights.
 # This name should be without spaces, dashes, and numbers. It should all be lower case and not more than 16 characters.
 # EXAMPLE: dricoaml
-machine_learning_workspace_sub_components_name_prefix = ""
+machine_learning_workspace_sub_components_name_prefix = "amlorcascw"
 
 # When set to true, this will create an Azure Virtual Network for the Azure Machine Learning workspace.
 # The blob storage also will be added to a VNet.
-# This means that your dev box needs access to the VNet as well.
-#
-# If you are using a 1ES Dev box, follow:
-# https://eng.ms/docs/cloud-ai-platform/devdiv/one-engineering-system-1es/1es-docs/dev-box/storage-account-service-endpoints#giving-devbox-access-to-a-storage-account-with-the-firewall-enabled
-#
-# Otherwise, we recommend you keep this on OFF (false) for now.
-#
-# WARNING: As of May 22, 2025, we do not recommend using VNet for Azure Machine Learning.
-# We will be working on enabling service tag based network isolation instead.
+# "Azure AI Enterprise Network Connection Approver" will be required to be assigned to your managed identity for below resources:
+#  - keyvault
+#  - storage
+#  - container register
 is_creating_vnet_for_azure_ml = True
 
 # When set to true, this will enable disk encryption for azure ml compute clusters,
@@ -189,7 +184,7 @@ is_enabling_disk_encryption_for_azure_ml = False
 # This is the name of the Azure Cognitive Search Service that will host your indexes.
 # It needs to be all lower case, no spaces and dashes, and no numbers, and unique within Azure.
 # EXAMPLE: dricopilotsearch
-search_service_name = ""
+search_service_name = "acsorcascodewiki"
 
 # Azure Key Vault (Optional - for deploy_planning)
 # ---------------------------------------------------------------------------
@@ -197,7 +192,7 @@ search_service_name = ""
 # This is the name of the Azure Key Vault for storing secrets.
 # Must be globally unique, 3-24 characters, alphanumeric and hyphens only.
 # EXAMPLE: deepwiki-keyvault
-key_vault_name = ""
+key_vault_name = "kvorcascodewiki"
 
 # Enable RBAC authorization for Key Vault (recommended).
 # When true, uses Azure RBAC instead of access policies.

@@ -30,6 +30,8 @@ azure-mgmt-resource = ">=23.0.0"
 azure-mgmt-msi = ">=7.0.0"
 azure-ai-ml = ">=1.12.0"
 azureml-core = ">=1.55.0"
+azure-search-documents = ">=11.4.0"
+azure-mgmt-search = ">=9.0.0"
 
 
 [build-system]

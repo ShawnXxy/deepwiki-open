@@ -15,10 +15,10 @@
                 "description": "Specifies the name of the Azure Search service."
             }
         },
-        "machineLearningWorkspaceSubComponentsNamePrefix": {
+        "storageAccountName": {
             "type": "string",
             "metadata": {
-                "description": "Specifies the name prefix for AML-related components (lower case, no space, one word, no numbers)."
+                "description": "Specifies the name of the existing storage account to grant Search blob read access."
             }
         },
         "deepWikiIdentityName": {
@@ -56,8 +56,7 @@
 
         "searchServiceId": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
 
-        "storageAccountName": "[concat(parameters('machineLearningWorkspaceSubComponentsNamePrefix'), 'storage')]",
-        "storageAccountId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+        "storageAccountId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
 
         "storageBlobDataReaderRoleId": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1",
         "searchContributorRoleId": "7ca78c08-252a-4471-8644-bb5ff32d4ba0",
@@ -102,7 +101,7 @@
         {
             "type": "Microsoft.Authorization/roleAssignments",
             "apiVersion": "2022-04-01",
-            "name": "[guid(concat(resourceGroup().id, variables('storageAccountName'), parameters('searchServiceName'), variables('storageBlobDataReaderRoleId')))]",
+            "name": "[guid(concat(resourceGroup().id, parameters('storageAccountName'), parameters('searchServiceName'), variables('storageBlobDataReaderRoleId')))]",
             "scope": "[variables('storageAccountId')]",
             "dependsOn": [
                 "[variables('searchServiceId')]"
