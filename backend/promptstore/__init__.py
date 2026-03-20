@@ -32,6 +32,9 @@ from backend.promptstore.deep_research import (
 from backend.promptstore.wiki_structure import (
     WIKI_STRUCTURE_PROMPT,
     WIKI_STRUCTURE_CONCISE_PROMPT,
+    build_wiki_structure_prompt,
+    file_tree_dirs_only,
+    LANGUAGE_DISPLAY_NAMES,
 )
 
 from backend.promptstore.wiki_page import WIKI_PAGE_CONTENT_PROMPT

@@ -576,3 +576,47 @@ def load_repo_config() -> Dict[str, Any]:
 def load_lang_config() -> Dict[str, Any]:
     """Legacy function - use get_lang_config() instead."""
     return get_lang_config()
+
+
+def get_search_config() -> Dict[str, Any]:
+    """Get Azure AI Search configuration from infra.json.
+
+    Returns:
+        Dict with keys: enabled, endpoint, api_version
+    """
+    infra = get_infra_config()
+    search = getattr(infra, 'azure_ai_search', None)
+    if search is None:
+        return {"enabled": False, "endpoint": "", "api_version": "2024-07-01"}
+    return {
+        "enabled": getattr(search, 'enabled', False),
+        "endpoint": getattr(search, 'endpoint', ''),
+        "api_version": getattr(search, 'api_version', '2024-07-01'),
+    }
+
+
+def is_search_configured() -> bool:
+    """Check if Azure AI Search is enabled and configured."""
+    cfg = get_search_config()
+    return cfg.get("enabled", False) and bool(cfg.get("endpoint"))
+
+
+def get_aml_config() -> Dict[str, Any]:
+    """Get Azure ML configuration from infra.json.
+
+    Returns:
+        Dict with keys: enabled, workspace_name, resource_group, subscription_id
+    """
+    infra = get_infra_config()
+    aml = getattr(infra, 'azure_ml', None)
+    if aml is None:
+        return {
+            "enabled": False, "workspace_name": "",
+            "resource_group": "", "subscription_id": "",
+        }
+    return {
+        "enabled": getattr(aml, 'enabled', False),
+        "workspace_name": getattr(aml, 'workspace_name', ''),
+        "resource_group": getattr(aml, 'resource_group', ''),
+        "subscription_id": getattr(aml, 'subscription_id', ''),
+    }

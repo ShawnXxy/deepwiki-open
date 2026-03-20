@@ -22,7 +22,7 @@ $ErrorActionPreference = "Stop"
 # ============================================
 # Load .env file
 # ============================================
-$envFile = Join-Path $PSScriptRoot ".env"
+$envFile = Join-Path $PSScriptRoot "backend/.env"
 if (Test-Path $envFile) {
     Get-Content $envFile | ForEach-Object {
         if ($_ -match '^\s*([^#][^=]*?)\s*=\s*(.*)$') {

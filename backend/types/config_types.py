@@ -47,6 +47,21 @@ class AzureApplicationInsightsConfig(BaseModel):
     connection_string: str
 
 
+class AzureAISearchConfig(BaseModel):
+    """Azure AI Search configuration."""
+    enabled: bool = False
+    endpoint: str = ""
+    api_version: str = "2024-07-01"
+
+
+class AzureMLConfig(BaseModel):
+    """Azure Machine Learning configuration."""
+    enabled: bool = False
+    workspace_name: str = ""
+    resource_group: str = ""
+    subscription_id: str = ""
+
+
 class InfraConfig(BaseModel):
     """Main infrastructure configuration from infra.json."""
     managed_identity: ManagedIdentityConfig
@@ -54,6 +69,12 @@ class InfraConfig(BaseModel):
     azure_openai_embedding: AzureOpenAIEmbeddingConfig
     azure_blob_storage: AzureBlobStorageConfig
     azure_application_insights: AzureApplicationInsightsConfig
+    azure_ai_search: AzureAISearchConfig = Field(
+        default_factory=AzureAISearchConfig
+    )
+    azure_ml: AzureMLConfig = Field(
+        default_factory=AzureMLConfig
+    )
 
 
 # ============================================================================

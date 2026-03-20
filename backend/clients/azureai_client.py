@@ -76,6 +76,37 @@ log = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
+def _extract_request_id(error_or_response) -> str:
+    """Extract APIM request ID from an OpenAI error or response.
+
+    Works with:
+    - OpenAI API errors (APIStatusError subclasses) → e.response.headers
+    - OpenAI response objects (ChatCompletion, etc.) → response._response.headers
+    - Stream objects → stream.response.headers
+    Returns 'unknown' if not found.
+    """
+    headers = None
+    try:
+        # Error objects: e.response.headers
+        if hasattr(error_or_response, 'response') and error_or_response.response is not None:
+            resp = error_or_response.response
+            if hasattr(resp, 'headers'):
+                headers = resp.headers
+        # Response objects: response._response.headers
+        elif hasattr(error_or_response, '_response'):
+            if hasattr(error_or_response._response, 'headers'):
+                headers = error_or_response._response.headers
+    except Exception:
+        pass
+
+    if headers:
+        return (headers.get('apim-request-id')
+                or headers.get('x-ms-client-request-id')
+                or headers.get('x-request-id')
+                or 'unknown')
+    return 'unknown'
+
+
 __all__ = ["AzureAIClient"]
 
 # TODO: this overlaps with openai client largely, might need to refactor to subclass openai client to simplify the code
@@ -162,12 +193,13 @@ def azure_openai_retry_with_delay(func):
             except RateLimitError as e:
                 retry_count += 1
                 error_message = str(e)
+                req_id = _extract_request_id(e)
                 
                 # Try to parse the required delay from error message
                 retry_delay = parse_azure_rate_limit_error(error_message)
                 
                 if retry_delay is not None and retry_count < max_retries:
-                    log.warning(f"Azure OpenAI rate limit hit. "
+                    log.warning(f"Azure OpenAI rate limit hit (req_id={req_id}). "
                                 f"Waiting {retry_delay} seconds before retry "
                                 f"({retry_count}/{max_retries})")
                     time.sleep(retry_delay)
@@ -176,13 +208,14 @@ def azure_openai_retry_with_delay(func):
                     # If we can't parse delay or max retries reached, re-raise
                     if retry_count >= max_retries:
                         log.error(f"Max retries ({max_retries}) reached "
-                                  f"for rate limit error")
+                                  f"for rate limit error (req_id={req_id})")
                     else:
                         log.warning("Could not parse retry delay from "
-                                    "error message")
+                                    f"error message (req_id={req_id})")
                     raise
             except (APITimeoutError, InternalServerError,
                     UnprocessableEntityError, BadRequestError) as e:
+                req_id = _extract_request_id(e)
                 # Content filter errors are permanent — skip retry
                 error_msg = str(e).lower()
                 if isinstance(e, BadRequestError) and any(
@@ -195,14 +228,14 @@ def azure_openai_retry_with_delay(func):
                 ):
                     log.warning(
                         "Content filter error (non-retryable), "
-                        f"raising immediately: {e}"
+                        f"raising immediately (req_id={req_id}): {e}"
                     )
                     raise
                 # For other errors, use simple exponential backoff
                 if retry_count < max_retries - 1:
                     retry_count += 1
                     delay = 2 ** retry_count
-                    log.warning(f"API error: {type(e).__name__}. "
+                    log.warning(f"API error: {type(e).__name__} (req_id={req_id}). "
                                 f"Retrying in {delay} seconds "
                                 f"({retry_count}/{max_retries})")
                     time.sleep(delay)
@@ -230,12 +263,13 @@ def azure_openai_async_retry_with_delay(func):
             except RateLimitError as e:
                 retry_count += 1
                 error_message = str(e)
+                req_id = _extract_request_id(e)
                 
                 # Try to parse the required delay from error message
                 retry_delay = parse_azure_rate_limit_error(error_message)
                 
                 if retry_delay is not None and retry_count < max_retries:
-                    log.warning(f"Azure OpenAI rate limit hit. "
+                    log.warning(f"Azure OpenAI rate limit hit (req_id={req_id}). "
                                 f"Waiting {retry_delay} seconds before retry "
                                 f"({retry_count}/{max_retries})")
                     await asyncio.sleep(retry_delay)
@@ -244,13 +278,14 @@ def azure_openai_async_retry_with_delay(func):
                     # If we can't parse delay or max retries reached, re-raise
                     if retry_count >= max_retries:
                         log.error(f"Max retries ({max_retries}) reached "
-                                  f"for rate limit error")
+                                  f"for rate limit error (req_id={req_id})")
                     else:
                         log.warning("Could not parse retry delay from "
-                                    "error message")
+                                    f"error message (req_id={req_id})")
                     raise
             except (APITimeoutError, InternalServerError,
                     UnprocessableEntityError, BadRequestError) as e:
+                req_id = _extract_request_id(e)
                 # Content filter errors are permanent — skip retry
                 error_msg = str(e).lower()
                 if isinstance(e, BadRequestError) and any(
@@ -263,14 +298,14 @@ def azure_openai_async_retry_with_delay(func):
                 ):
                     log.warning(
                         "Content filter error (non-retryable), "
-                        f"raising immediately: {e}"
+                        f"raising immediately (req_id={req_id}): {e}"
                     )
                     raise
                 # For other errors, use simple exponential backoff
                 if retry_count < max_retries - 1:
                     retry_count += 1
                     delay = 2 ** retry_count
-                    log.warning(f"API error: {type(e).__name__}. "
+                    log.warning(f"API error: {type(e).__name__} (req_id={req_id}). "
                                 f"Retrying in {delay} seconds "
                                 f"({retry_count}/{max_retries})")
                     await asyncio.sleep(delay)
@@ -655,16 +690,25 @@ class AzureAIClient(ModelClient):
         
         if model_type == ModelType.EMBEDDER:
             try:
-                return self.sync_client.embeddings.create(**api_kwargs)
+                result = self.sync_client.embeddings.create(**api_kwargs)
+                req_id = _extract_request_id(result)
+                log.debug(f"Embedding call succeeded (req_id={req_id})")
+                return result
             except Exception as e:
-                log.critical(f"CRITICAL: Azure Embedding Failed: {e}")
+                req_id = _extract_request_id(e)
+                log.critical(
+                    f"CRITICAL: Azure Embedding Failed (req_id={req_id}): {e}"
+                )
                 raise e
         elif model_type == ModelType.LLM:
             if "stream" in api_kwargs and api_kwargs.get("stream", False):
                 log.debug("streaming call")
                 self.chat_completion_parser = handle_streaming_response
                 return self.sync_client.chat.completions.create(**api_kwargs)
-            return self.sync_client.chat.completions.create(**api_kwargs)
+            result = self.sync_client.chat.completions.create(**api_kwargs)
+            req_id = _extract_request_id(result)
+            log.debug(f"LLM call succeeded (req_id={req_id})")
+            return result
         else:
             raise ValueError(f"model_type {model_type} is not supported")
 

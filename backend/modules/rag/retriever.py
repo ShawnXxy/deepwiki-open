@@ -11,7 +11,7 @@ import adalflow as adal
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
 
 from backend.config import configs
-from backend.tools.embedder import get_embedder
+from backend.clients.embedder import get_embedder
 from backend.modules.rag.memory import Memory
 from backend.modules.rag.answer import RAGAnswer
 from backend.modules.rag.database import DatabaseManager

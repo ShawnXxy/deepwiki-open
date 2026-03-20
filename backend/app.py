@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 # Configure logging
-from backend.tools.logger import setup_logging, log_frontend_message
+from backend.infra.logger import setup_logging, log_frontend_message
 from backend.config import (
     configs,
     WIKI_AUTH_MODE,

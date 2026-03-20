@@ -239,3 +239,74 @@ def get_language_name(language_code: str) -> str:
         'ru': 'Русский (Russian)',
     }
     return language_map.get(language_code, 'English')
+
+
+# Language display names — also used by build_wiki_structure_prompt()
+LANGUAGE_DISPLAY_NAMES = {
+    'en': 'English',
+    'ja': 'Japanese (日本語)',
+    'zh': 'Mandarin Chinese (中文)',
+    'zh-tw': 'Traditional Chinese (繁體中文)',
+    'es': 'Spanish (Español)',
+    'kr': 'Korean (한국어)',
+    'vi': 'Vietnamese (Tiếng Việt)',
+    'pt-br': 'Brazilian Portuguese (Português Brasileiro)',
+    'fr': 'Français (French)',
+    'ru': 'Русский (Russian)',
+}
+
+
+def file_tree_dirs_only(file_tree: str) -> str:
+    """Reduce a file tree to directory names only.
+
+    Strips individual file names — keeps only lines that end with '/'
+    or contain no file extension. Used for content filter retry.
+    """
+    if not file_tree:
+        return ''
+    lines = []
+    for line in file_tree.split('\n'):
+        stripped = line.rstrip()
+        if stripped.endswith('/') or '.' not in stripped.split('/')[-1]:
+            lines.append(stripped)
+    return '\n'.join(lines) if lines else file_tree
+
+
+def build_wiki_structure_prompt(
+    file_tree: str,
+    readme: str,
+    owner: str,
+    repo: str,
+    language: str = 'en',
+    comprehensive: bool = True,
+) -> str:
+    """Build wiki structure prompt from promptstore templates.
+
+    This is the shared builder used by both ws_handler.py (WebSocket)
+    and wiki_generator.py (CLI processor).
+
+    Args:
+        file_tree: Repository file tree string
+        readme: README content
+        owner: Repository owner
+        repo: Repository name
+        language: Language code (default 'en')
+        comprehensive: True for 15-25 pages, False for 4-6
+
+    Returns:
+        Formatted prompt string ready for LLM
+    """
+    template = (WIKI_STRUCTURE_PROMPT if comprehensive
+                else WIKI_STRUCTURE_CONCISE_PROMPT)
+
+    language_name = LANGUAGE_DISPLAY_NAMES.get(language, 'English')
+    page_count = '15-25' if comprehensive else '4-6'
+
+    return template.format(
+        owner=owner,
+        repo=repo,
+        file_tree=file_tree or '',
+        readme=readme or '',
+        language_name=language_name,
+        page_count=page_count,
+    )

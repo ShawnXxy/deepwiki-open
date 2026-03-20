@@ -15,6 +15,10 @@ from backend.clients.blob_client import (
 from backend.clients.storage import storage, StorageClient
 from backend.clients.vector_storage import VectorStorage, get_vector_storage
 
+# Note: backend.clients.embedder is NOT imported here to avoid circular
+# dependency (embedder imports backend.config which imports backend.clients).
+# Use: from backend.clients.embedder import get_embedder
+
 __all__ = [
     "AzureAIClient",
     "AzureBatchEmbedder",
