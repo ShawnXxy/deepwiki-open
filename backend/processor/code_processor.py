@@ -205,7 +205,7 @@ def run_code_processor(
             print("    2. Run 'az login' first (local mode)")
             sys.exit(1)
     else:
-        print(f"  ✓ Using PAT from environment")
+        print("  ✓ Using PAT from environment")
 
     # Step 1: Clone repo
     print("\n--- Step 1: Cloning repository ---")
@@ -315,11 +315,71 @@ def main():
 
 
 def _run_docker_mode(args):
-    """Build Docker image and run processor inside container."""
-    # Placeholder for Phase 3B implementation
-    print("Docker mode is not yet implemented.")
-    print("Use --mode=local to run directly.")
-    sys.exit(1)
+    """Build Docker image and run processor inside container.
+
+    Uses Dockerfile.processor (lightweight, no Next.js/nginx/FastAPI).
+    Mounts ~/.adalflow for cache output and passes env vars for auth.
+    """
+    import subprocess
+
+    project_root = Path(__file__).resolve().parents[2]
+    dockerfile = project_root / 'Dockerfile.processor'
+    env_file = project_root / 'backend' / '.env'
+    image_name = 'deepwiki-processor'
+
+    if not dockerfile.is_file():
+        print(f"  ✗ Dockerfile.processor not found at {dockerfile}")
+        sys.exit(1)
+
+    # Step 1: Build image
+    print("\n--- Building Docker image ---")
+    build_cmd = [
+        'docker', 'build',
+        '-f', str(dockerfile),
+        '-t', image_name,
+        str(project_root),
+    ]
+    print(f"  $ {' '.join(build_cmd)}")
+    result = subprocess.run(build_cmd, cwd=str(project_root))
+    if result.returncode != 0:
+        print("  ✗ Docker build failed")
+        sys.exit(1)
+    print("  ✓ Image built successfully")
+
+    # Step 2: Run container with --mode=local inside
+    print("\n--- Running processor in container ---")
+    adalflow_dir = Path.home() / '.adalflow'
+    adalflow_dir.mkdir(parents=True, exist_ok=True)
+
+    run_cmd = [
+        'docker', 'run', '--rm',
+        '-v', f'{adalflow_dir}:/root/.adalflow',
+    ]
+
+    # Pass env file if it exists
+    if env_file.is_file():
+        run_cmd.extend(['--env-file', str(env_file)])
+
+    # Pass any AZURE_* env vars from current environment
+    for key in ('AZURE_OPENAI_API_KEY', 'AZURE_CLIENT_ID', 'REPO_ACCESS_TOKEN'):
+        val = os.environ.get(key)
+        if val:
+            run_cmd.extend(['-e', f'{key}={val}'])
+
+    run_cmd.extend([
+        image_name,
+        '--repo', args.repo,
+        '--branch', args.branch,
+        '--mode', 'local',  # Inside container, always run as local
+        '--language', args.language,
+    ])
+
+    print(f"  $ docker run ... {image_name} --repo=... --branch={args.branch}")
+    result = subprocess.run(run_cmd)
+    if result.returncode != 0:
+        print("  ✗ Docker run failed")
+        sys.exit(1)
+    print("  ✓ Docker processing complete")
 
 
 def _run_cloud_mode(args):

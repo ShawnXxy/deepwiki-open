@@ -1,0 +1,36 @@
+# Dockerfile for standalone code_processor (--mode=docker)
+# Builds a minimal image with Python + Git for wiki generation.
+# No Next.js, no nginx, no FastAPI server.
+#
+# Usage:
+#   docker build -f Dockerfile.processor -t deepwiki-processor .
+#   docker run -v ~/.adalflow:/root/.adalflow --env-file backend/.env \
+#     deepwiki-processor --config=backend/run.json
+
+FROM python:3.11-slim AS py_deps
+WORKDIR /app
+COPY pyproject.toml poetry.lock ./
+RUN python -m pip install poetry==2.0.1 --no-cache-dir && \
+    poetry config virtualenvs.create true --local && \
+    poetry config virtualenvs.in-project true --local && \
+    poetry config virtualenvs.options.always-copy --local true && \
+    POETRY_MAX_WORKERS=10 poetry install --no-interaction --no-ansi --only main && \
+    poetry cache clear --all .
+
+FROM python:3.11-slim
+WORKDIR /app
+
+# Install git (needed for cloning repos)
+RUN apt-get update && apt-get install -y git ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy Python virtualenv and backend code
+COPY --from=py_deps /app/.venv /opt/venv
+COPY backend/ ./backend/
+
+# Volume for wiki cache + vectors output
+VOLUME ["/root/.adalflow"]
+
+ENTRYPOINT ["python", "-m", "backend.processor.code_processor"]

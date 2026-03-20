@@ -583,6 +583,24 @@ isodate = ">=0.6.1"
 typing-extensions = ">=4.6.0"
 
 [[package]]
+name = "azure-mgmt-search"
+version = "9.2.0"
+description = "Microsoft Azure Search Management Client Library for Python"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "azure_mgmt_search-9.2.0-py3-none-any.whl", hash = "sha256:29dbbec94c4668c65a5e5138a724532d5f08d3ed1cfcb458f9da46dc8e5400ea"},
+    {file = "azure_mgmt_search-9.2.0.tar.gz", hash = "sha256:a0da0ec332d1f43d0f6acb63b8cfd80085b075e91afcf812f8c769ad9fdcad84"},
+]
+
+[package.dependencies]
+azure-common = ">=1.1"
+azure-mgmt-core = ">=1.5.0"
+isodate = ">=0.6.1"
+typing-extensions = ">=4.6.0"
+
+[[package]]
 name = "azure-mgmt-storage"
 version = "24.0.0"
 description = "Microsoft Azure Storage Management Client Library for Python"
@@ -644,6 +662,24 @@ msrest = ">=0.6.10"
 opentelemetry-api = "1.39"
 opentelemetry-sdk = "1.39"
 psutil = ">=5.9,<8"
+
+[[package]]
+name = "azure-search-documents"
+version = "11.6.0"
+description = "Microsoft Azure Cognitive Search Client Library for Python"
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = [
+    {file = "azure_search_documents-11.6.0-py3-none-any.whl", hash = "sha256:c3eb2deaf7926844e99a881830861225ef68e8b3bc067a76019e87fc7f5586dc"},
+    {file = "azure_search_documents-11.6.0.tar.gz", hash = "sha256:fcc807076ff82024be576ffccb0d0f3261e5c2a112a6666b86ec70bbdb2e1d64"},
+]
+
+[package.dependencies]
+azure-common = ">=1.1"
+azure-core = ">=1.28.0"
+isodate = ">=0.6.0"
+typing-extensions = ">=4.6.0"
 
 [[package]]
 name = "azure-storage-blob"
@@ -4675,4 +4711,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "aa57c4d65ca98a974b97d5c9168213db511451749360aabac18561a6d46b115e"
+content-hash = "01d33f1a2f346c54cb92634c0f1ab40860d14c60b115a6203a8afe8410726160"
