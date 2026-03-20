@@ -1,7 +1,16 @@
 import { NextResponse } from 'next/server';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
-// This should match the expected structure from your Python backend
-interface ApiProcessedProject {
+/**
+ * GET /api/wiki/projects — List processed projects by scanning local cache dir.
+ * DELETE /api/wiki/projects — Delete a cached wiki.
+ *
+ * No backend needed. Reads directly from ~/.adalflow/wikicache/.
+ */
+
+interface ProcessedProject {
   id: string;
   owner: string;
   repo: string;
@@ -10,104 +19,102 @@ interface ApiProcessedProject {
   submittedAt: number;
   language: string;
   comprehensive: boolean;
-}
-// Payload for deleting a project cache
-interface DeleteProjectCachePayload {
-  owner: string;
-  repo: string;
-  repo_type: string;
-  language: string;
-  comprehensive: boolean;
-  branch?: string; // Optional branch parameter
+  branch?: string;
 }
 
-/** Type guard to validate DeleteProjectCachePayload at runtime */
-function isDeleteProjectCachePayload(obj: unknown): obj is DeleteProjectCachePayload {
-  return (
-    obj != null &&
-    typeof obj === 'object' &&
-    'owner' in obj && typeof (obj as Record<string, unknown>).owner === 'string' && ((obj as Record<string, unknown>).owner as string).trim() !== '' &&
-    'repo' in obj && typeof (obj as Record<string, unknown>).repo === 'string' && ((obj as Record<string, unknown>).repo as string).trim() !== '' &&
-    'repo_type' in obj && typeof (obj as Record<string, unknown>).repo_type === 'string' && ((obj as Record<string, unknown>).repo_type as string).trim() !== '' &&
-    'language' in obj && typeof (obj as Record<string, unknown>).language === 'string' && ((obj as Record<string, unknown>).language as string).trim() !== '' &&
-    'comprehensive' in obj && typeof (obj as Record<string, unknown>).comprehensive === 'boolean'
-  );
-}
+// Cache filename pattern: deepwiki_cache_{type}_{owner}_{repo}_{lang}_{mode}[_{branch}].json
+// Owner may contain spaces; lang may contain hyphens (e.g. zh-tw) but NOT underscores; repo may contain hyphens.
+const CACHE_PATTERN = /^deepwiki_cache_(\w+)_(.+?)_([^_]+)_([a-z]+(?:-[a-z]+)*)_(comprehensive|concise)(?:_(.+))?\.json$/;
 
-// Ensure this matches your Python backend configuration
-// Use SERVER_BASE_URL for consistency across the application
-const PYTHON_BACKEND_URL = process.env.SERVER_BASE_URL || process.env.PYTHON_BACKEND_HOST || 'http://localhost:8001';
-const PROJECTS_API_ENDPOINT = `${PYTHON_BACKEND_URL}/api/processed_projects`;
-const CACHE_API_ENDPOINT = `${PYTHON_BACKEND_URL}/api/wiki_cache`;
+function getCacheDir(): string {
+  return path.join(os.homedir(), '.adalflow', 'wikicache');
+}
 
 export async function GET() {
-  try {
-    const response = await fetch(PROJECTS_API_ENDPOINT, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        // Add any other headers your Python backend might require, e.g., API keys
-      },
-      cache: 'no-store', // Ensure fresh data is fetched every time
-    });
+  const cacheDir = getCacheDir();
 
-    if (!response.ok) {
-      // Try to parse error from backend, otherwise use status text
-      let errorBody = { error: `Failed to fetch from Python backend: ${response.statusText}` };
+  if (!fs.existsSync(cacheDir)) {
+    return NextResponse.json([]);
+  }
+
+  try {
+    const files = fs.readdirSync(cacheDir).filter(f => f.startsWith('deepwiki_cache_') && f.endsWith('.json'));
+    const projects: ProcessedProject[] = [];
+
+    for (const filename of files) {
+      const match = filename.match(CACHE_PATTERN);
+      if (!match) continue;
+
+      const [, repoType, owner, repo, language, mode, branch] = match;
+
+      // Get file modification time for sorting
+      let mtime = 0;
       try {
-        errorBody = await response.json();
-      } catch {
-        // If parsing JSON fails, errorBody will retain its default value
-        // The error from backend is logged in the next line anyway
-      }
-      console.error(`Error from Python backend (${PROJECTS_API_ENDPOINT}): ${response.status} - ${JSON.stringify(errorBody)}`);
-      return NextResponse.json(errorBody, { status: response.status });
+        const stat = fs.statSync(path.join(cacheDir, filename));
+        mtime = stat.mtimeMs;
+      } catch { /* ignore */ }
+
+      projects.push({
+        id: filename.replace('.json', ''),
+        owner,
+        repo,
+        name: `${owner}/${repo}`,
+        repo_type: repoType,
+        submittedAt: mtime,
+        language,
+        comprehensive: mode === 'comprehensive',
+        branch: branch || undefined,
+      });
     }
 
-    const projects: ApiProcessedProject[] = await response.json();
-    return NextResponse.json(projects);
+    // Sort by most recently modified
+    projects.sort((a, b) => b.submittedAt - a.submittedAt);
 
-  } catch (error: unknown) {
-    console.error(`Network or other error when fetching from ${PROJECTS_API_ENDPOINT}:`, error);
-    const message = error instanceof Error ? error.message : 'An unknown error occurred';
+    return NextResponse.json(projects);
+  } catch (err) {
+    console.error('Error scanning wiki cache directory:', err);
     return NextResponse.json(
-      { error: `Failed to connect to the Python backend. ${message}` },
-      { status: 503 } // Service Unavailable
+      { error: 'Failed to list projects' },
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(request: Request) {
   try {
-    const body: unknown = await request.json();
-    if (!isDeleteProjectCachePayload(body)) {
+    const body = await request.json();
+    const { owner, repo, repo_type, language, comprehensive, branch } = body;
+
+    if (!owner || !repo || !repo_type || !language || comprehensive === undefined) {
       return NextResponse.json(
-        { error: 'Invalid request body: owner, repo, repo_type, language, and comprehensive are required.' },
-        { status: 400 }
+        { error: 'owner, repo, repo_type, language, and comprehensive are required' },
+        { status: 400 },
       );
     }
-    const { owner, repo, repo_type, language, comprehensive, branch } = body;
-    const params = new URLSearchParams({ owner, repo, repo_type, language, comprehensive: String(comprehensive) });
-    // Add branch parameter if provided
-    if (branch) {
-      params.append('branch', branch);
+
+    const cacheDir = getCacheDir();
+    const mode = comprehensive ? 'comprehensive' : 'concise';
+    const branchSuffix = branch || 'default';
+    const filename = `deepwiki_cache_${repo_type}_${owner}_${repo}_${language}_${mode}_${branchSuffix}.json`;
+    const filePath = path.join(cacheDir, filename);
+
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      return NextResponse.json({ message: 'Project deleted successfully' });
     }
-    const response = await fetch(`${CACHE_API_ENDPOINT}?${params}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    if (!response.ok) {
-      let errorBody = { error: response.statusText };
-      try {
-        errorBody = await response.json();
-      } catch {}
-      console.error(`Error deleting project cache (${CACHE_API_ENDPOINT}): ${response.status} - ${JSON.stringify(errorBody)}`);
-      return NextResponse.json(errorBody, { status: response.status });
+
+    // Try legacy filename (no branch)
+    const legacyFilename = `deepwiki_cache_${repo_type}_${owner}_${repo}_${language}_${mode}.json`;
+    const legacyPath = path.join(cacheDir, legacyFilename);
+    if (fs.existsSync(legacyPath)) {
+      fs.unlinkSync(legacyPath);
+      return NextResponse.json({ message: 'Project deleted successfully' });
     }
-    return NextResponse.json({ message: 'Project deleted successfully' });
-  } catch (error: unknown) {
-    console.error('Error in DELETE /api/wiki/projects:', error);
-    const message = error instanceof Error ? error.message : 'An unknown error occurred';
-    return NextResponse.json({ error: `Failed to delete project: ${message}` }, { status: 500 });
+
+    return NextResponse.json({ error: 'Cache file not found' }, { status: 404 });
+  } catch (err) {
+    console.error('Error deleting wiki cache:', err);
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ error: `Failed to delete: ${message}` }, { status: 500 });
   }
 }

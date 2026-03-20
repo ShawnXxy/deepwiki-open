@@ -1,7 +1,5 @@
 import type { NextConfig } from "next";
 
-const TARGET_SERVER_BASE_URL = process.env.SERVER_BASE_URL || 'http://localhost:8001';
-
 const nextConfig: NextConfig = {
   /* config options here */
   output: 'standalone',
@@ -42,38 +40,10 @@ const nextConfig: NextConfig = {
     };
     return config;
   },
-  async rewrites() {
-    return [
-      {
-        source: '/api/wiki_cache/:path*',
-        destination: `${TARGET_SERVER_BASE_URL}/api/wiki_cache/:path*`,
-      },
-      {
-        source: '/export/wiki/:path*',
-        destination: `${TARGET_SERVER_BASE_URL}/export/wiki/:path*`,
-      },
-      {
-        source: '/api/wiki_cache',
-        destination: `${TARGET_SERVER_BASE_URL}/api/wiki_cache`,
-      },
-      {
-        source: '/local_repo/structure',
-        destination: `${TARGET_SERVER_BASE_URL}/local_repo/structure`,
-      },
-      {
-        source: '/api/auth/status',
-        destination: `${TARGET_SERVER_BASE_URL}/auth/status`,
-      },
-      {
-        source: '/api/auth/validate',
-        destination: `${TARGET_SERVER_BASE_URL}/auth/validate`,
-      },
-      {
-        source: '/api/lang/config',
-        destination: `${TARGET_SERVER_BASE_URL}/lang/config`,
-      },
-    ];
-  },
+  // No rewrites needed — wiki_cache, projects, lang/config, and export
+  // are all handled by Next.js API routes (no backend proxy required).
+  // The Ask/Chat feature connects directly via WebSocket when the backend
+  // is available, and fails gracefully when it's not.
 };
 
 export default nextConfig;

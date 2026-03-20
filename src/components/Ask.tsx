@@ -280,7 +280,8 @@ const Ask: React.FC<AskProps> = ({
   };
 
   // Legacy parse function for backward compatibility
-  const parseResearchIterations = (content: string, iteration: number): ResearchIteration[] => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _parseResearchIterations = (content: string, iteration: number): ResearchIteration[] => {
     const iterations: ResearchIteration[] = [];
     
     // Check for research plan
@@ -412,14 +413,16 @@ const Ask: React.FC<AskProps> = ({
   };
 
   // Function to navigate to the next research stage
-  const navigateToNextStage = () => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _navigateToNextStage = () => {
     if (currentStageIndex < researchStages.length - 1) {
       navigateToStage(currentStageIndex + 1);
     }
   };
 
   // Function to navigate to the previous research stage
-  const navigateToPreviousStage = () => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _navigateToPreviousStage = () => {
     if (currentStageIndex > 0) {
       navigateToStage(currentStageIndex - 1);
     }
@@ -868,7 +871,8 @@ const Ask: React.FC<AskProps> = ({
       closeWebSocket(webSocketRef.current);
 
       let fullResponse = '';
-      let accumulatedIterations: ResearchIteration[] = [];
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const _accumulatedIterations: ResearchIteration[] = [];
 
       // Create a new WebSocket connection (returns null in cloud environments)
       const ws = createChatWebSocket(
@@ -884,7 +888,7 @@ const Ask: React.FC<AskProps> = ({
             const iterationsContent = [fullResponse];
             const iterations = parseResearchIterationsFromArray(iterationsContent);
             const conclusion = extractFinalConclusion(fullResponse);
-            accumulatedIterations = iterations;
+            // accumulatedIterations tracking removed (handled by setChatMessages)
             
             setChatMessages(prev => prev.map(msg => 
               msg.id === assistantMessageId 

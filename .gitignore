@@ -33,6 +33,7 @@ wheels/
 .installed.cfg
 *.egg
 *.venv
+*.bak
 # testing
 /coverage
 

@@ -91,29 +91,45 @@ Examples:
 
 
 def _extract_owner_repo(repo_url: str) -> tuple:
-    """Extract owner and repo name from Azure DevOps URL.
+    """Extract owner (organization) and repo name from Azure DevOps URL.
+
+    The owner is the ADO **organization**, not the project name.
+    This matches the frontend's URL routing: /:owner/:repo.
 
     Examples:
-        https://dev.azure.com/org/proj/_git/repo → ('org_proj', 'repo')
+        https://dev.azure.com/org/proj/_git/repo → ('org', 'repo')
         https://msdata.visualstudio.com/Database%20Systems/_git/orcasql-myfile
             → ('msdata', 'orcasql-myfile')
     """
-    from urllib.parse import unquote
+    from urllib.parse import unquote, urlparse
     url = unquote(repo_url.rstrip('/'))
-    parts = url.split('/')
+    parsed = urlparse(url)
+    host = parsed.hostname or ''
+    path_parts = [p for p in parsed.path.split('/') if p]
 
-    # Azure DevOps: .../_git/repo
-    if '/_git/' in url:
-        git_idx = parts.index('_git')
-        repo = parts[git_idx + 1] if git_idx + 1 < len(parts) else 'unknown'
-        # Owner is the org or project before _git
-        owner = parts[git_idx - 1] if git_idx >= 1 else 'unknown'
+    # Azure DevOps: extract org from URL and repo from /_git/ segment
+    if '/_git/' in url and path_parts:
+        # Repo name is after _git
+        git_idx = path_parts.index('_git') if '_git' in path_parts else -1
+        repo = path_parts[git_idx + 1] if git_idx >= 0 and git_idx + 1 < len(path_parts) else 'unknown'
+
+        # Organization extraction:
+        # - visualstudio.com: org is subdomain (msdata.visualstudio.com → msdata)
+        # - dev.azure.com: org is first path segment (dev.azure.com/org/proj/_git/repo → org)
+        if 'visualstudio.com' in host:
+            owner = host.split('.')[0]
+        elif 'dev.azure.com' in host:
+            owner = path_parts[0] if path_parts else 'unknown'
+        else:
+            # Fallback: use segment before _git (project name)
+            owner = path_parts[git_idx - 1] if git_idx >= 1 else 'unknown'
+
         return owner, repo
 
     # Fallback: last two segments
-    if len(parts) >= 2:
-        return parts[-2], parts[-1]
-    return 'unknown', parts[-1] if parts else 'unknown'
+    if len(path_parts) >= 2:
+        return path_parts[-2], path_parts[-1]
+    return 'unknown', path_parts[-1] if path_parts else 'unknown'
 
 
 def run_code_processor(
