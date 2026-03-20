@@ -6,7 +6,7 @@ import ThemeToggle from '@/components/theme-toggle';
 import WikiTreeView from '@/components/WikiTreeView';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { RepoInfo } from '@/types/repoinfo';
-import { processCitations } from '@/utils/citationProcessor';
+import { processCitations, generateFileUrl } from '@/utils/citationProcessor';
 import { detectCurrentBranch } from '@/utils/branchDetection';
 import getRepoUrl from '@/utils/getRepoUrl';
 import Link from 'next/link';
@@ -14,7 +14,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FaBookOpen, FaComments, FaDownload, FaExclamationTriangle,
-  FaFileExport, FaFolder, FaHome, FaTimes,
+  FaFileExport, FaFolder, FaHome, FaLink, FaSearch, FaTimes,
 } from 'react-icons/fa';
 import { AzureDevOpsIcon } from '@/components/AzureIcon';
 
@@ -69,6 +69,7 @@ export default function RepoWikiPage() {
   const branch = searchParams.get('branch') || null;
   const isComprehensiveView = searchParams.get('comprehensive') !== 'false';
   const repoUrl = searchParams.get('repo_url') ? decodeURIComponent(searchParams.get('repo_url') || '') : undefined;
+  const initialPageId = searchParams.get('page') || null; // Deep-link to specific page
 
   // Determine repo type from URL
   const repoType = (() => {
@@ -106,6 +107,14 @@ export default function RepoWikiPage() {
 
   // Effective repo info (may be updated from cache data)
   const [effectiveRepoInfo, setEffectiveRepoInfo] = useState(repoInfo);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Share feedback
+  const [shareCopied, setShareCopied] = useState(false);
 
   // Scroll to top on page change
   useEffect(() => {
@@ -183,9 +192,12 @@ export default function RepoWikiPage() {
           }));
         }
 
-        // Select first page
+        // Select page from deep-link or default to first
         if (data.wiki_structure.pages?.length > 0) {
-          setCurrentPageId(data.wiki_structure.pages[0].id);
+          const targetPage = initialPageId && data.generated_pages[initialPageId]
+            ? initialPageId
+            : data.wiki_structure.pages[0].id;
+          setCurrentPageId(targetPage);
         }
       } catch (err) {
         console.error('Error loading wiki cache:', err);
@@ -260,6 +272,43 @@ export default function RepoWikiPage() {
       setIsExporting(false);
     }
   }, [wikiStructure, generatedPages, effectiveRepoInfo]);
+
+  // ─── Search ─────────────────────────────────────────────────
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim() || !wikiStructure) return null;
+    const q = searchQuery.toLowerCase();
+    return wikiStructure.pages.filter(p => {
+      if (p.title.toLowerCase().includes(q)) return true;
+      const content = generatedPages[p.id]?.content || '';
+      return content.toLowerCase().includes(q);
+    });
+  }, [searchQuery, wikiStructure, generatedPages]);
+
+  // Keyboard shortcut: Ctrl+K to open search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsSearchOpen(prev => !prev);
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+      }
+      if (e.key === 'Escape' && isSearchOpen) {
+        setIsSearchOpen(false);
+        setSearchQuery('');
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [isSearchOpen]);
+
+  // ─── Share ──────────────────────────────────────────────────
+  const handleShare = useCallback(() => {
+    const url = new URL(window.location.href);
+    if (currentPageId) url.searchParams.set('page', currentPageId);
+    navigator.clipboard.writeText(url.toString());
+    setShareCopied(true);
+    setTimeout(() => setShareCopied(false), 2000);
+  }, [currentPageId]);
 
   // ─── Render ─────────────────────────────────────────────────
   return (
@@ -389,10 +438,50 @@ export default function RepoWikiPage() {
                   </div>
                 )}
 
-                {/* Pages heading + indexed-at metadata */}
-                <h4 className="text-md font-semibold text-[var(--foreground)] mb-3">
-                  {messages.repoPage?.pages || 'Pages'}
-                </h4>
+                {/* Pages heading + search + indexed-at metadata */}
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-md font-semibold text-[var(--foreground)]">
+                    {messages.repoPage?.pages || 'Pages'}
+                  </h4>
+                  <button
+                    onClick={() => { setIsSearchOpen(!isSearchOpen); setTimeout(() => searchInputRef.current?.focus(), 50); }}
+                    className="p-1.5 text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors rounded-md hover:bg-[var(--background)]"
+                    title="Search pages (Ctrl+K)"
+                  >
+                    <FaSearch className="text-xs" />
+                  </button>
+                </div>
+
+                {/* Search input */}
+                {isSearchOpen && (
+                  <div className="mb-3">
+                    <input
+                      ref={searchInputRef}
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Search pages..."
+                      className="w-full px-3 py-1.5 text-xs bg-[var(--background)] text-[var(--foreground)] border border-[var(--border-color)] rounded-md focus:outline-none focus:border-[var(--accent-primary)] placeholder:text-[var(--muted)]"
+                    />
+                    {searchResults && searchResults.length > 0 && (
+                      <div className="mt-1 max-h-40 overflow-y-auto">
+                        {searchResults.map(page => (
+                          <button
+                            key={page.id}
+                            onClick={() => { setCurrentPageId(page.id); setSearchQuery(''); setIsSearchOpen(false); }}
+                            className="w-full text-left px-3 py-1.5 text-xs text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 rounded truncate"
+                          >
+                            {page.title}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {searchResults && searchResults.length === 0 && searchQuery.trim() && (
+                      <p className="mt-1 text-xs text-[var(--muted)] px-3">No pages found</p>
+                    )}
+                  </div>
+                )}
+
                 {indexedAt && (
                   <p className="text-xs text-[var(--muted)] mb-3">
                     Last indexed: {new Date(indexedAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -412,15 +501,55 @@ export default function RepoWikiPage() {
               <div id="wiki-content" className="w-full flex-grow p-6 lg:p-8 overflow-y-auto">
                 {currentPageId && generatedPages[currentPageId] ? (
                   <div className="max-w-[900px] xl:max-w-[1000px] mx-auto">
-                    <h3 className="text-xl font-semibold text-[var(--foreground)] mb-4 break-words">
-                      {generatedPages[currentPageId].title}
-                    </h3>
+                    {/* Page title + share button */}
+                    <div className="flex items-start justify-between gap-3 mb-4">
+                      <h3 className="text-xl font-semibold text-[var(--foreground)] break-words">
+                        {generatedPages[currentPageId].title}
+                      </h3>
+                      <button
+                        onClick={handleShare}
+                        className="flex-shrink-0 p-2 text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors rounded-md hover:bg-[var(--background)]"
+                        title="Copy link to this page"
+                      >
+                        <FaLink className="text-sm" />
+                      </button>
+                    </div>
+                    {shareCopied && (
+                      <div className="mb-3 text-xs text-emerald-600 dark:text-emerald-400">Link copied to clipboard</div>
+                    )}
+
+                    {/* Relevant source files block */}
+                    {generatedPages[currentPageId].filePaths?.length > 0 && (
+                      <details className="mb-5 border border-[var(--border-color)] rounded-md overflow-hidden">
+                        <summary className="px-4 py-2.5 bg-[var(--background)]/50 text-sm font-medium text-[var(--foreground)] cursor-pointer hover:bg-[var(--background)]/70 select-none">
+                          Relevant source files ({generatedPages[currentPageId].filePaths.length})
+                        </summary>
+                        <div className="px-4 py-2 text-xs space-y-1">
+                          {generatedPages[currentPageId].filePaths.map((fp, i) => {
+                            const url = generateFileUrl(fp, effectiveRepoInfo, commitHash || detectCurrentBranch(effectiveRepoInfo, 'master') || 'master');
+                            return (
+                              <div key={i}>
+                                <a
+                                  href={url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[var(--accent-primary)] hover:underline font-mono"
+                                >
+                                  {fp}
+                                </a>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </details>
+                    )}
+
                     <div className="prose prose-sm md:prose-base lg:prose-lg max-w-none">
                       <Markdown
                         content={processCitations(
                           generatedPages[currentPageId].content,
                           effectiveRepoInfo,
-                          detectCurrentBranch(effectiveRepoInfo, 'master') || 'master',
+                          commitHash || detectCurrentBranch(effectiveRepoInfo, 'master') || 'master',
                         )}
                         onNavigateToPage={(pageId) => setCurrentPageId(pageId)}
                       />
