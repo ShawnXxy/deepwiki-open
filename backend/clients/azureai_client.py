@@ -728,3 +728,23 @@ class AzureAIClient(ModelClient):
         else:
             raise ValueError(f"model_type {model_type} is not supported")
 
+    @azure_openai_async_retry_with_delay
+    async def acall(
+        self, api_kwargs: Dict = {},
+        model_type: ModelType = ModelType.UNDEFINED
+    ):
+        """Async API call for streaming chat and embeddings."""
+        if self.async_client is None:
+            self.async_client = self.init_async_client()
+            log.info(f"Async client initialized: endpoint={self._azure_endpoint}")
+        if model_type == ModelType.EMBEDDER:
+            return await self.async_client.embeddings.create(**api_kwargs)
+        elif model_type == ModelType.LLM:
+            debug_kwargs = {k: v for k, v in api_kwargs.items() if k != 'messages'}
+            debug_kwargs['messages'] = f"[{len(api_kwargs.get('messages', []))} messages]"
+            log.debug(f"LLM async api_kwargs: {debug_kwargs}")
+            return await self.async_client.chat.completions.create(
+                **api_kwargs
+            )
+        else:
+            raise ValueError(f"model_type {model_type} is not supported")
