@@ -1,11 +1,7 @@
 # Backend clients module
 # Contains client implementations for external services
 
-from backend.clients.azureai_client import (
-    AzureAIClient,
-    AzureBatchEmbedder,
-    AzureToEmbeddings
-)
+from backend.clients.azureai_client import AzureAIClient
 from backend.clients.blob_client import (
     AzureBlobStorageClient,
     get_blob_storage_client,
@@ -15,9 +11,9 @@ from backend.clients.blob_client import (
 from backend.clients.storage import storage, StorageClient
 from backend.clients.vector_storage import VectorStorage, get_vector_storage
 
-# Note: backend.clients.embedder is NOT imported here to avoid circular
-# dependency (embedder imports backend.config which imports backend.clients).
-# Use: from backend.clients.embedder import get_embedder
+# Note: embedding_client is NOT eagerly imported to avoid circular
+# dependency (it imports backend.config which imports backend.clients).
+# Use: from backend.clients.embedding_client import get_embedder
 
 __all__ = [
     "AzureAIClient",
