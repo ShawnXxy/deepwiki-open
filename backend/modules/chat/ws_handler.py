@@ -782,10 +782,23 @@ async def handle_websocket_chat(websocket: WebSocket):
         except Exception as e_azure:
             # Extract APIM request ID for debugging
             from backend.clients.azureai_client import _extract_request_id
+            import traceback
             req_id = _extract_request_id(e_azure)
+            is_connection_error = 'Connection' in type(e_azure).__name__
+            req_label = 'N/A (connection failed)' if is_connection_error else req_id
             logger.error(
-                f"Error with Azure AI API (req_id={req_id}): {str(e_azure)}"
+                f"Error with Azure AI API (req_id={req_label}): "
+                f"{type(e_azure).__name__}: {str(e_azure)}"
             )
+            if is_connection_error:
+                # Log full exception chain for connection errors
+                logger.error(
+                    f"Connection error details — "
+                    f"exception_type={type(e_azure).__name__}, "
+                    f"cause={type(e_azure.__cause__).__name__ if e_azure.__cause__ else 'None'}, "
+                    f"cause_detail={str(e_azure.__cause__) if e_azure.__cause__ else 'N/A'}"
+                )
+                logger.debug(f"Full traceback:\n{traceback.format_exc()}")
             error_message = str(e_azure).lower()
 
             # Check for content filter errors — signal frontend
@@ -812,7 +825,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                 )
             else:
                 error_msg = (
-                    f"\nError with Azure AI API (request_id: {req_id}): "
+                    f"\nError with Azure AI API (request_id: {req_label}): "
                     f"{str(e_azure)}\n\n"
                     "Please check your AZURE_OPENAI_API_KEY, "
                     "AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_VERSION."

@@ -45,6 +45,7 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 # from azure.core.credentials import AccessToken
 from openai import AzureOpenAI, AsyncAzureOpenAI, Stream
 from openai import (
+    APIConnectionError,
     APITimeoutError,
     InternalServerError,
     RateLimitError,
@@ -242,6 +243,13 @@ def azure_openai_retry_with_delay(func):
                     continue
                 else:
                     raise
+            except APIConnectionError as e:
+                log.error(
+                    f"Connection error to Azure OpenAI: {e}. "
+                    f"Cause: {type(e.__cause__).__name__}: {e.__cause__}"
+                    if e.__cause__ else f"Connection error: {e}"
+                )
+                raise
         
         # This should not be reached, but just in case
         return func(*args, **kwargs)
@@ -312,6 +320,13 @@ def azure_openai_async_retry_with_delay(func):
                     continue
                 else:
                     raise
+            except APIConnectionError as e:
+                log.error(
+                    f"Async connection error to Azure OpenAI: {e}. "
+                    f"Cause: {type(e.__cause__).__name__}: {e.__cause__}"
+                    if e.__cause__ else f"Async connection error: {e}"
+                )
+                raise
         
         # This should not be reached, but just in case
         return await func(*args, **kwargs)
@@ -457,7 +472,7 @@ class AzureAIClient(ModelClient):
         """
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
-        api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        api_key = (os.getenv("AZURE_OPENAI_API_KEY") or "").strip() or None
         
         log.info("🔧 [AzureOpenAI] Initializing sync client...")
         log.info(f"   Endpoint: {azure_endpoint}")
@@ -470,8 +485,8 @@ class AzureAIClient(ModelClient):
 
         # Authentication chain: API Key → MSI/DefaultAzureCredential
         if api_key:
-            log.info("🔑 [AzureOpenAI] Auth method: API Key "
-                     "(from AZURE_OPENAI_API_KEY)")
+            masked = api_key[:6] + '***' if len(api_key) > 6 else '***'
+            log.info(f"🔑 [AzureOpenAI] Auth method: API Key ({masked})")
             return AzureOpenAI(
                 api_key=api_key,
                 azure_endpoint=azure_endpoint,
@@ -501,7 +516,7 @@ class AzureAIClient(ModelClient):
         """
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
-        api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        api_key = (os.getenv("AZURE_OPENAI_API_KEY") or "").strip() or None
         
         log.info("🔧 [AzureOpenAI] Initializing async client...")
         
@@ -512,7 +527,8 @@ class AzureAIClient(ModelClient):
 
         # Authentication chain: API Key → MSI/DefaultAzureCredential
         if api_key:
-            log.info("🔑 [AzureOpenAI Async] Auth method: API Key")
+            masked = api_key[:6] + '***' if len(api_key) > 6 else '***'
+            log.info(f"🔑 [AzureOpenAI Async] Auth method: API Key ({masked})")
             return AsyncAzureOpenAI(
                 api_key=api_key,
                 azure_endpoint=azure_endpoint,
@@ -691,8 +707,8 @@ class AzureAIClient(ModelClient):
         if model_type == ModelType.EMBEDDER:
             try:
                 result = self.sync_client.embeddings.create(**api_kwargs)
-                req_id = _extract_request_id(result)
-                log.debug(f"Embedding call succeeded (req_id={req_id})")
+                # Use response object's built-in ID for logging
+                log.debug("Embedding call succeeded")
                 return result
             except Exception as e:
                 req_id = _extract_request_id(e)
@@ -706,8 +722,9 @@ class AzureAIClient(ModelClient):
                 self.chat_completion_parser = handle_streaming_response
                 return self.sync_client.chat.completions.create(**api_kwargs)
             result = self.sync_client.chat.completions.create(**api_kwargs)
-            req_id = _extract_request_id(result)
-            log.debug(f"LLM call succeeded (req_id={req_id})")
+            # ChatCompletion.id is the OpenAI request ID (e.g. "chatcmpl-...")
+            completion_id = getattr(result, 'id', 'unknown')
+            log.debug(f"LLM call succeeded (completion_id={completion_id})")
             return result
         else:
             raise ValueError(f"model_type {model_type} is not supported")
@@ -722,6 +739,7 @@ class AzureAIClient(ModelClient):
         """
         if self.async_client is None:
             self.async_client = self.init_async_client()
+            log.info(f"Async client initialized: endpoint={self._azure_endpoint}")
         if model_type == ModelType.EMBEDDER:
             return await self.async_client.embeddings.create(**api_kwargs)
         elif model_type == ModelType.LLM:

@@ -32,6 +32,9 @@ from backend.modules.wiki.models import (
 setup_logging()
 logger = logging.getLogger(__name__)
 
+# Suppress noisy third-party warnings
+logging.getLogger("adalflow.tracing").setLevel(logging.ERROR)
+
 app = FastAPI(
     title="DeepWiki Chat API",
     description="Backend for Ask/Chat feature (WebSocket + HTTP streaming)",

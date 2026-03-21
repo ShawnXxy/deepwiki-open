@@ -205,7 +205,8 @@ def run_code_processor(
             print("    2. Run 'az login' first (local mode)")
             sys.exit(1)
     else:
-        print("  ✓ Using PAT from environment")
+        masked_pat = pat[:6] + '***' if len(pat) > 6 else '***'
+        print(f"  ✓ Using PAT from environment ({masked_pat})")
 
     # Step 1: Clone repo
     print("\n--- Step 1: Cloning repository ---")

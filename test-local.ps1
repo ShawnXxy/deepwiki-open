@@ -1,17 +1,14 @@
-# Local Docker Testing Script for CodeWiki
-# Run this to test the container locally before deploying to Azure
+# Local Docker Testing Script for CodeWiki v2
+# Builds and runs the container locally for testing.
+#
+# Architecture (v2):
+#   - Next.js on :3000 (frontend viewer — reads wiki cache from disk)
+#   - FastAPI on :8001 (optional — Ask/Chat only)
+#   - No nginx needed (frontend is self-contained)
 #
 # USAGE:
-#   .\test-local.ps1                           # Reads API key from .env file
-#   .\test-local.ps1 -ApiKey "your-api-key"    # Uses provided API key (overrides .env)
-#
-# SETUP:
-#   1. Copy .env.example to .env
-#   2. Add your Azure OpenAI API key to .env
-#   3. Run this script
-#
-# To get your API key:
-#   Azure Portal -> Azure OpenAI -> your resource -> Keys and Endpoint -> Key 1
+#   .\test-local.ps1                           # Reads API key from backend/.env
+#   .\test-local.ps1 -ApiKey "your-api-key"    # Uses provided API key
 
 param(
     [string]$ApiKey = ""
@@ -36,15 +33,15 @@ if (Test-Path $envFile) {
 }
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  CodeWiki - Local Docker Testing" -ForegroundColor Cyan
+Write-Host "  CodeWiki v2 - Local Docker Testing" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
 # ============================================
 # Configuration
 # ============================================
-$IMAGE_NAME = "codewiki"
-$CONTAINER_NAME = "codewiki-local"
+$IMAGE_NAME = "codewiki-local-v2"
+$CONTAINER_NAME = "codewiki-v2"
 $BACKEND_PORT = 8001
 $FRONTEND_PORT = 3000
 
@@ -129,7 +126,7 @@ $infra.azure_application_insights.enabled = $false
 $infra | ConvertTo-Json -Depth 10 | Set-Content $localInfraPath
 
 # Copy other config files to .local
-$configFiles = @("repo.json", "generator.json", "lang.json", "embedder.json")
+$configFiles = @("repo.json", "lang.json", "embedder.json")
 foreach ($configFile in $configFiles) {
     $sourcePath = Join-Path $PSScriptRoot "backend/config/$configFile"
     if (Test-Path $sourcePath) {
@@ -165,8 +162,24 @@ $dockerArgs = @(
 if ($usingApiKey) {
     $dockerArgs += @("-e", "AZURE_OPENAI_API_KEY=$ApiKey")
     Write-Host "   ✅ API key will be passed to container" -ForegroundColor DarkGray
-} else {
-    $dockerArgs += @("-v", "codewiki-azure-cli:/root/.azure")  # Named volume for persistent Azure CLI credentials
+}
+
+# Pass REPO_ACCESS_TOKEN if set (for private repo cloning)
+$pat = $env:REPO_ACCESS_TOKEN
+if (-not [string]::IsNullOrEmpty($pat)) {
+    $dockerArgs += @("-e", "REPO_ACCESS_TOKEN=$pat")
+    Write-Host "   ✅ REPO_ACCESS_TOKEN will be passed to container" -ForegroundColor DarkGray
+}
+
+# Mount backend/.env into container (it's excluded by .dockerignore)
+$backendEnv = Join-Path $PSScriptRoot "backend/.env"
+if (Test-Path $backendEnv) {
+    $dockerArgs += @("-v", "${backendEnv}:/app/backend/.env:ro")
+    Write-Host "   ✅ backend/.env mounted into container" -ForegroundColor DarkGray
+}
+
+if (-not $usingApiKey -and -not (Test-Path $backendEnv)) {
+    $dockerArgs += @("-v", "codewiki-azure-cli:/root/.azure")
     Write-Host "   📁 Mounting Azure CLI credentials volume" -ForegroundColor DarkGray
 }
 
