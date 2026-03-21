@@ -55,11 +55,18 @@ class AzureAISearchConfig(BaseModel):
 
 
 class AzureMLConfig(BaseModel):
-    """Azure Machine Learning configuration."""
+    """Azure Machine Learning configuration (includes pipeline settings)."""
     enabled: bool = False
     workspace_name: str = ""
     resource_group: str = ""
     subscription_id: str = ""
+    compute_name: str = "deepwiki-compute"
+    compute_size: str = "STANDARD_D2_V2"
+    compute_min_instances: int = 0
+    compute_max_instances: int = 4
+    schedule_interval_hours: int = 480
+    environment_name: str = "deepwiki-processor"
+    idle_time_before_scale_down: int = 600
 
 
 class InfraConfig(BaseModel):

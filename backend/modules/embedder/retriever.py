@@ -12,9 +12,9 @@ from adalflow.components.retriever.faiss_retriever import FAISSRetriever
 
 from backend.config import configs
 from backend.clients.embedder import get_embedder
-from backend.modules.rag.memory import Memory
-from backend.modules.rag.answer import RAGAnswer
-from backend.modules.rag.database import DatabaseManager
+from backend.modules.embedder.memory import Memory
+from backend.modules.embedder.response import RAGAnswer
+from backend.modules.embedder.indexer import DatabaseManager
 from backend.promptstore import RAG_SYSTEM_PROMPT as system_prompt, RAG_TEMPLATE
 
 logger = logging.getLogger(__name__)

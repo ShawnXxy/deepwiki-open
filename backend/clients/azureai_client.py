@@ -771,7 +771,7 @@ class AzureBatchEmbedder(DataComponent):
             self.batch_size = 100
         
         # Use consistent cache directory under ~/.adalflow
-        from backend.utils.paths import get_embedding_cache_path
+        from backend.paths import get_embedding_cache_path
         cache_dir = get_embedding_cache_path()
         
         self.cache_path = os.path.join(cache_dir, f'{embedding_cache_file_name}_{self.embedder.__class__.__name__}_embeddings.pkl')

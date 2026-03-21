@@ -20,8 +20,8 @@ from backend.config import (
     get_azure_deployment_name,
     get_azure_ai_client,
 )
-from backend.modules.rag import RAG
-from backend.modules.rag.utils import count_tokens
+from backend.modules.embedder import RAG
+from backend.modules.embedder.tokenizer import count_tokens
 from backend.modules.repository.file_content import get_file_content
 from backend.modules.chat.models import ChatCompletionRequest
 from backend.modules.chat.service import (
@@ -366,8 +366,8 @@ async def handle_websocket_chat(websocket: WebSocket):
                 from backend.modules.repository.git_ops import (
                     get_head_commit_hash
                 )
-                from backend.utils.paths import get_adalflow_root_path
-                from backend.modules.rag.database import DatabaseManager
+                from backend.paths import get_adalflow_root_path
+                from backend.modules.embedder.indexer import DatabaseManager
                 dm = DatabaseManager()
                 repo_name_for_path = dm._extract_repo_name_from_url(
                     request.repo_url, request.type

@@ -1,16 +1,16 @@
 """
-Wiki Structure Generation prompts.
+Wiki structure templates and builder.
 
-These prompts are used to analyze a repository and generate the wiki structure
-(table of contents) with sections and pages.
+Templates:
+    WIKI_STRUCTURE_PROMPT         — Comprehensive wiki (15-25 pages, XML output)
+    WIKI_STRUCTURE_CONCISE_PROMPT — Concise wiki (4-6 pages)
 
-Note: These prompts use placeholders that need to be filled in:
-- {owner}: Repository owner
-- {repo}: Repository name
-- {file_tree}: The complete file tree
-- {readme}: The README content
-- {language_name}: Target language for wiki content
-- {page_count}: Number of pages to generate (e.g., "8-12" or "4-6")
+Builders:
+    build_wiki_structure_prompt() — Assembles prompt from file tree + README
+    file_tree_dirs_only()         — Filters file tree for content-filter retry
+
+Constants:
+    LANGUAGE_DISPLAY_NAMES        — Language code → display name mapping
 """
 
 # Comprehensive wiki structure prompt (includes sections)

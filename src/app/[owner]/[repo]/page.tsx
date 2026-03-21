@@ -160,16 +160,14 @@ export default function RepoWikiPage() {
           return;
         }
 
-        // Check completeness
+        // Check completeness — warn but still load available pages
         const totalPages = data.wiki_structure.pages?.length || 0;
         const pagesWithContent = Object.values(data.generated_pages as Record<string, WikiPage>)
           .filter((p) => p.content && p.content !== 'Loading...').length;
 
         if (data.is_partial || pagesWithContent < totalPages) {
-          setError(
-            `Wiki is partially generated (${pagesWithContent}/${totalPages} pages). ` +
-            'Re-run the code processor to complete generation.'
-          );
+          console.warn(`Wiki partially generated: ${pagesWithContent}/${totalPages} pages`);
+          // Don't block — still load whatever pages exist
         }
 
         // Load data into state

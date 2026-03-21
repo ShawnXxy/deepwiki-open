@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 _backend_dir = Path(__file__).resolve().parent
 load_dotenv(_backend_dir / '.env')
 
-from backend.infra.logger import setup_logging
+from backend.logger import setup_logging
 
 # Configure logging
 setup_logging()

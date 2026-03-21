@@ -1,6 +1,0 @@
-{
-  "generator": {
-    "client_class": "AzureAIClient",
-    "model_kwargs": {}
-  }
-}

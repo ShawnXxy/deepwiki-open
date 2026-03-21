@@ -1,123 +1,126 @@
 # DeepWiki Backend
 
-The backend is a FastAPI application that provides AI-powered wiki generation, RAG-based Q&A, and repository analysis for code repositories.
+Two independent components: a **CLI processor** that generates wikis offline, and an optional **FastAPI server** for Ask/Chat Q&A.
 
-## Architecture Overview
+## Architecture
 
 ```
 backend/
-├── app.py              # FastAPI application setup and route registration
-├── main.py             # Application entry point with uvicorn server
-├── config.py           # Configuration management (reads JSON config files)
-├── prompts.py          # Prompt management (reserved for future use)
+├── app.py              # FastAPI server (Ask/Chat only — 5 endpoints)
+├── main.py             # Server entry point (uvicorn)
+├── config.py           # Configuration management (reads infra.json)
+├── paths.py            # Storage layout (~/.adalflow directories)
+├── logger.py           # Logging with smart deduplication + App Insights
 │
-├── modules/            # Core business logic modules
-│   ├── chat/          # Chat and deep research functionality
-│   ├── rag/           # Retrieval-Augmented Generation pipeline
-│   ├── repository/    # Git operations and file content retrieval
-│   └── wiki/          # Wiki cache, export, and structure management
+├── processor/          # Standalone CLI wiki generator
+│   ├── code_processor.py   # CLI entry point (--repo, --mode, --config)
+│   ├── wiki_generator.py   # LLM-based wiki orchestration
+│   └── cloud_setup.py      # Azure AI Search + AML pipeline setup
 │
-├── clients/           # External service clients
-│   ├── azureai_client.py    # Azure OpenAI client (LLM + embeddings)
-│   ├── blob_client.py       # Azure Blob Storage client
-│   ├── storage.py           # Unified storage abstraction (blob/local)
-│   └── vector_storage.py    # JSON-based vector embeddings storage
+├── modules/            # Domain modules (single responsibility each)
+│   ├── repository/     # Git operations (clone, pull, commit hash)
+│   ├── embedder/       # Chunking, embedding, FAISS retrieval
+│   ├── wiki/           # Wiki cache management + export
+│   └── chat/           # Ask/Chat Q&A (WebSocket + HTTP streaming)
 │
-├── promptstore/       # Centralized prompt templates
-│   ├── rag.py              # RAG system prompts
-│   ├── simple_chat.py      # Simple chat prompts
-│   ├── deep_research.py    # Multi-turn research prompts
-│   ├── wiki_structure.py   # Wiki structure generation prompts
-│   ├── wiki_page.py        # Wiki page content prompts
-│   └── chat_system.py      # Chat system prompt builder
+├── clients/            # Azure service clients
+│   ├── azureai_client.py   # Azure OpenAI (LLM + embeddings)
+│   ├── embedder.py         # Embedding client factory (SafeEmbedder)
+│   ├── search_client.py    # Azure AI Search (create/query/push)
+│   ├── blob_client.py      # Azure Blob Storage
+│   ├── storage.py          # Unified storage abstraction
+│   └── vector_storage.py   # JSON vector file storage
 │
-├── tools/             # Utility tools
-│   ├── embedder.py    # Embedding utilities with token handling
-│   └── logger.py      # Logging with smart deduplication
+├── promptstore/        # LLM prompt templates + builders
+│   ├── wiki_structure.py   # Wiki structure templates + builder
+│   ├── wiki_page.py        # Page content template + builder
+│   ├── chat_system.py      # Chat system prompt builder
+│   ├── deep_research.py    # Multi-turn research templates
+│   ├── simple_chat.py      # Single-turn Q&A template
+│   └── rag.py              # RAG system prompt + context template
 │
-├── types/             # Type definitions (Pydantic models)
-│   ├── config_types.py     # Configuration type classes
-│   ├── git_types.py        # Git-related types
-│   ├── processor_types.py  # File processing types
-│   └── converter.py        # Type conversion utilities
+├── types/              # Pydantic models
+│   ├── config_types.py     # InfraConfig, AzureMLConfig, etc.
+│   ├── git_types.py        # RepoType, WikiCacheIdentifier
+│   └── processor_types.py  # FileFilter, ProcessorConfig
 │
-├── utils/             # General utilities
-│   └── paths.py       # Centralized path management (~/.adalflow)
+├── utils/              # Utilities
+│   └── url_builder.py      # Commit-pinned source file URL builder
 │
-└── config/            # JSON configuration files
-    ├── infra.json     # Azure infrastructure settings
-    ├── embedder.json  # Embedding model configuration
-    ├── generator.json # LLM generation configuration
-    ├── repo.json      # File filter settings
-    └── lang.json      # Language configuration
+└── config/             # JSON configuration files
+    ├── infra.json          # Azure endpoints, MSI, blob, search, AML
+    ├── embedder.json       # Embedding settings (batch_size, chunk_size)
+    ├── repo.json           # File filters (excluded_dirs, excluded_files)
+    └── lang.json           # Supported languages
 ```
 
-## Data Flow
+## Two Operating Modes
 
-```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│   Frontend  │────►│  FastAPI     │────►│  Modules    │
-│  (Next.js)  │     │  (app.py)    │     │             │
-└─────────────┘     └──────────────┘     └──────┬──────┘
-                                                 │
-                    ┌────────────────────────────┼────────────────────────────┐
-                    │                            │                            │
-                    ▼                            ▼                            ▼
-             ┌──────────────┐           ┌──────────────┐           ┌──────────────┐
-             │ modules/chat │           │ modules/rag  │           │ modules/wiki │
-             │              │           │              │           │              │
-             │ - WebSocket  │           │ - Retriever  │           │ - Cache      │
-             │ - HTTP API   │           │ - Database   │           │ - Export     │
-             │ - Service    │           │ - Documents  │           │ - Routes     │
-             └──────────────┘           └──────────────┘           └──────────────┘
-                    │                            │                            │
-                    └────────────────────────────┼────────────────────────────┘
-                                                 │
-                    ┌────────────────────────────┼────────────────────────────┐
-                    │                            │                            │
-                    ▼                            ▼                            ▼
-             ┌──────────────┐           ┌──────────────┐           ┌──────────────┐
-             │   clients/   │           │ promptstore/ │           │    tools/    │
-             │              │           │              │           │              │
-             │ - Azure AI   │           │ - RAG        │           │ - Embedder   │
-             │ - Blob       │           │ - Wiki       │           │ - Logger     │
-             │ - Storage    │           │ - Chat       │           │              │
-             └──────────────┘           └──────────────┘           └──────────────┘
+### 1. CLI Processor (no server needed)
+
+Generates wiki cache files offline. The frontend reads these directly.
+
+```bash
+# Local mode
+python -m backend.processor.code_processor --config=backend/run.json
+
+# Docker mode
+python -m backend.processor.code_processor --mode=docker --repo=URL --branch=main
+
+# Cloud mode (AI Search + AML pipeline)
+python -m backend.processor.code_processor --mode=cloud --repo=URL --branch=main
 ```
 
-## Key Endpoints
+### 2. FastAPI Server (optional, for Ask/Chat only)
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
+Only needed if you want the Ask/Chat Q&A feature.
+
+```bash
+python -m backend.main
+```
+
+**Endpoints (5 total):**
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
 | `/ws/chat` | WebSocket | Streaming chat with RAG context |
-| `/chat/completions/stream` | POST | HTTP streaming chat |
-| `/api/wiki_cache` | GET/POST/DELETE | Wiki cache operations |
-| `/api/export/wiki` | POST | Export wiki to Markdown/JSON |
-| `/api/processed_projects` | GET | List processed repositories |
-| `/local_repo/structure` | GET | Get local repo file tree |
-| `/models/config` | GET | Available model configuration |
-| `/auth/status` | GET | Authentication status |
+| `/chat/completions/stream` | POST | HTTP streaming fallback |
+| `/models/config` | GET | Available model info from infra.json |
+| `/filters/config` | GET | Default file exclusion patterns |
+| `/health` | GET | Deployment health check |
 
-> **Note**: This deployment uses Azure OpenAI exclusively for all LLM and embedding operations.
+## Module Dependency Graph
 
-## Storage Paths
+```
+repository/  ← foundation (zero module deps)
+     ↑
+embedder/    ← depends on repository (clone for indexing)
+     ↑
+chat/        ← depends on embedder (RAG retrieval for Q&A)
 
-All data is stored under `~/.adalflow/`:
+wiki/        ← standalone (cache read/write, no module deps)
+
+processor/   ← orchestrator (invokes repository + embedder + wiki)
+```
+
+## Storage Layout
+
+All data under `~/.adalflow/` (consistent across Windows/Linux/Docker):
 
 | Path | Purpose |
 |------|---------|
-| `~/.adalflow/repos/` | Cloned Git repositories |
-| `~/.adalflow/wikicache/` | Generated wiki JSON files |
-| `~/.adalflow/vectors/` | FAISS vector embeddings |
-| `~/.adalflow/embedding_cache/` | Cached embeddings |
+| `wikicache/` | Generated wiki JSON cache files |
+| `repos/` | Cloned git repositories |
+| `vectors/` | Embedding vector JSON chunks |
+| `embedding_cache/` | Embedding API response cache |
 
 ## Environment Compatibility
 
-| Environment | Auth Method | Storage |
-|-------------|-------------|---------|
-| Local Terminal | Developer Identity | Local disk |
-| Local Docker | API Key (.env) | Local disk (volume mount) |
-| Azure Container App | MSI | Azure Blob Storage |
+| Environment | Auth | Storage | Wiki Viewer | Ask/Chat |
+|-------------|------|---------|-------------|----------|
+| Local | `az login` or PAT | Local disk | `npm run dev` | `python -m backend.main` |
+| Docker | API Key (.env) | Volume mount | Built-in | Built-in |
+| Azure | MSI | Azure Blob | Container App | Container App |
 
 ## Quick Start
 

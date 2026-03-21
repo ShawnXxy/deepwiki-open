@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Use consistent ~/.adalflow path for Docker volume mounting compatibility
 # See backend/utils/paths.py for rationale
-from backend.utils.paths import get_wikicache_path
+from backend.paths import get_wikicache_path
 
 
 WIKI_CACHE_DIR = get_wikicache_path()

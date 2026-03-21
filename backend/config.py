@@ -306,27 +306,18 @@ def get_text_splitter_config() -> Dict[str, Any]:
 def get_generator_full_config() -> GeneratorConfig:
     """
     Get the complete generator configuration.
-    Loads on first access and caches.
+    Built from infra.json (no separate generator.json needed).
     """
     global _generator_config
     if _generator_config is None:
-        config_dict = load_json_config("generator.json")
-        if config_dict:
-            try:
-                # Extract the 'generator' section from the JSON
-                generator_data = config_dict.get("generator", {})
-                _generator_config = from_dict(GeneratorConfig, generator_data)
-                
-                # Inject values from infra.json
-                infra = get_infra_config()
-                _generator_config.model_kwargs.model = infra.azure_openai.deployment
-                _generator_config.model_kwargs.temperature = infra.azure_openai.temperature
-                _generator_config.initialize_kwargs = get_azure_openai_text_config()
-                
-                logger.info("Successfully loaded and validated generator.json")
-            except Exception as e:
-                logger.error(f"Failed to parse generator.json: {e}")
-                raise
+        infra = get_infra_config()
+        _generator_config = GeneratorConfig(
+            client_class="AzureAIClient",
+        )
+        _generator_config.model_kwargs.model = infra.azure_openai.deployment
+        _generator_config.model_kwargs.temperature = infra.azure_openai.temperature
+        _generator_config.initialize_kwargs = get_azure_openai_text_config()
+        logger.info("Generator config built from infra.json")
     return _generator_config
 
 

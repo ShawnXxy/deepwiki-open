@@ -34,6 +34,13 @@
     "enabled": false,
     "workspace_name": "aml-orcas-codewiki",
     "resource_group": "RG-ORCAS-DEEPWIKI",
-    "subscription_id": "4f3f8f41-5643-4664-8c12-ce6b78ceb81f"
+    "subscription_id": "4f3f8f41-5643-4664-8c12-ce6b78ceb81f",
+    "compute_name": "deepwiki-compute",
+    "compute_size": "STANDARD_D2_V2",
+    "compute_min_instances": 0,
+    "compute_max_instances": 4,
+    "schedule_interval_hours": 480,
+    "environment_name": "deepwiki-processor",
+    "idle_time_before_scale_down": 600
   }
 }

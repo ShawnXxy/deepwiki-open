@@ -1,8 +1,12 @@
 """
-Source URL builder for commit-pinned file permalinks.
+URL builder for commit-pinned source file permalinks.
 
-Generates URLs with optional line-number anchors for all supported
-repository types: Azure DevOps, GitHub, GitLab, Bitbucket.
+Generates repository file URLs with optional line-number anchors
+for Azure DevOps, GitHub, GitLab, and Bitbucket.
+
+Used by:
+    - promptstore/wiki_page.py → format_file_paths_list()
+    - modules/chat/service.py → format_context_text()
 """
 
 

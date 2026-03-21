@@ -1,13 +1,13 @@
 """
-Wiki Page Content Generation prompt.
+Wiki page content template and builder.
 
-This prompt is used to generate the actual content for individual wiki pages
-based on relevant source files from the repository.
+Template:
+    WIKI_PAGE_CONTENT_PROMPT — Instructions for LLM to generate one wiki page
 
-Note: This prompt uses placeholders that need to be filled in:
-- {page_title}: Title of the wiki page
-- {file_paths_list}: Formatted list of relevant file paths with links
-- {language_name}: Target language for content generation
+Builders:
+    build_wiki_page_prompt()   — Assembles full prompt with context, files, cross-refs
+    format_file_paths_list()   — Formats file paths as commit-pinned markdown links
+    format_page_catalog()      — Formats page list for LLM cross-referencing
 """
 
 WIKI_PAGE_CONTENT_PROMPT = """You are an expert technical writer and software architect.
@@ -152,7 +152,7 @@ def format_file_paths_list(
         return "- No source files specified"
 
     if repo_url and commit_hash:
-        from backend.utils.source_url import build_source_url
+        from backend.utils.url_builder import build_source_url
         links = []
         for path in file_paths:
             url = build_source_url(

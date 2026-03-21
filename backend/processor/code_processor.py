@@ -151,7 +151,7 @@ def run_code_processor(
     from backend.modules.repository.git_ops import (
         download_repo, get_head_commit_hash,
     )
-    from backend.modules.rag.retriever import RAG
+    from backend.modules.embedder.retriever import RAG
     from backend.modules.wiki.cache import save_wiki_cache
     from backend.modules.wiki.models import WikiCacheRequest
     from backend.processor.wiki_generator import generate_wiki
@@ -209,7 +209,7 @@ def run_code_processor(
 
     # Step 1: Clone repo
     print("\n--- Step 1: Cloning repository ---")
-    from backend.utils.paths import get_repos_path
+    from backend.paths import get_repos_path
     save_repo_dir = os.path.join(get_repos_path(), repo_name)
 
     download_repo(
@@ -292,7 +292,7 @@ def main():
     load_dotenv(_backend_dir / '.env')
 
     # Setup logging
-    from backend.infra.logger import setup_logging
+    from backend.logger import setup_logging
     setup_logging(log_prefix="processor")
 
     args = _parse_args()
@@ -383,11 +383,66 @@ def _run_docker_mode(args):
 
 
 def _run_cloud_mode(args):
-    """Submit Azure ML pipeline job."""
-    # Placeholder for Phase 3C/3D implementation
-    print("Cloud mode is not yet implemented.")
-    print("Use --mode=local to run directly.")
-    sys.exit(1)
+    """Setup cloud resources and run processor with AI Search integration.
+
+    1. Setup cloud resources (AI Search index + AML pipeline)
+    2. Run the processor locally with search_client integration
+    3. Push vectors to AI Search index
+
+    The AML pipeline handles scheduled re-runs automatically.
+    First run must be triggered manually to create resources.
+    """
+    from backend.processor.cloud_setup import setup_cloud_resources
+    from backend.config import is_search_configured
+
+    owner, repo = _extract_owner_repo(args.repo)
+
+    # Step 1: Setup cloud resources (idempotent)
+    print("\n--- Setting up cloud resources ---")
+    resources = setup_cloud_resources(
+        repo_url=args.repo,
+        branch=args.branch,
+        owner=owner,
+        repo=repo,
+    )
+    print(f"  Resources: {resources}")
+
+    # Step 2: Run the processor (same as local, but will push to AI Search)
+    print("\n--- Running processor (cloud mode) ---")
+    run_code_processor(
+        repo_url=args.repo,
+        branch=args.branch,
+        mode='cloud',
+        language=args.language,
+        comprehensive=args.comprehensive,
+    )
+
+    # Step 3: Push vectors to AI Search (if configured)
+    if is_search_configured() and 'search_index' in resources:
+        _push_vectors_to_search(
+            owner=owner, repo=repo, branch=args.branch,
+            index_name=resources['search_index'],
+        )
+
+
+def _push_vectors_to_search(
+    owner: str, repo: str, branch: str, index_name: str
+) -> None:
+    """Load vectors from local storage and push to AI Search."""
+    from backend.clients.vector_storage import get_vector_storage
+    from backend.clients.search_client import push_documents
+
+    print(f"\n--- Pushing vectors to AI Search: {index_name} ---")
+    repo_name = f"{owner}_{repo}"
+    vector_storage = get_vector_storage()
+    docs = vector_storage.load_documents(repo_name, branch)
+
+    if not docs:
+        print("  ⊘ No vector documents found to push")
+        return
+
+    count = push_documents(index_name, docs, repo_name, branch)
+    print(f"  ✓ Pushed {count} documents to AI Search")
 
 
 if __name__ == '__main__':

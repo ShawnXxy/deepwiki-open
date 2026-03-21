@@ -40,7 +40,7 @@ import re
 from typing import List, Optional, Dict, Any, Tuple
 
 from adalflow.core.types import Document
-from backend.utils.paths import get_adalflow_root_path
+from backend.paths import get_adalflow_root_path
 
 from backend.clients.blob_client import (
     get_blob_storage_client,

@@ -1,9 +1,14 @@
 """
-Centralized path utilities for DeepWiki.
+Storage layout for DeepWiki.
 
-This module provides consistent path handling across all platforms.
-We use ~/.adalflow as the standard location to ensure Docker volume
-mounting works consistently.
+Defines where all persistent data lives on disk:
+    ~/.adalflow/wikicache/       — Generated wiki JSON cache files
+    ~/.adalflow/repos/           — Cloned git repositories
+    ~/.adalflow/vectors/         — Embedding vector JSON chunks
+    ~/.adalflow/embedding_cache/ — Embedding API response cache
+
+Uses ~/.adalflow consistently on all platforms (Windows, Linux, macOS)
+to ensure Docker volume mounting works correctly.
 """
 
 import os

@@ -10,12 +10,12 @@ from typing import List
 
 from adalflow.core.types import Document
 from adalflow.core.db import LocalDB
-from backend.utils.paths import get_adalflow_root_path
+from backend.paths import get_adalflow_root_path
 
 from backend.config import configs
 from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
 from backend.clients.vector_storage import get_vector_storage
-from backend.modules.rag.document import read_all_documents, transform_documents_and_save_as_json
+from backend.modules.embedder.document import read_all_documents, transform_documents_and_save_as_json
 from backend.modules.repository.git_ops import download_repo, detect_default_branch
 
 logger = logging.getLogger(__name__)

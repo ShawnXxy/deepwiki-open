@@ -21,8 +21,8 @@ from backend.clients.blob_client import get_blob_storage_client, is_blob_storage
 from backend.clients.vector_storage import get_vector_storage
 from backend.types import FileFilter
 from backend.clients.embedder import get_embedder
-from backend.modules.rag.utils import safe_read_file, count_tokens, MAX_EMBEDDING_TOKENS
-from backend.modules.rag.code_splitter import split_and_enrich_documents
+from backend.modules.embedder.tokenizer import safe_read_file, count_tokens, MAX_EMBEDDING_TOKENS
+from backend.modules.embedder.code_splitter import split_and_enrich_documents
 
 logger = logging.getLogger(__name__)
 
