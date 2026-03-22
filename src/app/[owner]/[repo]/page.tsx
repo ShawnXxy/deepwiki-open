@@ -96,7 +96,7 @@ export default function RepoWikiPage() {
   const [generatedPages, setGeneratedPages] = useState<Record<string, WikiPage>>({});
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [isChatPanelCollapsed, setIsChatPanelCollapsed] = useState(false);
+  const [isChatPanelCollapsed, setIsChatPanelCollapsed] = useState(true);
   const askComponentRef = useRef<{ clearConversation: () => void } | null>(null);
 
   // Cache metadata
