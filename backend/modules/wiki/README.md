@@ -63,12 +63,14 @@ Additional models:
 **File naming convention:**
 
 ```
-{owner}_{repo}_{type}_{language}_{comprehensive}_{branch}.json
+deepwiki_cache_{repo_type}_{owner}_{repo}_{language}_{mode}_{branch}.json
 ```
 
-Example: `myorg_myrepo_azuredevops_en_True_main.json`
+Where `mode` is `comprehensive` or `concise`, and `branch` defaults to `default` if not specified.
 
-**Legacy fallback:** If no branch-suffixed file exists, falls back to `{owner}_{repo}_{type}_{language}_{comprehensive}.json` (pre-branch-support format).
+Example: `deepwiki_cache_azuredevops_myorg_myrepo_en_comprehensive_main.json`
+
+**Legacy fallback:** If no branch-suffixed file exists, falls back to `deepwiki_cache_{repo_type}_{owner}_{repo}_{language}_{mode}.json`.
 
 **`read_wiki_cache(owner, repo, type, language, comprehensive, branch)`**
 
@@ -86,8 +88,8 @@ Example: `myorg_myrepo_azuredevops_en_True_main.json`
 ```
 1. Build WikiCacheData from request
 2. Serialize to JSON (using Pydantic .model_dump())
-3. Save to local disk: ~/.adalflow/wikicache/{filename}.json
-4. Also save to Azure Blob (if configured)
+3. If blob configured → save to Azure Blob and return
+4. Otherwise → save to local disk: ~/.adalflow/wikicache/{filename}.json
 5. Supports is_partial=True for checkpoint saves during generation
 ```
 

@@ -67,8 +67,9 @@ python -m backend.processor.code_processor --config=backend/run.json
 # Docker mode
 python -m backend.processor.code_processor --mode=docker --repo=URL --branch=main
 
-# Cloud mode (AI Search + AML pipeline)
-python -m backend.processor.code_processor --mode=cloud --repo=URL --branch=main
+# Cloud mode — setup AML resources (run from your machine)
+python -m backend.processor.aml_dispatcher --config=backend/run.json
+# Processing runs automatically inside AML pipeline
 ```
 
 ### 2. FastAPI Server (optional, for Ask/Chat only)
@@ -79,7 +80,7 @@ Only needed if you want the Ask/Chat Q&A feature.
 python -m backend.main
 ```
 
-**Endpoints (5 total):**
+**Endpoints (7 total):**
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -87,6 +88,8 @@ python -m backend.main
 | `/chat/completions/stream` | POST | HTTP streaming fallback |
 | `/models/config` | GET | Available model info from infra.json |
 | `/filters/config` | GET | Default file exclusion patterns |
+| `/api/wiki_cache` | GET | Read wiki cache (blob or local) |
+| `/api/processed_projects` | GET | List processed wiki projects |
 | `/health` | GET | Deployment health check |
 
 ## Module Dependency Graph
