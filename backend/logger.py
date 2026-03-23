@@ -196,12 +196,6 @@ def setup_application_insights(
         from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
         from opentelemetry.sdk.resources import Resource
         from azure.monitor.opentelemetry.exporter import AzureMonitorLogExporter
-        from azure.identity import (
-            ManagedIdentityCredential,
-            AzureCliCredential,
-            ChainedTokenCredential,
-            DefaultAzureCredential
-        )
         
         resource = Resource.create({
             "service.name": service_name,
@@ -211,22 +205,11 @@ def setup_application_insights(
         _logger_provider = LoggerProvider(resource=resource)
         set_logger_provider(_logger_provider)
         
-        # Build credential chain
-        client_id = _get_managed_identity_client_id()
-        credentials = []
-        if client_id:
-            credentials.append(ManagedIdentityCredential(client_id=client_id))
-        credentials.append(AzureCliCredential())
-        credentials.append(DefaultAzureCredential(
-            exclude_managed_identity_credential=True,
-            exclude_cli_credential=True
-        ))
-        
-        credential = ChainedTokenCredential(*credentials)
-        
+        # Use connection string auth (instrumentation key).
+        # AAD token auth via ManagedIdentityCredential causes noisy
+        # errors when the identity endpoint is slow or misconfigured.
         exporter = AzureMonitorLogExporter(
             connection_string=connection_string,
-            credential=credential
         )
         
         _logger_provider.add_log_record_processor(
