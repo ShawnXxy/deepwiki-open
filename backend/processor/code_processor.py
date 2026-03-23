@@ -272,11 +272,15 @@ def step_save_wiki(wiki_data, language, comprehensive):
         commit_hash=wiki_data.commit_hash,
         indexed_at=wiki_data.indexed_at,
     )
-    result = asyncio.run(save_wiki_cache(cache_request))
-    if result:
-        print("  Wiki cache saved")
-    else:
-        print("  Failed to save wiki cache")
+    try:
+        result = asyncio.run(save_wiki_cache(cache_request))
+        if result:
+            print("  Wiki cache saved")
+        else:
+            print("  WARNING: save_wiki_cache returned False")
+    except Exception as e:
+        logger.error(f"Failed to save wiki cache: {e}", exc_info=True)
+        print(f"  ERROR saving wiki cache: {e}")
 
 
 def step_push_to_search(owner, repo, branch):
@@ -341,10 +345,15 @@ def _process(mode, repo_url, branch, language, comprehensive):
 
     # Generate wiki: retrieval via FAISS (local/docker) or AI Search (cloud)
     # Driven by config: azure_ai_search.enabled + is_search_configured()
-    wiki_data = step_generate_wiki(
-        repo_url, branch, repo_dir, retriever,
-        commit_hash, language, comprehensive, owner, repo,
-    )
+    try:
+        wiki_data = step_generate_wiki(
+            repo_url, branch, repo_dir, retriever,
+            commit_hash, language, comprehensive, owner, repo,
+        )
+    except Exception as e:
+        logger.error(f"Wiki generation failed: {e}", exc_info=True)
+        print(f"\n  ERROR in wiki generation: {e}")
+        sys.exit(1)
 
     # Save wiki cache: local disk (local/docker) or blob (cloud)
     step_save_wiki(wiki_data, language, comprehensive)

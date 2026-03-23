@@ -56,9 +56,25 @@ def set_config_dir(path: str) -> None:
 
     Called by ``main()`` when ``--mode cloud`` to switch to
     ``backend/config/.cloud/`` which has Azure services force-enabled.
+
+    Clears all cached configs so they reload from the new directory.
     """
     global CONFIG_DIR
+    global _infra_config, _embedder_config, _generator_config
+    global _file_filters_config, _repository_config, _lang_config
+    global _client_classes, _azure_ai_client
+
     CONFIG_DIR = path
+
+    # Clear all cached configs — next access reloads from new dir
+    _infra_config = None
+    _embedder_config = None
+    _generator_config = None
+    _file_filters_config = None
+    _repository_config = None
+    _lang_config = None
+    _client_classes = None
+    _azure_ai_client = None
 
 
 # ============================================================================
