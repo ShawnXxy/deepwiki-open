@@ -97,6 +97,36 @@ async def get_filters_config():
     return get_file_filters_config()
 
 
+@app.get("/api/wiki_cache")
+async def get_wiki_cache(
+    owner: str,
+    repo: str,
+    repo_type: str = "azuredevops",
+    language: str = "en",
+    comprehensive: bool = True,
+    branch: str = None,
+):
+    """Read wiki cache from storage (blob or local disk)."""
+    from backend.modules.wiki.cache import read_wiki_cache
+    from fastapi.responses import JSONResponse
+
+    data = await read_wiki_cache(
+        owner=owner, repo=repo, repo_type=repo_type,
+        language=language, comprehensive=comprehensive, branch=branch,
+    )
+    if data:
+        return JSONResponse(content=data.model_dump())
+    return JSONResponse(content={"error": "Wiki cache not found"}, status_code=404)
+
+
+@app.get("/api/processed_projects")
+async def list_processed_projects():
+    """List all processed wiki projects from storage."""
+    from backend.modules.wiki.cache import list_wiki_caches
+    projects = await list_wiki_caches()
+    return projects
+
+
 @app.get("/health")
 async def health_check():
     """Health check for deployment monitoring."""

@@ -272,3 +272,59 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
     except Exception as e:
         logger.error(f"Unexpected error saving wiki cache to {cache_path}: {e}", exc_info=True)
         return False
+
+
+# Cache filename pattern: deepwiki_cache_{type}_{owner}_{repo}_{lang}_{mode}[_{branch}].json
+import re
+_CACHE_PATTERN = re.compile(
+    r'^deepwiki_cache_(\w+)_(.+?)_([^_]+)_([a-z]+(?:-[a-z]+)*)_'
+    r'(comprehensive|concise)(?:_(.+))?\.json$'
+)
+
+
+async def list_wiki_caches() -> list:
+    """List all processed wiki projects from storage (blob or local).
+
+    Returns a list of dicts with project metadata extracted from filenames.
+    """
+    projects = []
+
+    if is_blob_storage_configured():
+        blob_client = get_blob_storage_client()
+        if blob_client:
+            try:
+                blobs = blob_client.list_blobs(
+                    prefix=f"{WIKI_CACHE_BLOB_PREFIX}/deepwiki_cache_"
+                )
+                for blob in blobs:
+                    name = blob.split('/')[-1] if '/' in blob else blob
+                    _parse_cache_filename(name, projects)
+            except Exception as e:
+                logger.error(f"Error listing wiki caches from blob: {e}")
+    else:
+        if os.path.exists(WIKI_CACHE_DIR):
+            for name in os.listdir(WIKI_CACHE_DIR):
+                if name.startswith('deepwiki_cache_') and name.endswith('.json'):
+                    _parse_cache_filename(name, projects)
+
+    projects.sort(key=lambda p: p.get('submittedAt', 0), reverse=True)
+    return projects
+
+
+def _parse_cache_filename(filename: str, projects: list) -> None:
+    """Parse a cache filename and append project metadata to the list."""
+    match = _CACHE_PATTERN.match(filename)
+    if not match:
+        return
+    repo_type, owner, repo, language, mode, branch = match.groups()
+    projects.append({
+        'id': filename.replace('.json', ''),
+        'owner': owner,
+        'repo': repo,
+        'name': f"{owner}/{repo}",
+        'repo_type': repo_type,
+        'submittedAt': 0,
+        'language': language,
+        'comprehensive': mode == 'comprehensive',
+        'branch': branch or None,
+    })

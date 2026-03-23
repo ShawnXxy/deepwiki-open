@@ -4,11 +4,14 @@ import path from 'path';
 import os from 'os';
 
 /**
- * GET /api/wiki/projects — List processed projects by scanning local cache dir.
+ * GET /api/wiki/projects — List processed projects.
  * DELETE /api/wiki/projects — Delete a cached wiki.
  *
- * No backend needed. Reads directly from ~/.adalflow/wikicache/.
+ * In cloud (FASTAPI_PORT set): proxies to backend FastAPI which reads from blob.
+ * In local: scans ~/.adalflow/wikicache/.
  */
+
+const BACKEND_PORT = process.env.FASTAPI_PORT || process.env.PORT;
 
 interface ProcessedProject {
   id: string;
@@ -31,6 +34,21 @@ function getCacheDir(): string {
 }
 
 export async function GET() {
+  // Try backend API first (handles blob storage in cloud mode)
+  if (BACKEND_PORT) {
+    try {
+      const backendUrl = `http://127.0.0.1:${BACKEND_PORT}/api/processed_projects`;
+      const resp = await fetch(backendUrl, { cache: 'no-store' });
+      if (resp.ok) {
+        const data = await resp.json();
+        return NextResponse.json(data);
+      }
+    } catch (err) {
+      console.warn('[projects] Backend unavailable, falling back to local disk');
+    }
+  }
+
+  // Fallback: scan local disk
   const cacheDir = getCacheDir();
 
   if (!fs.existsSync(cacheDir)) {

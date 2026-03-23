@@ -4,13 +4,15 @@ import path from 'path';
 import os from 'os';
 
 /**
- * GET /api/wiki_cache — Read wiki cache directly from local disk.
+ * GET /api/wiki_cache — Read wiki cache.
  *
- * This replaces the FastAPI backend proxy. The frontend reads JSON cache
- * files from ~/.adalflow/wikicache/ without needing `backend.main` running.
+ * In cloud (FASTAPI_PORT set): proxies to backend FastAPI which reads from blob.
+ * In local: reads JSON files from ~/.adalflow/wikicache/.
  *
  * Query params: owner, repo, repo_type, language, comprehensive, branch
  */
+
+const BACKEND_PORT = process.env.FASTAPI_PORT || process.env.PORT;
 
 function getCacheDir(): string {
   return path.join(os.homedir(), '.adalflow', 'wikicache');
@@ -43,7 +45,6 @@ function getLegacyFilename(
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
 
-  // Decode URL-encoded params (handles double-encoding like %2520 → %20 → space)
   const rawOwner = searchParams.get('owner');
   const rawRepo = searchParams.get('repo');
   const owner = rawOwner ? decodeURIComponent(rawOwner) : null;
@@ -60,6 +61,31 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // Try backend API first (handles blob storage in cloud mode)
+  if (BACKEND_PORT) {
+    try {
+      const params = new URLSearchParams({
+        owner, repo, repo_type: repoType, language,
+        comprehensive: String(comprehensive),
+      });
+      if (branch) params.set('branch', branch);
+
+      const backendUrl = `http://127.0.0.1:${BACKEND_PORT}/api/wiki_cache?${params}`;
+      const resp = await fetch(backendUrl, { cache: 'no-store' });
+      if (resp.ok) {
+        const data = await resp.json();
+        return NextResponse.json(data);
+      }
+      // If backend returns 404, fall through to local disk
+      if (resp.status !== 404) {
+        console.error(`[wiki_cache] Backend error: ${resp.status}`);
+      }
+    } catch (err) {
+      console.warn('[wiki_cache] Backend unavailable, falling back to local disk');
+    }
+  }
+
+  // Fallback: read from local disk
   const cacheDir = getCacheDir();
 
   // Try new format (with branch suffix) first, then legacy
