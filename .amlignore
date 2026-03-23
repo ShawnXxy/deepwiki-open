@@ -1,0 +1,62 @@
+# AML code upload ignore file
+# Excludes files not needed for the processor pipeline
+
+# Frontend
+src/
+public/
+.next/
+out/
+node_modules/
+
+# Build artifacts
+dist/
+build/
+coverage/
+*.tgz
+
+# Docker (not needed inside AML code snapshot, but Dockerfile.processor
+# is kept because AML environment build context needs it)
+Dockerfile
+docker-compose.yml
+nginx.conf
+
+# Frontend config
+next.config.ts
+next-env.d.ts
+tsconfig.json
+tailwind.config.js
+postcss.config.mjs
+eslint.config.mjs
+package.json
+package-lock.json
+
+# Deployment templates (not needed at runtime)
+Deployments/
+
+# Images and screenshots
+img/
+
+# Logs
+logs/
+*.log
+
+# IDE / OS
+.git/
+.vscode/
+.idea/
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Python virtual env
+.venv/
+venv/
+
+# Tests (not needed in AML)
+tests/
+
+# Misc
+*.md
+LICENSE
+sample.env

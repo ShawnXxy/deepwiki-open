@@ -98,10 +98,10 @@ EXPOSE 3000
 
 # Create a script to run both backend and frontend
 RUN echo '#!/bin/bash\n\
-# Load environment variables from .env file if it exists (silently)\n\
-if [ -f .env ]; then\n\
+# Load environment variables from backend/.env file if it exists (silently)\n\
+if [ -f backend/.env ]; then\n\
   set -a\n\
-  source .env 2>/dev/null || true\n\
+  source backend/.env 2>/dev/null || true\n\
   set +a\n\
 fi\n\
 \n\
@@ -181,7 +181,7 @@ ENV SERVER_BASE_URL=http://localhost:${PORT:-8001}
 #   DEEPWIKI_CONFIG_DIR - Custom config directory path
 
 # Create empty .env file (will be overridden if one exists at runtime)
-RUN touch .env
+RUN touch backend/.env
 
 # Command to run the application
 CMD ["/app/start.sh"]

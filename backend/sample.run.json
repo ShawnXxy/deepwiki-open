@@ -1,0 +1,5 @@
+{
+  "repo": "https://msdata.visualstudio.com/YOUR_PROJECT/_git/YOUR_REPO",
+  "branch": "main",
+  "mode": "local"
+}

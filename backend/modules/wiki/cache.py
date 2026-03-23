@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Use consistent ~/.adalflow path for Docker volume mounting compatibility
 # See backend/utils/paths.py for rationale
-from backend.utils.paths import get_wikicache_path
+from backend.paths import get_wikicache_path
 
 
 WIKI_CACHE_DIR = get_wikicache_path()
@@ -272,3 +272,70 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
     except Exception as e:
         logger.error(f"Unexpected error saving wiki cache to {cache_path}: {e}", exc_info=True)
         return False
+
+
+# Cache filename pattern: deepwiki_cache_{type}_{owner}_{repo}_{lang}_{mode}[_{branch}].json
+import re
+_CACHE_PATTERN = re.compile(
+    r'^deepwiki_cache_(\w+)_(.+?)_([^_]+)_([a-z]+(?:-[a-z]+)*)_'
+    r'(comprehensive|concise)(?:_(.+))?\.json$'
+)
+
+
+async def list_wiki_caches() -> list:
+    """List all processed wiki projects from storage (blob or local).
+
+    Returns a list of dicts with project metadata extracted from filenames.
+    Uses blob last_modified or file mtime for submittedAt.
+    """
+    projects = []
+
+    if is_blob_storage_configured():
+        blob_client = get_blob_storage_client()
+        if blob_client:
+            try:
+                blobs = blob_client.list_blobs_with_metadata(
+                    prefix=f"{WIKI_CACHE_BLOB_PREFIX}/deepwiki_cache_"
+                )
+                for blob_info in blobs:
+                    name = blob_info['name']
+                    filename = name.split('/')[-1] if '/' in name else name
+                    mtime = blob_info.get('last_modified', 0)
+                    _parse_cache_filename(filename, projects, mtime)
+            except Exception as e:
+                logger.error(f"Error listing wiki caches from blob: {e}")
+    else:
+        if os.path.exists(WIKI_CACHE_DIR):
+            for name in os.listdir(WIKI_CACHE_DIR):
+                if name.startswith('deepwiki_cache_') and name.endswith('.json'):
+                    mtime = 0
+                    try:
+                        stat = os.stat(os.path.join(WIKI_CACHE_DIR, name))
+                        mtime = int(stat.st_mtime * 1000)
+                    except OSError:
+                        pass
+                    _parse_cache_filename(name, projects, mtime)
+
+    projects.sort(key=lambda p: p.get('submittedAt', 0), reverse=True)
+    return projects
+
+
+def _parse_cache_filename(
+    filename: str, projects: list, mtime_ms: int = 0
+) -> None:
+    """Parse a cache filename and append project metadata to the list."""
+    match = _CACHE_PATTERN.match(filename)
+    if not match:
+        return
+    repo_type, owner, repo, language, mode, branch = match.groups()
+    projects.append({
+        'id': filename.replace('.json', ''),
+        'owner': owner,
+        'repo': repo,
+        'name': f"{owner}/{repo}",
+        'repo_type': repo_type,
+        'submittedAt': mtime_ms,
+        'language': language,
+        'comprehensive': mode == 'comprehensive',
+        'branch': branch or None,
+    })

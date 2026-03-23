@@ -11,6 +11,21 @@
         "machineLearningWorkspaceName": {
             "value": "{{machine_learning_workspace_name}}"
         },
+        "machineLearningWorkspaceSubComponentsNamePrefix": {
+            "value": "{{machine_learning_workspace_sub_components_name_prefix}}"
+        },
+        "existingStorageAccountName": {
+            "value": "{{storage_account_name}}"
+        },
+        "existingKeyVaultName": {
+            "value": "{{key_vault_name}}"
+        },
+        "existingApplicationInsightsName": {
+            "value": "{{application_insights_name}}"
+        },
+        "existingLogAnalyticsWorkspaceName": {
+            "value": "{{log_analytics_workspace_name}}"
+        },
         "deepWikiIdentityName": {
             "value": "{{dri_copilot_identity_name}}"
         },
@@ -25,6 +40,12 @@
         },
         "isOpenAiResourceManagedByDeepWiki": {
             "value": {{is_creating_open_ai_endpoint}}
+        },
+        "isCreatingVnetForAzureML": {
+            "value": {{is_creating_vnet_for_azure_ml}}
+        },
+        "isEnablingDiskEncryptionForAzureML": {
+            "value": {{is_enabling_disk_encryption_for_azure_ml}}
         },
         "resourceTags": {
             "value": {{resource_tags}}

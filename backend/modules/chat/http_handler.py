@@ -14,8 +14,8 @@ from backend.config import (
     get_model_config, configs, get_azure_deployment_name,
     get_azure_ai_client
 )
-from backend.modules.rag import RAG
-from backend.modules.rag.utils import count_tokens
+from backend.modules.embedder import RAG
+from backend.modules.embedder.tokenizer import count_tokens
 from backend.modules.repository.file_content import get_file_content
 from backend.modules.chat.models import ChatCompletionRequest
 from backend.modules.chat.service import (

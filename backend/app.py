@@ -1,53 +1,45 @@
 """
-FastAPI Application for DeepWiki Backend.
+FastAPI Backend for DeepWiki Ask/Chat.
 
-This module initializes the FastAPI application and registers all routes.
+Provides only the endpoints needed for the Ask/Chat feature:
+- /ws/chat — WebSocket streaming chat (primary)
+- /chat/completions/stream — HTTP fallback for cloud environments
+- /models/config — Available model info from infra.json
+- /filters/config — Default file exclusion patterns
+- /health — Deployment health check
+
+Wiki viewing does NOT require this backend. The Next.js frontend
+reads cached wiki JSON directly from ~/.adalflow/wikicache/.
 """
 
 import logging
 from datetime import datetime
-from typing import Dict, Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Configure logging
-from backend.tools.logger import setup_logging, log_frontend_message
+from backend.logger import setup_logging
 from backend.config import (
-    configs,
-    WIKI_AUTH_MODE,
-    WIKI_AUTH_CODE,
     get_azure_openai_config,
     get_file_filters_config,
 )
-
-# Import module routes
-from backend.modules.wiki.routes import router as wiki_router
-from backend.modules.repository.routes import router as repo_router
 from backend.modules.chat.http_handler import chat_completions_stream
 from backend.modules.chat.ws_handler import handle_websocket_chat
-
-# Import wiki models for API
 from backend.modules.wiki.models import (
-    Model,
-    Provider,
-    ModelConfig,
-    AuthorizationConfig,
-    FrontendLogRequest,
-    FrontendLogBatchRequest,
+    Model, Provider, ModelConfig,
 )
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
+# Suppress noisy third-party warnings
+logging.getLogger("adalflow.tracing").setLevel(logging.ERROR)
 
-# Initialize FastAPI app
 app = FastAPI(
-    title="Streaming API",
-    description="API for streaming chat completions"
+    title="DeepWiki Chat API",
+    description="Backend for Ask/Chat feature (WebSocket + HTTP streaming)",
 )
 
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -56,142 +48,90 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Include Module Routers ---
-app.include_router(wiki_router, tags=["wiki"])
-app.include_router(repo_router, tags=["repository"])
-
-# --- Add Chat Endpoints ---
-app.add_api_route("/chat/completions/stream", chat_completions_stream, methods=["POST"])
+# --- Chat Endpoints ---
+app.add_api_route(
+    "/chat/completions/stream",
+    chat_completions_stream,
+    methods=["POST"],
+)
 app.add_websocket_route("/ws/chat", handle_websocket_chat)
 
 
-# --- Configuration Endpoints ---
+# --- Configuration Endpoints (used by Ask UI) ---
 
-@app.get("/lang/config")
-async def get_lang_config():
-    """Get language configuration."""
-    return configs["lang_config"]
+@app.get("/models/config", response_model=ModelConfig)
+async def get_model_config_endpoint():
+    """Return available model providers from infra.json."""
+    try:
+        azure_config = get_azure_openai_config()
+        deployment = azure_config.get("deployment", "o4-mini")
+        return ModelConfig(
+            providers=[
+                Provider(
+                    id="azure",
+                    name="Azure OpenAI",
+                    supportsCustomModel=False,
+                    models=[Model(id=deployment, name=deployment)],
+                )
+            ],
+            defaultProvider="azure",
+        )
+    except Exception as e:
+        logger.error(f"Error creating model config: {e}")
+        return ModelConfig(
+            providers=[
+                Provider(
+                    id="azure",
+                    name="Azure OpenAI",
+                    supportsCustomModel=False,
+                    models=[Model(id="o4-mini", name="o4-mini")],
+                )
+            ],
+            defaultProvider="azure",
+        )
 
 
 @app.get("/filters/config")
 async def get_filters_config():
-    """Get default file filters configuration from repo.json."""
+    """Return default file filters from repo.json."""
     return get_file_filters_config()
 
 
-@app.get("/auth/status")
-async def get_auth_status():
-    """Check if authentication is required for the wiki."""
-    return {"auth_required": WIKI_AUTH_MODE}
+@app.get("/api/wiki_cache")
+async def get_wiki_cache(
+    owner: str,
+    repo: str,
+    repo_type: str = "azuredevops",
+    language: str = "en",
+    comprehensive: bool = True,
+    branch: str = None,
+):
+    """Read wiki cache from storage (blob or local disk)."""
+    from backend.modules.wiki.cache import read_wiki_cache
+    from fastapi.responses import JSONResponse
+
+    data = await read_wiki_cache(
+        owner=owner, repo=repo, repo_type=repo_type,
+        language=language, comprehensive=comprehensive, branch=branch,
+    )
+    if data:
+        return JSONResponse(content=data.model_dump())
+    return JSONResponse(content={"error": "Wiki cache not found"}, status_code=404)
 
 
-@app.post("/auth/validate")
-async def validate_auth_code(request: AuthorizationConfig):
-    """Check authorization code."""
-    return {"success": WIKI_AUTH_CODE == request.code}
+@app.get("/api/processed_projects")
+async def list_processed_projects():
+    """List all processed wiki projects from storage."""
+    from backend.modules.wiki.cache import list_wiki_caches
+    projects = await list_wiki_caches()
+    return projects
 
-
-@app.get("/models/config", response_model=ModelConfig)
-async def get_model_config_endpoint():
-    """
-    Get available model providers and their models.
-
-    Returns the configuration of Azure OpenAI provider with deployment info from infra.json.
-    """
-    try:
-        logger.debug("Fetching model configurations")
-
-        # Get deployment name from infra.json
-        azure_config = get_azure_openai_config()
-        deployment = azure_config.get("deployment", "o4-mini")
-
-        # Return Azure-only configuration
-        return ModelConfig(
-            providers=[
-                Provider(
-                    id="azure",
-                    name="Azure OpenAI",
-                    supportsCustomModel=False,
-                    models=[Model(id=deployment, name=deployment)]
-                )
-            ],
-            defaultProvider="azure"
-        )
-
-    except Exception as e:
-        logger.error(f"Error creating model configuration: {str(e)}")
-        # Return Azure default configuration in case of error
-        return ModelConfig(
-            providers=[
-                Provider(
-                    id="azure",
-                    name="Azure OpenAI",
-                    supportsCustomModel=False,
-                    models=[Model(id="o4-mini", name="o4-mini")]
-                )
-            ],
-            defaultProvider="azure"
-        )
-
-
-# --- Health and Logging Endpoints ---
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for Docker and monitoring."""
+    """Health check for deployment monitoring."""
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "service": "deepwiki-api"
-    }
-
-
-@app.post("/log")
-async def log_frontend(request: FrontendLogRequest):
-    """Receive and store frontend log messages."""
-    try:
-        log_frontend_message(request.level, request.message, request.context)
-        return {"status": "logged"}
-    except Exception as e:
-        logger.error(f"Failed to log frontend message: {e}")
-        raise HTTPException(status_code=500, detail="Failed to log message")
-
-
-@app.post("/log/batch")
-async def log_frontend_batch(request: FrontendLogBatchRequest):
-    """Receive and store multiple frontend log messages in a batch."""
-    try:
-        for log_entry in request.logs:
-            log_frontend_message(log_entry.level, log_entry.message, log_entry.context)
-        return {"status": "logged", "count": len(request.logs)}
-    except Exception as e:
-        logger.error(f"Failed to log frontend batch: {e}")
-        raise HTTPException(status_code=500, detail="Failed to log messages")
-
-
-@app.get("/")
-async def root():
-    """Root endpoint to check if the API is running and list available endpoints."""
-    # Collect routes dynamically from the FastAPI app
-    endpoints: Dict[str, Any] = {}
-    for route in app.routes:
-        if hasattr(route, "methods") and hasattr(route, "path"):
-            # Skip docs and static routes
-            if route.path in ["/openapi.json", "/docs", "/redoc", "/favicon.ico"]:
-                continue
-            # Group endpoints by first path segment
-            path_parts = route.path.strip("/").split("/")
-            group = path_parts[0].capitalize() if path_parts[0] else "Root"
-            method_list = list(route.methods - {"HEAD", "OPTIONS"})
-            for method in method_list:
-                endpoints.setdefault(group, []).append(f"{method} {route.path}")
-
-    # Sort endpoints for readability
-    for group in endpoints:
-        endpoints[group].sort()
-
-    return {
-        "message": "Welcome to Streaming API",
-        "version": "1.0.0",
-        "endpoints": endpoints
+        "service": "deepwiki-chat",
     }

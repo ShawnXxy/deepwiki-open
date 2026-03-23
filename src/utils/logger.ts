@@ -60,10 +60,9 @@ interface DedupEntry {
 }
 const dedupMap = new Map<string, DedupEntry>();
 
-// Backend availability tracking with auto-retry
-let backendLoggingAvailable = true;
-let lastBackendFailure = 0;
-const BACKEND_RETRY_INTERVAL = 30000; // Retry every 30 seconds
+// Backend log shipping disabled — frontend and backend are isolated.
+// All frontend logs go to browser console only.
+const backendLoggingAvailable = false;
 
 /**
  * Generate deduplication key from log entry
@@ -130,15 +129,10 @@ function logToConsole(entry: LogEntry, repeatCount?: number): void {
 }
 
 /**
- * Check if backend should be retried
+ * Check if backend should be retried.
+ * Always returns false — frontend logs to console only (isolated from backend).
  */
 function shouldRetryBackend(): boolean {
-  if (backendLoggingAvailable) return true;
-  const now = Date.now();
-  if (now - lastBackendFailure > BACKEND_RETRY_INTERVAL) {
-    backendLoggingAvailable = true; // Reset to retry
-    return true;
-  }
   return false;
 }
 
@@ -167,17 +161,14 @@ async function flushLogs(): Promise<void> {
       throw new Error(`HTTP ${response.status}`);
     }
     
-    // Success - reset failure state if needed
+    // Success - backend shipping disabled (unused)
     if (!backendLoggingAvailable) {
-      backendLoggingAvailable = true;
       console.log('%c[Logger] Backend logging restored', 'color: #4CAF50');
     }
   } catch {
     if (backendLoggingAvailable) {
       console.warn('%c[Logger] Backend logging unavailable, using console only (will retry in 30s)', 'color: #FF9800');
     }
-    backendLoggingAvailable = false;
-    lastBackendFailure = Date.now();
   }
 }
 
@@ -265,10 +256,9 @@ const logger = {
   /** Check if backend logging is available */
   isBackendAvailable: () => backendLoggingAvailable,
 
-  /** Reset backend availability (e.g., after reconnection) */
-  resetBackendAvailability: () => { 
-    backendLoggingAvailable = true;
-    lastBackendFailure = 0;
+  /** Reset backend availability (no-op — backend shipping disabled) */
+  resetBackendAvailability: () => {
+    // No-op: frontend and backend are isolated
   },
   
   /** Get deduplication stats (for debugging) */

@@ -196,12 +196,6 @@ def setup_application_insights(
         from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
         from opentelemetry.sdk.resources import Resource
         from azure.monitor.opentelemetry.exporter import AzureMonitorLogExporter
-        from azure.identity import (
-            ManagedIdentityCredential,
-            AzureCliCredential,
-            ChainedTokenCredential,
-            DefaultAzureCredential
-        )
         
         resource = Resource.create({
             "service.name": service_name,
@@ -211,22 +205,11 @@ def setup_application_insights(
         _logger_provider = LoggerProvider(resource=resource)
         set_logger_provider(_logger_provider)
         
-        # Build credential chain
-        client_id = _get_managed_identity_client_id()
-        credentials = []
-        if client_id:
-            credentials.append(ManagedIdentityCredential(client_id=client_id))
-        credentials.append(AzureCliCredential())
-        credentials.append(DefaultAzureCredential(
-            exclude_managed_identity_credential=True,
-            exclude_cli_credential=True
-        ))
-        
-        credential = ChainedTokenCredential(*credentials)
-        
+        # Use connection string auth (instrumentation key).
+        # AAD token auth via ManagedIdentityCredential causes noisy
+        # errors when the identity endpoint is slow or misconfigured.
         exporter = AzureMonitorLogExporter(
             connection_string=connection_string,
-            credential=credential
         )
         
         _logger_provider.add_log_record_processor(
@@ -272,7 +255,8 @@ _logging_initialized = False
 
 def setup_logging(
     log_prefix: str = "backend",
-    enable_app_insights: bool = True
+    enable_app_insights: bool = True,
+    log_dir: Optional[str] = None,
 ) -> Path:
     """
     Configure logging with smart filtering and daily rotation.
@@ -287,6 +271,8 @@ def setup_logging(
     Args:
         log_prefix: Prefix for log files (default: "backend")
         enable_app_insights: Enable Azure Application Insights (default: True)
+        log_dir: Directory for log files (default: project_root/logs).
+                 Useful for AML jobs that write to a specific output dir.
     
     Returns:
         Path to the log file
@@ -297,12 +283,15 @@ def setup_logging(
     """
     global _logging_initialized
     
-    # Setup log directory at project root
-    base_dir = Path(__file__).parent.parent.parent
-    log_dir = base_dir / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
+    # Setup log directory
+    if log_dir:
+        log_dir_path = Path(log_dir)
+    else:
+        base_dir = Path(__file__).parent.parent
+        log_dir_path = base_dir / "logs"
+    log_dir_path.mkdir(parents=True, exist_ok=True)
     
-    log_file = log_dir / get_log_filename(log_prefix)
+    log_file = log_dir_path / get_log_filename(log_prefix)
     
     # If already initialized, just return the log file path (skip re-configuration)
     if _logging_initialized:
@@ -385,7 +374,7 @@ def get_frontend_logger() -> logging.Logger:
         _frontend_logger.propagate = False
         
         # Setup log file
-        base_dir = Path(__file__).parent.parent.parent
+        base_dir = Path(__file__).parent.parent
         log_dir = base_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         

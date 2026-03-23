@@ -1,152 +1,129 @@
 # Chat Module
 
-The chat module provides real-time conversational AI capabilities for repository Q&A, including both simple chat and deep research modes.
+Real-time code Q&A backend for DeepWiki.
 
-## Module Structure
+## Responsibility
 
-```
-modules/chat/
-├── __init__.py       # Module exports
-├── models.py         # Pydantic request/response models
-├── ws_handler.py     # WebSocket handler for streaming chat
-├── http_handler.py   # HTTP handler for streaming chat
-└── service.py        # Shared service utilities
-```
+Provides conversational Ask/Chat over code repositories via two transport protocols:
+- **WebSocket** (`ws_handler.py`) — Primary, used in local/Docker development
+- **HTTP streaming** (`http_handler.py`) — Fallback for cloud environments behind load balancers
 
-## Components
+Supports two chat modes:
+- **Simple chat** — Direct Q&A with single LLM response
+- **Deep research** — Multi-turn investigation (5 iterations: plan → investigate → synthesize → conclude)
 
-### models.py - Request Models
+## Files
 
-**ChatMessage**: Individual chat message with role and content.
+| File | Purpose |
+|------|---------|
+| `ws_handler.py` | WebSocket streaming handler with keepalive pings |
+| `http_handler.py` | HTTP `StreamingResponse` fallback for cloud |
+| `service.py` | Shared utilities: prompt building, context formatting, content sanitization |
+| `models.py` | `ChatCompletionRequest`, `ChatMessage` — Pydantic request models |
 
-**ChatCompletionRequest**: Main request model containing:
-- `repo_url`: Repository URL to query
-- `messages`: Conversation history
-- `wiki_structure_request`: Flag for wiki structure generation
-- `file_tree`, `readme`, `comprehensive`: Wiki generation params
-- File filter options (`excluded_dirs`, `included_files`, etc.)
-- `force_reprocess`: Force fresh embedding generation
+## How It Works
 
-### ws_handler.py - WebSocket Handler
-
-The primary chat endpoint (`/ws/chat`) supporting:
-
-1. **Keepalive Mechanism**: `prepare_retriever_with_keepalive()` sends ping messages during long-running embedding operations to prevent WebSocket timeout.
-
-2. **Wiki Structure Generation**: Detects `wiki_structure_request=True` and builds prompts from `promptstore/wiki_structure.py` templates.
-
-3. **RAG-based Chat**: Retrieves relevant code context and streams responses.
-
-```python
-# Wiki structure prompt building
-def build_wiki_structure_prompt(request, owner, repo) -> str:
-    template = WIKI_STRUCTURE_PROMPT if request.comprehensive else WIKI_STRUCTURE_CONCISE_PROMPT
-    return template.format(
-        owner=owner, repo=repo,
-        file_tree=request.file_tree,
-        readme=request.readme,
-        language_name=language_name,
-        page_count=page_count
-    )
-```
-
-### http_handler.py - HTTP Streaming
-
-POST endpoint (`/chat/completions/stream`) for non-WebSocket clients:
-- Same RAG functionality as WebSocket
-- Returns `StreamingResponse` with SSE format
-- Error handling with graceful degradation
-
-### service.py - Shared Utilities
-
-**build_system_prompt()**: Constructs system prompts based on mode:
-- Simple chat mode → `SIMPLE_CHAT_SYSTEM_PROMPT`
-- Deep research mode → Iteration-specific prompts (first, intermediate, final)
-
-**format_conversation_history()**: Formats memory into XML-like structure for context.
-
-**format_context_text()**: Groups retrieved documents by file path.
-
-**get_language_info()**: Resolves language code to display name.
-
-## Workflow
-
-### Standard Chat Flow
+### Request Flow
 
 ```
-┌──────────────┐     ┌────────────────┐     ┌─────────────┐
-│   Frontend   │────►│  ws_handler    │────►│    RAG      │
-│  (WebSocket) │     │                │     │  Module     │
-└──────────────┘     └────────────────┘     └──────┬──────┘
-                              │                     │
-                              │                     ▼
-                              │              ┌─────────────┐
-                              │              │  Retriever  │
-                              │              │  (FAISS)    │
-                              │              └──────┬──────┘
-                              │                     │
-                              ▼                     ▼
-                     ┌────────────────┐     ┌─────────────┐
-                     │  Azure OpenAI  │◄────│   Context   │
-                     │   (Streaming)  │     │  Documents  │
-                     └────────────────┘     └─────────────┘
+Frontend (Ask.tsx)
+    │
+    ├─ WebSocket ──► ws://localhost:8001/ws/chat
+    │                     │
+    │                     ▼
+    │               ws_handler.py
+    │               ├─ Parse ChatCompletionRequest
+    │               ├─ Prepare RAG retriever (with keepalive pings)
+    │               ├─ Build system prompt
+    │               ├─ Stream LLM response (token-by-token)
+    │               └─ Send completion message
+    │
+    └─ HTTP ──────► POST /chat/completions/stream
+                          │
+                          ▼
+                    http_handler.py
+                    └─ Same logic, StreamingResponse output
 ```
 
-### Wiki Structure Generation Flow
+### WebSocket Handler (`ws_handler.py`)
 
-```
-┌──────────────┐     ┌────────────────┐     ┌─────────────────┐
-│   Frontend   │────►│  ws_handler    │────►│  promptstore/   │
-│              │     │                │     │  wiki_structure │
-│ wiki_struct  │     │ Detects flag   │     └────────┬────────┘
-│ _request:    │     │ Builds prompt  │              │
-│   true       │     └────────────────┘              │
-└──────────────┘              │                      │
-                              ▼                      ▼
-                     ┌────────────────┐     ┌─────────────────┐
-                     │  Azure OpenAI  │◄────│  Filled prompt  │
-                     │   (Streaming)  │     │  (file_tree,    │
-                     └────────────────┘     │   readme, etc.) │
-                              │             └─────────────────┘
-                              ▼
-                     ┌────────────────┐
-                     │  XML Response  │
-                     │  <wiki_struct  │
-                     │   ure>...</>   │
-                     └────────────────┘
-```
+`handle_websocket_chat()` is the main entry point, registered at `/ws/chat` in `app.py`.
 
-## Usage Examples
+**Key behaviors:**
 
-### WebSocket Chat
+1. **Retriever preparation with keepalive** — Embedding can take minutes for large repos. `prepare_retriever_with_keepalive()` runs embedding in a thread pool while sending 30-second keepalive pings to prevent WebSocket timeout.
 
-```javascript
-const ws = new WebSocket('ws://localhost:8001/ws/chat');
-ws.send(JSON.stringify({
-    repo_url: 'https://github.com/owner/repo',
-    messages: [{ role: 'user', content: 'How does auth work?' }],
-    type: 'github',
-    language: 'en'
-}));
-```
+2. **File-priority retrieval** — When the request specifies `filePaths`, uses `RAG.call_with_file_filter()` to prioritize chunks from those files.
 
-### Wiki Structure Request
+3. **Deep Research mode** — When `deepResearch=True`, the handler runs 5 LLM iterations:
+   - Iteration 1: Research plan (selected prompt: `DEEP_RESEARCH_SYSTEM_PROMPT`)
+   - Iterations 2-4: Progressive investigation (prompt: `DEEP_RESEARCH_UPDATE_PROMPT`)
+   - Iteration 5: Final synthesis (prompt: `DEEP_RESEARCH_CONCLUSION_PROMPT`)
+   - Each iteration's output is prefixed with `<deep_research_iteration N>` tags.
 
-```javascript
-ws.send(JSON.stringify({
-    repo_url: 'https://github.com/owner/repo',
-    messages: [{ role: 'user', content: 'Generate wiki structure' }],
-    wiki_structure_request: true,
-    file_tree: '...',
-    readme: '...',
-    comprehensive: true,
-    language: 'en'
-}));
-```
+4. **Wiki generation support** — The handler also processes `wiki_structure_request` and `wiki_page_request` messages, building server-side prompts and streaming wiki content back. This is the WebSocket path (alternative to the CLI processor).
+
+5. **LLM keepalive pings** — For reasoning models (`o1-mini`, `o4-mini`) that may think for 30+ seconds, sends 15-second keepalive pings during generation.
+
+6. **Content filter retry** — If Azure OpenAI returns a content filter error, automatically retries with a sanitized file tree (directories only, README omitted).
+
+7. **Commit hash metadata** — Emits `commit_hash:{hash}` as a special message so the frontend can build source citation URLs.
+
+### Shared Service (`service.py`)
+
+Utility functions used by both handlers:
+
+- **`build_system_prompt(mode, iteration)`** — Selects the right prompt template:
+  - Simple chat → `SIMPLE_CHAT_SYSTEM_PROMPT`
+  - Deep research iteration 1 → `DEEP_RESEARCH_SYSTEM_PROMPT`
+  - Deep research iterations 2-4 → `DEEP_RESEARCH_UPDATE_PROMPT`
+  - Deep research iteration 5 → `DEEP_RESEARCH_CONCLUSION_PROMPT`
+
+- **`format_context_text(docs, repo_url, commit_hash, repo_type)`** — Formats retrieved chunks for the LLM:
+  ```
+  ## File Path: src/auth/handler.py
+  **Source:** [View in repository](https://dev.azure.com/org/proj/_git/repo?path=/src/auth/handler.py&version=GCabc123)
+  **Language:** Python | **Section:** function | **Functions:** authenticate, validate_token
+  
+  [chunk content]
+  ```
+
+- **`format_conversation_history(messages)`** — Formats prior dialog turns as XML:
+  ```xml
+  <previous_messages>
+  <message role="user">How does auth work?</message>
+  <message role="assistant">The auth module...</message>
+  </previous_messages>
+  ```
+
+- **`get_language_info(code)`** — Resolves language code (`en`, `zh`, `ja`) to display name
+
+- **`_sanitize_for_content_filter(text)`** — Redacts connection strings, API keys, and credentials from context before sending to Azure OpenAI
+
+### Request Model (`models.py`)
+
+`ChatCompletionRequest` encapsulates everything needed for a chat turn:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `repo` | `RepoInfo` | Repository URL, owner, type, branch |
+| `messages` | `List[ChatMessage]` | Conversation history |
+| `provider` | `str` | Always `"azure"` |
+| `model` | `str` | Ignored (model from `infra.json`) |
+| `deepResearch` | `bool` | Enable 5-iteration deep research |
+| `language` | `str` | Response language code |
+| `excludedDirs/Files` | `List[str]` | File filter overrides |
+| `includedDirs/Files` | `List[str]` | Inclusion-mode filters |
+| `isWikiChat` | `bool` | Whether this is wiki-specific Ask |
+| `filePaths` | `List[str]` | Files to prioritize in retrieval |
+
+## Frontend Integration
+
+- **WebSocket:** `src/utils/websocketClient.ts` connects to `ws://localhost:8001/ws/chat` (local) or `wss://hostname/ws/chat` (cloud via nginx proxy)
+- **HTTP:** `src/app/api/chat/stream/route.ts` proxies to `/chat/completions/stream`
+- Both transports fail gracefully when backend is absent — the frontend works as a read-only wiki viewer without chat
 
 ## Dependencies
 
-- `backend.modules.rag`: RAG pipeline for document retrieval
-- `backend.promptstore`: Prompt templates
-- `backend.config`: Model configuration
-- `adalflow`: LLM framework
+- **Invokes:** `embedder/` (RAG retrieval), `repository/file_content` (remote file reads), `promptstore/` (system prompts)
+- **Invoked by:** `app.py` (registered as FastAPI WebSocket + HTTP routes)

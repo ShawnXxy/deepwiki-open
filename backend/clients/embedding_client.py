@@ -1,5 +1,13 @@
 """
-Embedder module for Azure OpenAI embeddings.
+Azure OpenAI Embedding Client Factory.
+
+Creates and configures the embedding client with token-safety guardrails.
+Wraps adalflow.Embedder in SafeEmbedder which auto-splits oversized texts.
+
+Usage:
+    from backend.clients.embedding_client import get_embedder
+    embedder = get_embedder()  # Singleton, configured from infra.json
+    result = embedder(input=["some text"])
 """
 
 import logging

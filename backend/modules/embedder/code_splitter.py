@@ -21,7 +21,7 @@ import logging
 from typing import List, Dict, Any
 
 from adalflow.core.types import Document
-from backend.modules.rag.utils import count_tokens
+from backend.modules.embedder.tokenizer import count_tokens
 
 logger = logging.getLogger(__name__)
 

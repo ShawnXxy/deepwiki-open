@@ -40,7 +40,7 @@ import re
 from typing import List, Optional, Dict, Any, Tuple
 
 from adalflow.core.types import Document
-from backend.utils.paths import get_adalflow_root_path
+from backend.paths import get_adalflow_root_path
 
 from backend.clients.blob_client import (
     get_blob_storage_client,
@@ -457,6 +457,101 @@ class VectorStorage:
         logger.info(f"[Vec] Loaded {len(documents)} chunks from blob storage")
         return documents
     
+    def list_files(self, repo_name: str, branch: str) -> set:
+        """List all vector JSON file paths (relative to vectors base) for a repo.
+
+        Used to snapshot existing files before reprocessing so orphans
+        can be cleaned up afterward without deleting everything upfront.
+
+        Args:
+            repo_name: Repository name (owner_repo format)
+            branch: Branch name
+
+        Returns:
+            Set of relative file paths (e.g. {"src/main_001.json", ...})
+        """
+        vectors_path = self._get_vectors_base_path(repo_name, branch)
+        files: set = set()
+
+        try:
+            if is_blob_storage_configured():
+                blob_client = get_blob_storage_client()
+                if blob_client:
+                    prefix = vectors_path + "/"
+                    blobs = blob_client.list_blobs(prefix)
+                    for b in blobs:
+                        if b.endswith('.json'):
+                            # Store path relative to vectors base
+                            files.add(b[len(prefix):])
+            else:
+                local_base = self._get_local_vectors_path(repo_name, branch)
+                if os.path.exists(local_base):
+                    for root, _, filenames in os.walk(local_base):
+                        for f in filenames:
+                            if f.endswith('.json'):
+                                rel = os.path.relpath(
+                                    os.path.join(root, f), local_base
+                                ).replace("\\", "/")
+                                files.add(rel)
+        except Exception as e:
+            logger.warning(f"[Vec] Failed to list files: {e}")
+
+        return files
+
+    def delete_files(self, repo_name: str, branch: str, rel_paths: set) -> int:
+        """Delete specific vector files by relative path.
+
+        Used for orphan cleanup after incremental reprocessing.
+
+        Args:
+            repo_name: Repository name (owner_repo format)
+            branch: Branch name
+            rel_paths: Set of relative paths to delete
+
+        Returns:
+            Number of files successfully deleted
+        """
+        if not rel_paths:
+            return 0
+
+        vectors_path = self._get_vectors_base_path(repo_name, branch)
+        deleted = 0
+
+        try:
+            if is_blob_storage_configured():
+                blob_client = get_blob_storage_client()
+                if blob_client:
+                    for rp in rel_paths:
+                        blob_path = f"{vectors_path}/{rp}"
+                        try:
+                            blob_client.delete_blob(blob_path)
+                            deleted += 1
+                        except Exception as e:
+                            logger.warning(f"[Vec] Failed to delete blob {blob_path}: {e}")
+            else:
+                local_base = self._get_local_vectors_path(repo_name, branch)
+                for rp in rel_paths:
+                    full_path = os.path.join(local_base, rp.replace("/", os.sep))
+                    try:
+                        if os.path.exists(full_path):
+                            os.remove(full_path)
+                            deleted += 1
+                            # Remove empty parent dirs up to base
+                            parent = os.path.dirname(full_path)
+                            while parent != local_base:
+                                if os.path.isdir(parent) and not os.listdir(parent):
+                                    os.rmdir(parent)
+                                    parent = os.path.dirname(parent)
+                                else:
+                                    break
+                    except Exception as e:
+                        logger.warning(f"[Vec] Failed to delete {full_path}: {e}")
+        except Exception as e:
+            logger.error(f"[Vec] Error during file deletion: {e}")
+
+        logger.info(f"[Vec] Deleted {deleted}/{len(rel_paths)} orphan files")
+        return deleted
+
     def delete(self, repo_name: str, branch: str) -> bool:
         """
         Delete all vectors for a repository.

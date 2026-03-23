@@ -41,6 +41,10 @@ from backend.modules.wiki.export import (
     generate_markdown_export,
     generate_json_export,
 )
+from backend.modules.wiki.xml_repair import (
+    close_open_tags,
+    repair_wiki_structure_xml,
+)
 
 __all__ = [
     # Models
@@ -68,4 +72,7 @@ __all__ = [
     # Export functions
     "generate_markdown_export",
     "generate_json_export",
+    # XML repair
+    "close_open_tags",
+    "repair_wiki_structure_xml",
 ]

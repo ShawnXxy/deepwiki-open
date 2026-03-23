@@ -134,6 +134,12 @@ def download_repo(
             stderr=subprocess.PIPE,
         )
 
+        # Enable long paths for enterprise repos (Windows 260-char limit)
+        subprocess.run(
+            ["git", "config", "--global", "core.longpaths", "true"],
+            capture_output=True, text=True,
+        )
+
         # Check if repository already exists
         if os.path.exists(local_path) and os.listdir(local_path):
             # Directory exists and is not empty

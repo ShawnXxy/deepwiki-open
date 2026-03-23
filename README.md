@@ -1,74 +1,137 @@
-# Orcas CodeWiki (For MS Internal use)
+# Orcas CodeWiki
 
-> **Inspired by [DeepWiki-Open](https://github.com/AsyncFuncAI/deepwiki-open)** - This is a fork optimized exclusively for **Azure OpenAI** with Managed Identity authentication. 
+> **Inspired by [Orcas CodeWiki-Open](https://github.com/AsyncFuncAI/Orcas CodeWiki-open)** — Fork optimized for **Azure OpenAI** with Managed Identity authentication.
 
-**Orcas CodeWiki** automatically creates  interactive wikis for Azure DevOps repository! Just enter a repo url, and CodeWiki will:
+**Orcas CodeWiki** automatically generates interactive wikis for Azure DevOps repositories. Enter a repo URL and CodeWiki will analyze the code structure, generate comprehensive documentation with visual diagrams, and organize it into a navigable wiki.
 
-1. Analyze the code structure
-2. Generate comprehensive documentation
-3. Create visual diagrams to explain how everything works
-4. Organize it all into an easy-to-navigate wiki
+The general workflow is:
 
-## 🚀 Quick Start (if you want to deloy your own service)
+1. Clone and analyze the repository (Azure DevOps with PAT authentication)
+2. Create embeddings of the code using Azure OpenAI's `text-embedding-3-large`
+3. Store embeddings as individual JSON files per chunk (memory-efficient)
+4. Generate documentation using Azure OpenAI's GPT models
+5. Create visual diagrams to explain code relationships
+6. Organize everything into a structured wiki
+7. Enable intelligent Q&A with the repository through the Ask feature
+
+## Architecture V2 (Current)
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  User's Machine                                                      │
+│                                                                      │
+│  code_processor (local/docker)    aml_dispatcher (cloud setup)       │
+│  ┌─ clone ─ embed ─ wiki ─ save  ┌─ write .cloud/ config            │
+│  │  PAT / az login               │  setup AML compute + pipeline    │
+│  │  FAISS, local disk            │  create AI Search index          │
+│  └───────────────────────────────└───────────────────────────────────┘
+│                                           │
+│                                    AML Pipeline (scheduled)
+│                                           │
+│  ┌────────────────────────────────────────▼──────────────────────────┐
+│  │  AML Compute (cloud mode)                                         │
+│  │  code_processor --mode=cloud                                      │
+│  │  ┌─ clone (UMI) ─ embed (→blob) ─ wiki (AI Search) ─ save (→blob)│
+│  └───────────────────────────────────────────────────────────────────┘
+│                                           │
+│  ┌────────────────────────────────────────▼──────────────────────────┐
+│  │  Azure Web App (viewer + chatbot)                                 │
+│  │  Next.js :3001 ─ nginx :3000 ─ FastAPI :8001                     │
+│  │  Reads wiki from blob, Ask/Chat via AI Search                     │
+│  └───────────────────────────────────────────────────────────────────┘
+```
+
+### Three Processing Modes
+
+| Mode | Config | Auth | Storage | Retrieval | Command |
+|------|--------|------|---------|-----------|---------|
+| **local** | `config/` | PAT or `az login` | Local disk | FAISS | `python -m backend.processor.code_processor --config=backend/run.json` |
+| **docker** | `config/.local/` | PAT only | Local disk | FAISS | `python -m backend.processor.code_processor --mode=docker --repo=URL --branch=main` |
+| **cloud** | `config/.cloud/` | UMI | Azure Blob | AI Search | `python -m backend.processor.aml_dispatcher --config=backend/run.json` |
+
+### Project Structure
+
+```
+backend/
+├── processor/          # CLI wiki generator + AML dispatcher
+├── modules/
+│   ├── repository/     # Git clone, pull, commit hash
+│   ├── embedder/       # Chunking, embedding, FAISS/AI Search retrieval
+│   ├── wiki/           # Wiki cache read/write/export
+│   └── chat/           # Ask/Chat Q&A (WebSocket + HTTP streaming)
+├── clients/            # Azure OpenAI, Blob, AI Search, Storage abstraction
+├── promptstore/        # LLM prompt templates
+├── config/             # JSON config files (infra.json, embedder.json, etc.)
+└── app.py              # FastAPI server (7 endpoints for chat + wiki API)
+
+src/                    # Next.js frontend (wiki viewer + Ask/Chat UI)
+Deployments/            # ARM templates for Azure resource provisioning
+```
+
+For detailed module documentation, see:
+- [backend/README.md](backend/README.md) — Backend overview and FastAPI endpoints
+- [backend/processor/README.md](backend/processor/README.md) — Processor modes, step functions, cloud setup
+- [backend/modules/chat/README.md](backend/modules/chat/README.md) — WebSocket/HTTP chat, deep research
+- [backend/modules/embedder/README.md](backend/modules/embedder/README.md) — Code splitting, embedding, FAISS retrieval
+- [backend/modules/repository/README.md](backend/modules/repository/README.md) — Git operations
+- [backend/modules/wiki/README.md](backend/modules/wiki/README.md) — Wiki cache, data models, export
+
+> **Architecture Note**: The backend uses a modular architecture with clear separation of concerns:
+> - **modules/**: Domain-specific business logic
+> - **clients/**: External service integrations
+> - **promptstore/**: LLM prompt templates (single source of truth)
+> - **types/**: Shared type definitions
+> 
+> See [backend/README.md](backend/README.md) for detailed module documentation.
+
+## Quick Start
 
 ### Prerequisites
 
-#### 1. Development Env
+- **Python 3.10+**, **Node.js 18+**, **Docker**
+- Azure resources (see [Azure Resources](#azure-resources) below) if you are deploying in Azure environment
 
-- **Python 3.10+**
-- **Node.js 18+**
-- **Docker**
+### 1. Deploy Azure Resources (Skip if you are running locally)
 
-#### 2. Azure Resources Deployment
+1. Edit `Deployments/config.py` with resource names
+2. Run `Deployments/deploy_required.ipynb` to provision resources based information provided in `config.py` above.
 
-##### Option A: Automatic deployment leverage ARM (Recommended)
+> Note #1: <br>
+> Below listed required Azure resources for refence or if you want to deploy manually. 
+> 
+> | Resource | Purpose |
+> |----------|---------|
+> | **Azure OpenAI** | Text generation (gpt-5.1/o4-mini) + embeddings (text-embedding-3-large) |
+> | **Azure Blob Storage** | Store vectors, wiki cache, repos (cloud mode) |
+> | **Managed Identity (UMI)** | Authenticate between Azure resources |
+> | **Azure Machine Learning** | Scheduled processing pipeline (cloud mode) |
+> | **Azure AI Search** | Vector search for wiki generation + chatbot (cloud mode) |
+> | **Application Insights** | Telemetry and logging (optional) |
 
-1. locate folder "Deployments"
-1. Modify "config.py" to fill in your preferred resource name
-1. Run "deploy_required.ipynb" for each required resource
+> NOTE #2: **Permissions Needed** <br>
+> See [Permissions Requirements](./Deployments/permission.md) for RBAC reference. Those should be auto granted when deploying using the runbook.
 
-
-##### Option B Manual deployment (Depercated)
-<details>
-
-Below are required resources you will need to manually created in Azure.
-- **Azure OpenAI Service** with deployed models:
-  - Text generation model (e.g., `o4-mini`, `gpt-4o`)
-  - Embedding model (e.g., `text-embedding-3-large`)
-- **Azure Storage Blob container**
-- **Managed Identity (MSI)** 
-  - configured with access **Cognitive Services OpenAI User** to Azure OpenAI
-  - configured with access **Storage Blob Data Contributor** to Azure blob
-  - configured with access **Monitoring Metrics Publisher** to Azure Application Insight
-- **Application Insight** if you would like to emit logs to Azure 
-
-</details>
-
-#### 3. Security Requirements [**IMPORTANT**]
-
-1. Public access should be disabled for below resources:
-  - blob storage
-  - keyvault, if any
-
-  Instead, create a NSP (Network Security Perimeter) assosciate to above resources those who disable public access. And add below rules in NSP:
-  - inbound
-    - allow your subscriptions
-    - allow service tag "MicrosoftPublicIPSpace"
-  - outbound
-    - allow * FQDNs
-
-2. For Web App, 
-- create identity provider following: [Quickstart: Add app authentication to your web app running on Azure App Service](https://learn.microsoft.com/en-us/azure/app-service/scenario-secure-app-authentication-app-service?tabs=workforce-configuration)
-- Create Network Access rule to allow CorpNet using service tag "CorpNetPublic"
-
->Note: <br>
-> Some of above security values are ONLY available in production tenant if deploying in Portal.
+> NOTE #3: Security Requirements [**IMPORTANT**] <br>
+> **Security Handling** applied if deploy using above runbook. Refer to below if want to handle it manually:
+> 
+> 1. Public access should be disabled for below resources:
+>    - blob storage
+>    - keyvault, if any
+>
+>     Instead, create a NSP (Network Security Perimeter) associate to above resources those who disable public access. And add below rules in NSP:
+>    - inbound: allow your subscriptions, allow service tag "MicrosoftPublicIPSpace"
+>    - outbound: allow * FQDNs
+> 
+> 2. For Web App:
+>    - Create identity provider following: [Quickstart: Add app authentication](https://learn.microsoft.com/en-us/azure/app-service/scenario-secure-app-authentication-app-service?tabs=workforce-configuration)
+>    - Create Network Access rule to allow CorpNet using service tag "CorpNetPublic"
+>
+> Some of above security values are ONLY available in production tenant if deploying in Portal. <br>
 > However, you may want to try using ARM to pass in those values using API, which should be accepted.
 
-### Configure infra.json
+### 2. Configure infra.json
 
-
-Once you have Azure resources ready, edit `backend/config/infra.json` with your Azure details:
+Edit `backend/config/infra.json` with your Azure endpoints:
 
 ```json
 {
@@ -78,128 +141,111 @@ Once you have Azure resources ready, edit `backend/config/infra.json` with your 
   },
   "azure_openai": {
     "endpoint": "https://your-resource.openai.azure.com",
-    "api_version": "2024-12-01-preview",
-    "deployment": "o4-mini"
+    "api_version": "2025-04-01-preview",
+    "deployment": "gpt-5.1"
   },
   "azure_openai_embedding": {
     "endpoint": "https://your-resource.openai.azure.com",
     "api_version": "2024-12-01-preview",
-    "deployment": "text-embedding-3-large"
+    "deployment": "text-embedding-3-large",
+    "dimensions": 3072
   },
   "azure_blob_storage": {
-    "enabled": true,
+    "enabled": false,
     "account_name": "your-storage-account",
-    "container_name": "deepwiki-data"
+    "container_name": "Orcas CodeWiki-data"
   },
-  "azure_application_insights": {
-    "enabled": true,
-    "name": "your-app-insights",
-    "connection_string": ""
+  "azure_ai_search": {
+    "enabled": false,
+    "endpoint": "https://your-search.search.windows.net"
   }
 }
 ```
 
-> Note <br>
-> Keep `azure_application_insights` and `azure_blob_storage` disabled if testing local.
-> These would be auto enabled when deployed to Azure cloud.
+> [**IMPORTANT**] <br>
+> Keep `enabled: false` for blob/search/AML when running locally. Cloud services are auto-enabled via config overlays (`.cloud/` directory) when using `aml_dispatcher` or `publish-web.ps1`.
 
-Then you have two options to continue setup in LOCAL.
+### 3. Start Web App
 
-### 🐳 Option A: Docker test in local environment
+#### Option 1: Local 
 
-Test the containerized application locally before deploying to Azure:
+```bash
+# Create virtual environment
+python -m venv .venv
+.venv\scripts\activate
 
-#### 1. Setup local env
-Locate the sample.env file in root, copy and create a new file named .env. Safely pasting your Azure OpenAI API key in this newly created .env file. 
+# Install dependencies
+pip install poetry && poetry install
+npm install
 
-> This .env will be ignored in online so it will be ONLY available in your local environment
+# Terminal 1: Start backend - in V2, only used for Chat Q&A bot 
+python -m backend.main
 
-#### 2. run below
+# Terminal 2: Start frontend
+npm run dev
 
-The test-local.ps1 file automatically load API key from .env and use it for local docker env variables. 
+# Open http://localhost:3000
+```
 
-> Both blob data path and Application Insight logger will be disabled automatically when testing in local docker.
+#### Option 2: Docker Local Test
 
 ```powershell
-# Run the local testing script
+# Copy sample.env to .env and add your Azure OpenAI API key
 .\test-local.ps1
 ```
 
-This will:
-1. Build the Docker image locally
-2. Run the container with ports 3000 (frontend) + 8001 (backend)
-3. Mount your config files and `.adalflow` cache
-4. Open browser to http://localhost:3000
+#### Option 3: Deploy to Azure Web App
 
-**Useful commands:**
 ```powershell
-# View container logs
-docker logs -f codewiki-local
-
-# Stop the container
-docker stop codewiki-local
-
-# Access container shell
-docker exec -it codewiki-local bash
+# Ensure Deployments/config.py has correct resource names
+.\publish-web.ps1
 ```
 
-### Option B: manual setup in local
+### 4. WIKI Generation flow (standalone process sided by web app)
 
-#### Step 1: Install Dependencies
+The Web App started via above but you need WIKI generation flow via below options:
+
+#### Option 1: Generate Wiki Locally
 
 ```bash
-# Clone the repository
+# With config file
+python -m backend.processor.code_processor --config=backend/run.json
 
-# Optional: create virutal environment and activate it
-python -m venv .venv
-.venv\scripts\activate   
-
-# Install Poetry (if not already installed)
-pip install poetry
-
-# Install Python dependencies
-poetry install
-
-# Install JavaScript dependencies
-npm install
+# With CLI args
+export REPO_ACCESS_TOKEN="your-pat"
+python -m backend.processor.code_processor \
+    --repo="https://dev.azure.com/org/proj/_git/repo" \
+    --branch=main --mode=local
 ```
 
-#### Step 2: Start the Application
+#### Option 2: Generate Wiki in Docker
 
 ```bash
-# Terminal 1: Start the API server
-python -m backend.main
+# With config file
+python -m backend.processor.code_processor --config=backend/run.json
 
-# Terminal 2: Start the frontend
-npm run dev
+# With CLI args
+export REPO_ACCESS_TOKEN="your-pat"
+python -m backend.processor.code_processor \
+    --repo="https://dev.azure.com/org/proj/_git/repo" \
+    --branch=main --mode=docker
 ```
 
-#### Step 3: Use CodeWiki!
+#### Option 3 Cloud Processing (AML Pipeline)
 
-1. Open [http://localhost:3000](http://localhost:3000) in your browser
-2. Enter an Azure DevOps repository URL (e.g., `https://dev.azure.com/org/project/_git/repo`)
-3. Enter your personal access token
-4. Click "Generate Wiki", it would take some time to generate wiki for large code base. You can check back on the homepage.
+```bash
+# Setup AML resources and create scheduled pipeline (run once)
+python -m backend.processor.aml_dispatcher --config=backend/run.json
+
+# AML pipeline runs code_processor --mode=cloud automatically on schedule
+```
 
 
-## How to deploy to Azure cloud
-
-### Using Web App (Recommended)
-- locate publish-web.ps1 under root
-- Ensure have the detailed Azure Resources names ready and filled in `config.py`
-- Run the script, which will build docker image and pull to ACR used for the web app service created during deployment steps
-
-### Using Container App (Depercated due to security)
+## Architecture V1 (Deprecated)
 
 <details>
 
-- locate publish-container.ps1 under root
-- fill the `Configuration` section
-- Run the script, which will create an Azure Container Registry, pull images, setup container env, and upload code.
-
-</details>
-
-### Docker Architecture
+### Docker Architecture 
 
 This project uses a single `Dockerfile` with nginx for both local testing and Azure deployment:
 
@@ -273,38 +319,7 @@ The nginx reverse proxy enables **WebSocket connections** which bypass HTTP time
 └─────────────────┘  └─────────────────┘  └─────────────────┘
 ```
 
-### Useful Azure CLI Commands
-
-```bash
-# View Web App logs (live streaming)
-az webapp log tail -n codewiki -g RG-ORCAS-DEEPWIKI
-
-# Restart the Web App
-az webapp restart -n codewiki -g RG-ORCAS-DEEPWIKI
-
-# View deployment logs
-az webapp log deployment show -n codewiki -g RG-ORCAS-DEEPWIKI
-
-# Get Web App URL
-az webapp show -n codewiki -g RG-ORCAS-DEEPWIKI --query defaultHostName -o tsv
-
-# Check Web App status
-az webapp show -n codewiki -g RG-ORCAS-DEEPWIKI --query state -o tsv
-
-# Scale up (change App Service Plan tier)
-az appservice plan update -n codewiki-plan -g RG-ORCAS-DEEPWIKI --sku P2v3
-
-# Scale out (add instances)
-az webapp update -n codewiki -g RG-ORCAS-DEEPWIKI --set siteConfig.numberOfWorkers=3
-
-# View current configuration
-az webapp config show -n codewiki -g RG-ORCAS-DEEPWIKI
-
-# SSH into the container
-az webapp ssh -n codewiki -g RG-ORCAS-DEEPWIKI
-```
-
-##  How It Works
+###  How It Works
 
 ```mermaid
 flowchart TB
@@ -343,115 +358,40 @@ flowchart TB
     WikiClient --> WikiJson
 
 ```
+</details>
 
-DeepWiki uses Azure OpenAI to:
+## Useful Azure CLI Commands
 
-1. Clone and analyze the repository (Azure DevOps with PAT authentication)
-2. Create embeddings of the code using Azure OpenAI's `text-embedding-3-large`
-3. Store embeddings as individual JSON files per chunk (memory-efficient)
-4. Generate documentation using Azure OpenAI's GPT models
-5. Create visual diagrams to explain code relationships
-6. Organize everything into a structured wiki
-7. Enable intelligent Q&A with the repository through the Ask feature
+```bash
+# View Web App logs (live streaming)
+az webapp log tail -n codewiki -g RG-ORCAS-Orcas CodeWiki
 
-## 🛠️ Project Structure
+# Restart the Web App
+az webapp restart -n codewiki -g RG-ORCAS-Orcas CodeWiki
 
-```
-deepwiki/
-├── pyproject.toml        # Python dependencies (Poetry)
-├── poetry.lock           # Poetry lock file
-├── package.json          # Node.js dependencies
-│
-├── backend/              # Backend API server
-│   ├── main.py           # Application entry point (uvicorn server)
-│   ├── app.py            # FastAPI application setup
-│   ├── config.py         # Configuration management
-│   │
-│   ├── modules/          # Core business logic (modular architecture)
-│   │   ├── chat/         # Chat & deep research functionality
-│   │   │   ├── ws_handler.py    # WebSocket handler for streaming
-│   │   │   ├── http_handler.py  # HTTP streaming endpoint
-│   │   │   ├── service.py       # Shared chat utilities
-│   │   │   └── models.py        # Pydantic request models
-│   │   │
-│   │   ├── rag/          # Retrieval-Augmented Generation
-│   │   │   ├── retriever.py     # Main RAG component (FAISS)
-│   │   │   ├── database.py      # Document database management
-│   │   │   ├── document.py      # Document processing & embedding
-│   │   │   ├── memory.py        # Conversation history
-│   │   │   └── utils.py         # Token counting, file utils
-│   │   │
-│   │   ├── wiki/         # Wiki cache & export
-│   │   │   ├── cache.py         # Read/write wiki cache
-│   │   │   ├── export.py        # Markdown/JSON export
-│   │   │   ├── routes.py        # Wiki API endpoints
-│   │   │   └── models.py        # Wiki structure models
-│   │   │
-│   │   └── repository/   # Git operations
-│   │       ├── git_ops.py       # Clone, pull, branch detection
-│   │       ├── file_content.py  # Azure DevOps file retrieval
-│   │       └── routes.py        # Repository API endpoints
-│   │
-│   ├── clients/          # External service clients
-│   │   ├── azureai_client.py    # Azure OpenAI (LLM + embeddings)
-│   │   ├── blob_client.py       # Azure Blob Storage
-│   │   ├── storage.py           # Unified storage abstraction
-│   │   └── vector_storage.py    # JSON vector embeddings storage
-│   │
-│   ├── promptstore/      # Centralized prompt templates
-│   │   ├── rag.py               # RAG system prompts
-│   │   ├── wiki_structure.py    # Wiki generation prompts
-│   │   ├── wiki_page.py         # Page content prompts
-│   │   ├── deep_research.py     # Multi-turn research prompts
-│   │   └── simple_chat.py       # Simple Q&A prompts
-│   │
-│   ├── tools/            # Utility tools
-│   │   ├── embedder.py          # Safe embedding with token limits
-│   │   └── logger.py            # Smart logging with deduplication
-│   │
-│   ├── types/            # Type definitions (Pydantic models)
-│   │   ├── config_types.py      # Configuration types
-│   │   ├── git_types.py         # Git operation types
-│   │   └── processor_types.py   # File processing types
-│   │
-│   ├── utils/            # General utilities
-│   │   └── paths.py             # Centralized path management
-│   │
-│   └── config/           # JSON configuration files
-│       ├── infra.json           # Azure infrastructure settings
-│       ├── embedder.json        # Embedding model configuration
-│       ├── generator.json       # LLM generation configuration
-│       ├── repo.json            # File filter settings
-│       └── lang.json            # Language configuration
-│
-├── src/                  # Frontend Next.js app
-│   ├── app/              # Next.js app directory
-│   └── components/       # React components
-│
-├── Deployments/          # Azure infrastructure (ARM templates)
-│   ├── config.py         # Deployment configuration
-│   ├── deploy_required.ipynb    # Core resources deployment
-│   ├── templates/        # ARM templates
-│   └── parameters/       # ARM parameters
-│
-├── img/                  # Images and screenshots
-│   ├── public/           # Next.js public assets
-│   └── screenshots/      # Documentation screenshots
-│
-└── logs/                 # Application logs
-    ├── backend-*.log     # Backend logs (daily rotation)
-    └── frontend-*.log    # Frontend logs (daily rotation)
+# View deployment logs
+az webapp log deployment show -n codewiki -g RG-ORCAS-Orcas CodeWiki
+
+# Get Web App URL
+az webapp show -n codewiki -g RG-ORCAS-Orcas CodeWiki --query defaultHostName -o tsv
+
+# Check Web App status
+az webapp show -n codewiki -g RG-ORCAS-Orcas CodeWiki --query state -o tsv
+
+# Scale up (change App Service Plan tier)
+az appservice plan update -n codewiki-plan -g RG-ORCAS-Orcas CodeWiki --sku P2v3
+
+# Scale out (add instances)
+az webapp update -n codewiki -g RG-ORCAS-Orcas CodeWiki --set siteConfig.numberOfWorkers=3
+
+# View current configuration
+az webapp config show -n codewiki -g RG-ORCAS-Orcas CodeWiki
+
+# SSH into the container
+az webapp ssh -n codewiki -g RG-ORCAS-Orcas CodeWiki
 ```
 
-> **Architecture Note**: The backend uses a modular architecture with clear separation of concerns:
-> - **modules/**: Domain-specific business logic
-> - **clients/**: External service integrations
-> - **promptstore/**: LLM prompt templates (single source of truth)
-> - **types/**: Shared type definitions
-> 
-> See [backend/README.md](backend/README.md) for detailed module documentation.
-
-## ⚙️ Configuration
+## ⚙️ Configuration file explanation
 
 All configuration is centralized in `backend/config/infra.json`. 
 
@@ -469,7 +409,7 @@ All configuration is centralized in `backend/config/infra.json`.
 | `azure_openai_embedding.deployment` | Deployment name for embeddings |
 | `azure_blob_storage.enabled` | Enable Azure Blob Storage for persistence (`true`/`false`) |
 | `azure_blob_storage.account_name` | Storage account name |
-| `azure_blob_storage.container_name` | Blob container name (e.g., `deepwiki-data`) |
+| `azure_blob_storage.container_name` | Blob container name (e.g., `Orcas CodeWiki-data`) |
 | `azure_application_insights.enabled` | Enable Application Insights for centralized logging (`true`/`false`) |
 | `azure_application_insights.name` | Application Insights resource name |
 | `azure_application_insights.connection_string` | Application Insights connection string |
@@ -481,7 +421,7 @@ All configuration is centralized in `backend/config/infra.json`.
 
 ## 💾 Storage Architecture
 
-DeepWiki supports two **mutually exclusive** storage modes:
+CodeWiki supports two **mutually exclusive** storage modes:
 
 ### Storage Modes
 
@@ -505,8 +445,6 @@ DeepWiki supports two **mutually exclusive** storage modes:
 
 ### Local Working Directory
 
-Even in **Blob Mode**, you may see files in `~/.adalflow/`. This is the **temporary working directory**:
-
 ```
 ~/.adalflow/
 ├── repos/           # ← Temporary: downloaded from blob for processing
@@ -516,71 +454,9 @@ Even in **Blob Mode**, you may see files in `~/.adalflow/`. This is the **tempor
 └── cache_AzureAIClient_*.db/  # ← Local-only LLM response cache (intentional)
 ```
 
-**Why local copies exist in blob mode:**
-- File parsing and embedding requires local file access
-- FAISS index building reads files from disk
-- The local copy is a **working cache**, not persistent storage
-
-**Source of truth:**
-- **Blob Mode**: Azure Blob Storage is the source of truth. Local is temporary.
-- **Local Mode**: Local filesystem is the source of truth.
-
-### LLM Response Cache
-
-The `cache_AzureAIClient_*.db/` folder is **intentionally local-only**:
-- Created by adalflow's DiskCache for caching LLM API responses
-- Avoids redundant API calls for identical queries
-- Machine-specific, ephemeral performance optimization
-- Not persistent data - safe to delete anytime
-
-## 📊 Logging
-
-DeepWiki uses daily rotating log files with optional Azure Application Insights integration:
-
-### Local Logs
-
-- **Backend logs**: `logs/backend-YYMMDD.log`
-- **Frontend logs**: `logs/frontend-YYMMDD.log`
-
-Set logging level in your environment:
-
-```bash
-LOG_LEVEL=DEBUG  # DEBUG, INFO, WARNING, ERROR
-```
-
-### Application Insights (Optional)
-
-For centralized cloud logging, configure Azure Application Insights:
-
-1. **Create Application Insights** in Azure Portal
-2. **Get the connection string** from the Application Insights overview page
-3. **Configure in `infra.json`**:
-   ```json
-   "azure_application_insights": {
-     "enabled": true,
-     "name": "your-app-insights-name",
-     "connection_string": "InstrumentationKey=...;IngestionEndpoint=..."
-   }
-   ```
-4. **Assign role** - Your identity needs **"Monitoring Metrics Publisher"** role on the Application Insights resource:
-   ```bash
-   az role assignment create \
-     --assignee <your-user-or-msi-object-id> \
-     --role "Monitoring Metrics Publisher" \
-     --scope <application-insights-resource-id>
-   ```
-
 **Authentication:**
 - In Azure (VMs, Container Apps): Uses Managed Identity from `infra.json`
 - Locally: Uses Azure CLI credentials (`az login`)
-
-**View logs** in Azure Portal → Application Insights → Logs → Query the `traces` table:
-```kusto
-traces
-| where cloud_RoleName == "backend"
-| order by timestamp desc
-| take 100
-```
 
 ## 🤖 Ask & DeepResearch Features
 
@@ -604,8 +480,8 @@ Toggle "Deep Research" in the Ask interface for thorough analysis.
 
 ## 📱 Screenshots
 
-![DeepWiki Main Interface](img/screenshots/Interface.png)
-*The main interface of DeepWiki*
+![Orcas CodeWiki Main Interface](img/screenshots/Interface.png)
+*The main interface of Orcas CodeWiki*
 
 ![Snippet of Wiki Generated](img/screenshots/wiki.png)
 *Sample Wiki generated*
@@ -614,5 +490,4 @@ Toggle "Deep Research" in the Ask interface for thorough analysis.
 *DeepResearch conducts multi-turn investigations*
 
 ## Limitation (Working in progress)
-- Multi-threaded: Currently, if there is already an ongoing code embedding process running, other newly coming request will be queued. In future, CodeWiki will allow multi-threaded chunking process.
-- Timely scheduled pipeline: with development of any code projects, code repo will change time to time. To ensure accuracy with Wiki generated, need to have a scheduled pipeline to analyze the code changes time to time.
+- CodeMap: allows to show function callstack

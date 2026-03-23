@@ -20,8 +20,8 @@ from backend.config import (
     get_azure_deployment_name,
     get_azure_ai_client,
 )
-from backend.modules.rag import RAG
-from backend.modules.rag.utils import count_tokens
+from backend.modules.embedder import RAG
+from backend.modules.embedder.tokenizer import count_tokens
 from backend.modules.repository.file_content import get_file_content
 from backend.modules.chat.models import ChatCompletionRequest
 from backend.modules.chat.service import (
@@ -33,6 +33,9 @@ from backend.promptstore import build_chat_system_prompt
 from backend.promptstore.wiki_structure import (
     WIKI_STRUCTURE_PROMPT,
     WIKI_STRUCTURE_CONCISE_PROMPT,
+    build_wiki_structure_prompt,
+    file_tree_dirs_only as _file_tree_dirs_only,
+    LANGUAGE_DISPLAY_NAMES,
 )
 
 # Thread pool for running blocking operations (like embedding)
@@ -61,86 +64,6 @@ async def _safe_close(websocket: WebSocket) -> None:
         await websocket.close()
     except Exception:
         pass
-
-
-# Language display names for wiki structure prompts
-LANGUAGE_DISPLAY_NAMES = {
-    'en': 'English',
-    'ja': 'Japanese (日本語)',
-    'zh': 'Mandarin Chinese (中文)',
-    'zh-tw': 'Traditional Chinese (繁體中文)',
-    'es': 'Spanish (Español)',
-    'kr': 'Korean (한국어)',
-    'vi': 'Vietnamese (Tiếng Việt)',
-    'pt-br': 'Brazilian Portuguese (Português Brasileiro)',
-    'fr': 'Français (French)',
-    'ru': 'Русский (Russian)',
-}
-
-
-def _file_tree_dirs_only(file_tree: str) -> str:
-    """Reduce a file tree to directory names only.
-
-    Strips individual file names — keeps only lines that end with '/'
-    or contain no file extension.  This prevents the LLM from
-    referencing specific file names that may trigger Azure's
-    profanity content filter in its output.
-    """
-    if not file_tree:
-        return ''
-    lines = []
-    for line in file_tree.split('\n'):
-        stripped = line.rstrip()
-        # Keep directory lines (end with /) or top-level descriptors
-        if stripped.endswith('/') or '.' not in stripped.split('/')[-1]:
-            lines.append(stripped)
-    return '\n'.join(lines) if lines else file_tree
-
-
-def build_wiki_structure_prompt(
-    request: ChatCompletionRequest,
-    owner: str,
-    repo: str
-) -> str:
-    """
-    Build wiki structure prompt using templates from promptstore.
-
-    Args:
-        request: The chat completion request with file_tree, readme, etc.
-        owner: Repository owner
-        repo: Repository name
-
-    Returns:
-        Formatted prompt string ready for LLM
-    """
-    # Select prompt template based on comprehensive flag
-    template = (WIKI_STRUCTURE_PROMPT if request.comprehensive
-                else WIKI_STRUCTURE_CONCISE_PROMPT)
-
-    # Get language display name
-    lang = request.language or 'en'
-    language_name = LANGUAGE_DISPLAY_NAMES.get(lang, 'English')
-
-    # Determine page count based on mode
-    page_count = '15-25' if request.comprehensive else '4-6'
-
-    file_tree = request.file_tree or ''
-    readme = request.readme or ''
-
-    # Fill in the template placeholders
-    prompt = template.format(
-        owner=owner,
-        repo=repo,
-        file_tree=file_tree,
-        readme=readme,
-        language_name=language_name,
-        page_count=page_count
-    )
-
-    logger.info(f"Built wiki structure prompt using promptstore template "
-                f"(comprehensive={request.comprehensive}, lang={lang})")
-
-    return prompt
 
 
 async def prepare_retriever_with_keepalive(
@@ -250,7 +173,14 @@ async def handle_websocket_chat(websocket: WebSocket):
             repo = parts[-1] if len(parts) >= 1 else 'unknown'
 
             # Build prompt from promptstore template
-            prompt_content = build_wiki_structure_prompt(request, owner, repo)
+            prompt_content = build_wiki_structure_prompt(
+                file_tree=request.file_tree or '',
+                readme=request.readme or '',
+                owner=owner,
+                repo=repo,
+                language=request.language or 'en',
+                comprehensive=request.comprehensive or True,
+            )
 
             # Replace the message content with the built prompt
             if request.messages and len(request.messages) > 0:
@@ -436,8 +366,8 @@ async def handle_websocket_chat(websocket: WebSocket):
                 from backend.modules.repository.git_ops import (
                     get_head_commit_hash
                 )
-                from backend.utils.paths import get_adalflow_root_path
-                from backend.modules.rag.database import DatabaseManager
+                from backend.paths import get_adalflow_root_path
+                from backend.modules.embedder.indexer import DatabaseManager
                 dm = DatabaseManager()
                 repo_name_for_path = dm._extract_repo_name_from_url(
                     request.repo_url, request.type
@@ -809,7 +739,12 @@ async def handle_websocket_chat(websocket: WebSocket):
                     r_owner = parts[-2] if len(parts) >= 2 else 'unknown'
                     r_repo = parts[-1] if len(parts) >= 1 else 'unknown'
                     retry_prompt = build_wiki_structure_prompt(
-                        request, r_owner, r_repo
+                        file_tree=dir_tree,
+                        readme='(README omitted for content safety)',
+                        owner=r_owner,
+                        repo=r_repo,
+                        language=request.language or 'en',
+                        comprehensive=request.comprehensive or True,
                     )
                     request.messages[-1].content = retry_prompt
                     retry_kwargs = model.convert_inputs_to_api_kwargs(
@@ -845,7 +780,28 @@ async def handle_websocket_chat(websocket: WebSocket):
 
             await _safe_close(websocket)
         except Exception as e_azure:
-            logger.error(f"Error with Azure AI API: {str(e_azure)}")
+            # Extract APIM request ID for debugging
+            from backend.clients.azureai_client import (
+                _extract_request_id, _mask_secrets,
+            )
+            import traceback
+            req_id = _extract_request_id(e_azure)
+            is_connection_error = 'Connection' in type(e_azure).__name__
+            req_label = 'N/A (connection failed)' if is_connection_error else req_id
+            logger.error(_mask_secrets(
+                f"Error with Azure AI API (req_id={req_label}): "
+                f"{type(e_azure).__name__}: {str(e_azure)}"
+            ))
+            if is_connection_error:
+                logger.error(_mask_secrets(
+                    f"Connection error details — "
+                    f"exception_type={type(e_azure).__name__}, "
+                    f"cause={type(e_azure.__cause__).__name__ if e_azure.__cause__ else 'None'}, "
+                    f"cause_detail={str(e_azure.__cause__) if e_azure.__cause__ else 'N/A'}"
+                ))
+                logger.debug(_mask_secrets(
+                    f"Full traceback:\n{traceback.format_exc()}"
+                ))
             error_message = str(e_azure).lower()
 
             # Check for content filter errors — signal frontend
@@ -872,7 +828,8 @@ async def handle_websocket_chat(websocket: WebSocket):
                 )
             else:
                 error_msg = (
-                    f"\nError with Azure AI API: {str(e_azure)}\n\n"
+                    f"\nError with Azure AI API (request_id: {req_label}): "
+                    f"{str(e_azure)}\n\n"
                     "Please check your AZURE_OPENAI_API_KEY, "
                     "AZURE_OPENAI_ENDPOINT, and AZURE_OPENAI_VERSION."
                 )

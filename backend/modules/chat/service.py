@@ -236,7 +236,7 @@ def format_context_text(
 
             # Append per-chunk source URL for LLM citation
             if repo_url and start_line is not None:
-                from backend.utils.source_url import build_source_url
+                from backend.utils.url_builder import build_source_url
                 sl = start_line + 1  # 0-based → 1-based
                 el = (end_line + 1) if end_line is not None else sl
                 src_url = build_source_url(

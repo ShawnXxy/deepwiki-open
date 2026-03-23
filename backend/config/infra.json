@@ -1,12 +1,16 @@
 {
+  "account": {
+    "subscription_id": "4f3f8f41-5643-4664-8c12-ce6b78ceb81f",
+    "resource_group": "RG-ORCAS-DEEPWIKI"
+  },
   "managed_identity": {
     "name": "mid-orcas-deepwiki",
     "client_id": "6de9d24d-f0d1-433f-9387-5a9192aebbc6"
   },
   "azure_openai": {
     "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
-    "api_version": "2024-12-01-preview",
-    "deployment": "o4-mini",
+    "api_version": "2025-04-01-preview",
+    "deployment": "gpt-5.1",
     "temperature": 1.0
   },
   "azure_openai_embedding": {
@@ -24,5 +28,23 @@
     "enabled": false,
     "name": "appinsite-orcas-deepwiki-ea",
     "connection_string": "InstrumentationKey=657bc505-bcd9-42cb-9a07-950883f91bbb;IngestionEndpoint=https://eastasia-0.in.applicationinsights.azure.com/;LiveEndpoint=https://eastasia.livediagnostics.monitor.azure.com/;ApplicationId=9c50f5e7-a29b-4776-8c21-aedfb94b0ff3"
+  },
+  "azure_ai_search": {
+    "enabled": false,
+    "endpoint": "https://acsorcascodewiki.search.windows.net",
+    "api_version": "2024-07-01",
+    "recreate_index": false,
+    "indexer_interval": "PT24H"
+  },
+  "azure_ml": {
+    "enabled": false,
+    "workspace_name": "aml-orcas-codewiki",
+    "compute_name": "deepwiki-compute",
+    "compute_size": "STANDARD_D2_V2",
+    "compute_min_instances": 0,
+    "compute_max_instances": 4,
+    "schedule_interval_hours": 480,
+    "environment_name": "deepwiki-processor",
+    "idle_time_before_scale_down": 600
   }
 }

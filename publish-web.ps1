@@ -127,10 +127,10 @@ if ($existingRole) {
 }
 
 # ============================================
-# Step 3: Create Cloud Config (enable blob storage and App Insights)
+# Step 3: Create Cloud Config (enable blob storage, AI Search, and App Insights)
 # ============================================
 Write-Host ""
-Write-Host "📝 Step 3: Creating .cloud config (enabling blob storage and App Insights)..." -ForegroundColor Cyan
+Write-Host "📝 Step 3: Creating .cloud config (enabling cloud services)..." -ForegroundColor Cyan
 
 $cloudConfigDir = Join-Path $PSScriptRoot "backend/config/.cloud"
 if (-not (Test-Path $cloudConfigDir)) {
@@ -143,6 +143,7 @@ $cloudInfraPath = Join-Path $cloudConfigDir "infra.json"
 
 $infra = Get-Content $infraPath | ConvertFrom-Json
 $infra.azure_blob_storage.enabled = $true
+$infra.azure_ai_search.enabled = $true
 $infra.azure_application_insights.enabled = $true
 $infra | ConvertTo-Json -Depth 10 | Set-Content $cloudInfraPath
 
@@ -155,7 +156,7 @@ foreach ($configFile in $configFiles) {
     }
 }
 
-Write-Host "✅ Cloud config created with blob storage and App Insights enabled" -ForegroundColor Green
+Write-Host "✅ Cloud config created (blob, AI Search, App Insights enabled)" -ForegroundColor Green
 
 # ============================================
 # Step 4: Build and Push Container Image
@@ -255,6 +256,7 @@ az webapp config appsettings set `
     --resource-group $RESOURCE_GROUP `
     --settings `
         AZURE_CLIENT_ID=$MSI_CLIENT_ID `
+        DEEPWIKI_CONFIG_DIR=backend/config/.cloud `
         WEBSITES_ENABLE_APP_SERVICE_STORAGE=false `
         DOCKER_REGISTRY_SERVER_URL="https://$ACR_LOGIN_SERVER" `
         WEBSITES_PORT=3000 `

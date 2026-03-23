@@ -14,19 +14,19 @@ Exports:
     - Utility functions: safe_read_file, count_tokens, etc.
 """
 
-from backend.modules.rag.memory import Memory, DialogTurn, UserQuery, AssistantResponse, CustomConversation
-from backend.modules.rag.answer import RAGAnswer
-from backend.modules.rag.retriever import RAG
-from backend.modules.rag.database import DatabaseManager
-from backend.modules.rag.utils import safe_read_file, count_tokens, MAX_EMBEDDING_TOKENS, MAX_INPUT_TOKENS
-from backend.modules.rag.document import (
+from backend.modules.embedder.memory import Memory, DialogTurn, UserQuery, AssistantResponse, CustomConversation
+from backend.modules.embedder.response import RAGAnswer
+from backend.modules.embedder.retriever import RAG
+from backend.modules.embedder.indexer import DatabaseManager
+from backend.modules.embedder.tokenizer import safe_read_file, count_tokens, MAX_EMBEDDING_TOKENS, MAX_INPUT_TOKENS
+from backend.modules.embedder.document import (
     read_all_documents,
     prepare_data_pipeline,
     prepare_embed_only_pipeline,
     transform_documents_and_save_to_db,
     transform_documents_and_save_as_json,
 )
-from backend.modules.rag.code_splitter import (
+from backend.modules.embedder.code_splitter import (
     split_and_enrich_documents,
     split_code_at_boundaries,
     extract_code_elements,

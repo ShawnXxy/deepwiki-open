@@ -45,6 +45,30 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def close_open_tags(xml_text: str) -> str:
+    """Close unclosed XML tags by tracking open/close stack.
+
+    Lightweight repair that appends missing closing tags in reverse
+    order. Use before ``repair_wiki_structure_xml`` for best results.
+    """
+    open_stack = []
+    tag_re = re.compile(r'<(/?)(\w[\w_]*)(?:\s[^>]*)?\s*/?>')
+    for m in tag_re.finditer(xml_text):
+        is_closing = m.group(1) == '/'
+        tag_name = m.group(2)
+        if is_closing:
+            for i in range(len(open_stack) - 1, -1, -1):
+                if open_stack[i] == tag_name:
+                    open_stack.pop(i)
+                    break
+        else:
+            if not m.group(0).endswith('/>'):
+                open_stack.append(tag_name)
+    for tag in reversed(open_stack):
+        xml_text += f'</{tag}>'
+    return xml_text
+
+
 def repair_wiki_structure_xml(partial: str) -> Optional[str]:
     """Attempt to repair truncated wiki structure XML.
 

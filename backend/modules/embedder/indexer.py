@@ -10,12 +10,12 @@ from typing import List
 
 from adalflow.core.types import Document
 from adalflow.core.db import LocalDB
-from backend.utils.paths import get_adalflow_root_path
+from backend.paths import get_adalflow_root_path
 
 from backend.config import configs
 from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
 from backend.clients.vector_storage import get_vector_storage
-from backend.modules.rag.document import read_all_documents, transform_documents_and_save_as_json
+from backend.modules.embedder.document import read_all_documents, transform_documents_and_save_as_json
 from backend.modules.repository.git_ops import download_repo, detect_default_branch
 
 logger = logging.getLogger(__name__)
@@ -85,21 +85,16 @@ class DatabaseManager:
         self.repo_url_or_path = None
         self.repo_paths = None
 
-    def _delete_existing_storage(self, repo_name: str, branch_suffix: str, vector_storage) -> None:
-        """
-        Delete existing pkl database and JSON vectors for migration to vector-based storage.
-        
+    def _delete_legacy_pkl(self, repo_name: str, branch_suffix: str) -> None:
+        """Delete legacy pkl database if it exists.
+
+        Pkl databases are never served live, so deleting upfront is
+        safe and doesn't affect zero-downtime guarantees.
+
         Args:
             repo_name: Repository name (owner_repo format)
             branch_suffix: Branch name
-            vector_storage: VectorStorage instance
         """
-        # Delete existing JSON vectors
-        if vector_storage.exists(repo_name, branch_suffix):
-            logger.info(f"[Vec] Deleting existing vectors: vectors/{repo_name}_{branch_suffix}/")
-            vector_storage.delete(repo_name, branch_suffix)
-        
-        # Delete existing pkl database
         if is_blob_storage_configured():
             blob_db_path = self.repo_paths.get("blob_db_path") if self.repo_paths else None
             if blob_db_path:
@@ -111,7 +106,6 @@ class DatabaseManager:
                 except Exception as e:
                     logger.warning(f"[Pkl] Failed to delete legacy pkl: {e}")
         else:
-            # Local storage
             if self.repo_paths and os.path.exists(self.repo_paths.get("save_db_file", "")):
                 pkl_path = self.repo_paths["save_db_file"]
                 logger.info(f"[Pkl] Deleting legacy pkl database: {pkl_path}")
@@ -297,10 +291,19 @@ class DatabaseManager:
         Prepare the indexed database for the repository.
         
         Storage priority (backward compatible):
-        1. If force_reprocess=True: Delete existing pkl/vectors, create fresh JSON vectors
+        1. If force_reprocess=True: Snapshot existing files, overwrite in-place,
+           then delete orphans (zero-downtime reprocessing)
         2. Check for existing pkl database in "databases/" - load if found (backward compat)
         3. Check for existing JSON vectors in "vectors/" - load if found (new format)
         4. If neither exists, create new using JSON format in "vectors/"
+
+        Zero-downtime reprocessing (force_reprocess=True):
+            Instead of deleting all vectors upfront (which creates a window where
+            the wiki has no embeddings), we:
+            1. Snapshot the set of existing vector filenames
+            2. Run embedding — new chunks overwrite existing files in-place
+            3. After completion, delete orphan files (old files not in new set)
+            This ensures the FAISS index is always populated during reprocessing.
 
         Args:
             embedder_type (str, optional): Kept for backward compatibility, ignored.
@@ -321,15 +324,26 @@ class DatabaseManager:
         repo_name = self.repo_paths.get("repo_name", "unknown")
         branch_suffix = self.repo_paths.get("branch_suffix", "main")
         vector_storage = get_vector_storage()
-        vectors_path = f"vectors/{repo_name}_{branch_suffix}"
+        old_files: set = set()  # Snapshot for orphan cleanup
         
         # ========================================================================
-        # FORCE REPROCESS: Delete existing storage and create fresh JSON vectors
+        # FORCE REPROCESS: Zero-downtime incremental overwrite + orphan cleanup
         # ========================================================================
         if force_reprocess:
-            logger.info("[Vec] Force reprocess requested - migrating to vector-based storage...")
-            self._delete_existing_storage(repo_name, branch_suffix, vector_storage)
-            # Skip STEP 1, go directly to STEP 2 (create new)
+            logger.info("[Vec] Force reprocess requested — zero-downtime mode")
+
+            # Snapshot existing vector files BEFORE processing
+            old_files = vector_storage.list_files(repo_name, branch_suffix)
+            if old_files:
+                logger.info(f"[Vec] Snapshot: {len(old_files)} existing vector files")
+            else:
+                logger.info("[Vec] No existing vectors (fresh run)")
+
+            # Delete legacy pkl database (always safe — pkl is not served live)
+            self._delete_legacy_pkl(repo_name, branch_suffix)
+
+            # Skip STEP 1 (loading existing), go directly to STEP 2 (create new)
+            # New vectors will overwrite existing files in-place
         else:
             logger.info(f"Looking for existing embeddings for {repo_name} (branch: {branch_suffix})...")
         
@@ -427,6 +441,22 @@ class DatabaseManager:
         
         logger.info(f"[Vec] Total documents: {len(documents)}")
         logger.info(f"[Vec] Total transformed chunks: {len(transformed_docs)}")
+
+        # ====================================================================
+        # STEP 3: Orphan cleanup (only during force_reprocess)
+        # ====================================================================
+        if force_reprocess and old_files:
+            new_files = vector_storage.list_files(repo_name, branch_suffix)
+            orphans = old_files - new_files
+            if orphans:
+                logger.info(
+                    f"[Vec] Cleaning {len(orphans)} orphan files "
+                    f"(old={len(old_files)}, new={len(new_files)})"
+                )
+                vector_storage.delete_files(repo_name, branch_suffix, orphans)
+            else:
+                logger.info("[Vec] No orphan files to clean up")
+
         return transformed_docs
 
     def prepare_retriever(

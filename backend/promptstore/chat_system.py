@@ -1,9 +1,11 @@
 """
-Chat system prompt builder for WebSocket chat completions.
+Chat system prompt builder.
 
-This module provides the system prompt builder function used in websocket_wiki.py
-to generate appropriate system prompts based on the chat context (normal chat vs
-deep research mode).
+Selects the appropriate system prompt template based on chat mode:
+- Normal chat → simple_chat.SIMPLE_CHAT_SYSTEM_PROMPT
+- Deep research → deep_research.DEEP_RESEARCH_*_PROMPT (first/intermediate/final)
+
+Injects runtime context: repo_type, repo_url, repo_name, language_name.
 """
 
 

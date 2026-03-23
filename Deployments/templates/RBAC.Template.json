@@ -86,6 +86,8 @@
         "searchIndexDataReaderRoleId": "1407120a-92aa-4202-b7e9-c0e197c71c8f",
         "searchServiceContributorRoleId": "7ca78c08-252a-4471-8644-bb5ff32d4ba0",
         "azureMLDataScientistRoleId": "f6c7c914-8db3-469d-8ca1-694a8f32e121",
+        "azureAIAdministratorRoleId": "b78c5d69-af96-48a3-bf8d-a8b4d589de94",
+        "storageBlobDataReaderRoleId": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1",
 
         "openAiResourceId": "[if(not(empty(parameters('openAiResourceName'))), if(empty(parameters('openAiResourceGroup')), resourceId('Microsoft.CognitiveServices/accounts', parameters('openAiResourceName')), resourceId(parameters('openAiResourceGroup'), 'Microsoft.CognitiveServices/accounts', parameters('openAiResourceName'))), '')]",
         "storageAccountId": "[if(not(empty(parameters('storageAccountName'))), resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '')]",
@@ -257,6 +259,58 @@
                 "principalId": "[parameters('managedIdentityPrincipalId')]",
                 "principalType": "ServicePrincipal"
             }
+        },
+        {
+            "comments": "Azure AI Administrator on Key Vault (managed identity)",
+            "condition": "[not(empty(parameters('keyVaultName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('keyVaultId'), parameters('managedIdentityPrincipalId'), variables('azureAIAdministratorRoleId'))]",
+            "scope": "[variables('keyVaultId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('azureAIAdministratorRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "comments": "Storage Blob Data Reader on Storage Account (managed identity)",
+            "condition": "[not(empty(parameters('storageAccountName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('storageAccountId'), parameters('managedIdentityPrincipalId'), variables('storageBlobDataReaderRoleId'))]",
+            "scope": "[variables('storageAccountId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('storageBlobDataReaderRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "comments": "Azure AI Administrator on Storage Account (managed identity)",
+            "condition": "[not(empty(parameters('storageAccountName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('storageAccountId'), parameters('managedIdentityPrincipalId'), variables('azureAIAdministratorRoleId'))]",
+            "scope": "[variables('storageAccountId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('azureAIAdministratorRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "comments": "Azure AI Administrator on Application Insights (managed identity)",
+            "condition": "[not(empty(parameters('applicationInsightsName')))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(variables('applicationInsightsId'), parameters('managedIdentityPrincipalId'), variables('azureAIAdministratorRoleId'))]",
+            "scope": "[variables('applicationInsightsId')]",
+            "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('azureAIAdministratorRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal"
+            }
         }
     ],
     "outputs": {
@@ -264,9 +318,9 @@
             "type": "array",
             "value": [
                 "[if(not(empty(parameters('openAiResourceName'))), 'Cognitive Services OpenAI User on Azure OpenAI', '')]",
-                "[if(not(empty(parameters('storageAccountName'))), 'Storage Blob Data Contributor on Storage Account', '')]",
-                "[if(not(empty(parameters('applicationInsightsName'))), 'Monitoring Metrics Publisher on Application Insights', '')]",
-                "[if(not(empty(parameters('keyVaultName'))), 'Key Vault Crypto User, Secrets Officer, Certificate User on Key Vault', '')]",
+                "[if(not(empty(parameters('storageAccountName'))), 'Storage Blob Data Contributor + Reader, Azure AI Administrator on Storage Account', '')]",
+                "[if(not(empty(parameters('applicationInsightsName'))), 'Monitoring Metrics Publisher, Azure AI Administrator on Application Insights', '')]",
+                "[if(not(empty(parameters('keyVaultName'))), 'Key Vault Crypto User, Secrets Officer, Certificate User, Azure AI Administrator on Key Vault', '')]",
                 "[if(not(empty(parameters('searchServiceName'))), 'Search Index Data Reader, Search Service Contributor on Azure Search', '')]",
                 "[if(not(empty(parameters('machineLearningWorkspaceName'))), 'AzureML Data Scientist on Azure ML Workspace', '')]"
             ]

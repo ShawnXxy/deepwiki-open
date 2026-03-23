@@ -1,12 +1,14 @@
 import os
 import sys
 import logging
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from backend/.env
+_backend_dir = Path(__file__).resolve().parent
+load_dotenv(_backend_dir / '.env')
 
-from backend.tools.logger import setup_logging
+from backend.logger import setup_logging
 
 # Configure logging
 setup_logging()

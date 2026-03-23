@@ -17,6 +17,9 @@ from backend.types.config_types import (
     FileFiltersConfig,
     RepositoryConfig,
     LanguageConfig,
+    AzureAccountConfig,
+    AzureAISearchConfig,
+    AzureMLConfig,
 )
 from backend.types.converter import from_dict
 
@@ -44,8 +47,34 @@ raw_auth_mode = os.environ.get('DEEPWIKI_AUTH_MODE', 'False')
 WIKI_AUTH_MODE = raw_auth_mode.lower() in ['true', '1', 't']
 WIKI_AUTH_CODE = os.environ.get('DEEPWIKI_AUTH_CODE', '')
 
-# Configuration directory
+# Configuration directory — set via set_config_dir() or env var
 CONFIG_DIR = os.environ.get('DEEPWIKI_CONFIG_DIR', None)
+
+
+def set_config_dir(path: str) -> None:
+    """Override the configuration directory at runtime.
+
+    Called by ``main()`` when ``--mode cloud`` to switch to
+    ``backend/config/.cloud/`` which has Azure services force-enabled.
+
+    Clears all cached configs so they reload from the new directory.
+    """
+    global CONFIG_DIR
+    global _infra_config, _embedder_config, _generator_config
+    global _file_filters_config, _repository_config, _lang_config
+    global _client_classes, _azure_ai_client
+
+    CONFIG_DIR = path
+
+    # Clear all cached configs — next access reloads from new dir
+    _infra_config = None
+    _embedder_config = None
+    _generator_config = None
+    _file_filters_config = None
+    _repository_config = None
+    _lang_config = None
+    _client_classes = None
+    _azure_ai_client = None
 
 
 # ============================================================================
@@ -85,7 +114,12 @@ def replace_env_placeholders(
 
 
 def load_json_config(filename: str) -> Dict[str, Any]:
-    """Load JSON configuration file from config directory."""
+    """Load JSON configuration file from config directory.
+
+    Resolution order:
+    1. ``CONFIG_DIR`` (set via ``set_config_dir()`` or env var)
+    2. ``backend/config/`` (default)
+    """
     try:
         if CONFIG_DIR:
             config_path = Path(CONFIG_DIR) / filename
@@ -138,6 +172,26 @@ def get_managed_identity_client_id() -> Optional[str]:
     """Get the managed identity client ID from infra.json."""
     infra = get_infra_config()
     return infra.managed_identity.client_id
+
+
+def get_account_config() -> AzureAccountConfig:
+    """Get Azure account info (subscription_id, resource_group) from infra.json."""
+    infra = get_infra_config()
+    return infra.account
+
+
+def enable_cloud_services() -> None:
+    """Force-enable cloud services (AI Search, AML, Blob) for cloud mode.
+
+    Called by _run_cloud_mode() so that cloud resources are created
+    even when infra.json has enabled=false (the default for local dev).
+    Mutates the cached InfraConfig in place.
+    """
+    infra = get_infra_config()
+    infra.azure_ai_search.enabled = True
+    infra.azure_blob_storage.enabled = True
+    infra.azure_ml.enabled = True
+    logger.info("Cloud services force-enabled: AI Search, Blob, AML")
 
 
 def get_azure_openai_config() -> Dict[str, str]:
@@ -306,27 +360,18 @@ def get_text_splitter_config() -> Dict[str, Any]:
 def get_generator_full_config() -> GeneratorConfig:
     """
     Get the complete generator configuration.
-    Loads on first access and caches.
+    Built from infra.json (no separate generator.json needed).
     """
     global _generator_config
     if _generator_config is None:
-        config_dict = load_json_config("generator.json")
-        if config_dict:
-            try:
-                # Extract the 'generator' section from the JSON
-                generator_data = config_dict.get("generator", {})
-                _generator_config = from_dict(GeneratorConfig, generator_data)
-                
-                # Inject values from infra.json
-                infra = get_infra_config()
-                _generator_config.model_kwargs.model = infra.azure_openai.deployment
-                _generator_config.model_kwargs.temperature = infra.azure_openai.temperature
-                _generator_config.initialize_kwargs = get_azure_openai_text_config()
-                
-                logger.info("Successfully loaded and validated generator.json")
-            except Exception as e:
-                logger.error(f"Failed to parse generator.json: {e}")
-                raise
+        infra = get_infra_config()
+        _generator_config = GeneratorConfig(
+            client_class="AzureAIClient",
+        )
+        _generator_config.model_kwargs.model = infra.azure_openai.deployment
+        _generator_config.model_kwargs.temperature = infra.azure_openai.temperature
+        _generator_config.initialize_kwargs = get_azure_openai_text_config()
+        logger.info("Generator config built from infra.json")
     return _generator_config
 
 
@@ -576,3 +621,35 @@ def load_repo_config() -> Dict[str, Any]:
 def load_lang_config() -> Dict[str, Any]:
     """Legacy function - use get_lang_config() instead."""
     return get_lang_config()
+
+
+def get_search_config() -> 'AzureAISearchConfig':
+    """Get Azure AI Search configuration from infra.json.
+
+    Returns:
+        AzureAISearchConfig Pydantic model
+    """
+    infra = get_infra_config()
+    search = getattr(infra, 'azure_ai_search', None)
+    if search is None:
+        return AzureAISearchConfig()
+    return search
+
+
+def is_search_configured() -> bool:
+    """Check if Azure AI Search is enabled and configured."""
+    cfg = get_search_config()
+    return cfg.enabled and bool(cfg.endpoint)
+
+
+def get_aml_config() -> 'AzureMLConfig':
+    """Get Azure ML configuration from infra.json.
+
+    Returns:
+        AzureMLConfig Pydantic model (check .enabled before using)
+    """
+    infra = get_infra_config()
+    aml = getattr(infra, 'azure_ml', None)
+    if aml is None:
+        return AzureMLConfig()
+    return aml

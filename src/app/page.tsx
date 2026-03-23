@@ -1,20 +1,14 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import React from 'react';
 import Link from 'next/link';
 import ThemeToggle from '@/components/theme-toggle';
 import Mermaid from '../components/Mermaid';
-import ConfigurationModal from '@/components/ConfigurationModal';
 import ProcessedProjects from '@/components/ProcessedProjects';
 import { AzureDevOpsIcon, MicrosoftLogo } from '@/components/AzureIcon';
-import { extractUrlPath, extractUrlDomain } from '@/utils/urlDecoder';
 import { useProcessedProjects } from '@/hooks/useProcessedProjects';
-import logger from '@/utils/logger';
-
 import { useLanguage } from '@/contexts/LanguageContext';
 
-// Define the demo mermaid charts outside the component
 const DEMO_FLOW_CHART = `graph TD
   A[Code Repository] --> B[DeepWiki]
   B --> C[Architecture Diagrams]
@@ -44,430 +38,32 @@ const DEMO_SEQUENCE_CHART = `sequenceDiagram
   Note over User,GitHub: DeepWiki supports sequence diagrams for visualizing interactions`;
 
 export default function Home() {
-  const router = useRouter();
-  const { language, setLanguage, messages, supportedLanguages } = useLanguage();
+  const { messages } = useLanguage();
   const { projects, isLoading: projectsLoading, removeProject } = useProcessedProjects();
 
-  // Create a simple translation function
   const t = (key: string, params: Record<string, string | number> = {}): string => {
-    // Split the key by dots to access nested properties
     const keys = key.split('.');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let value: any = messages;
-
-    // Navigate through the nested properties
     for (const k of keys) {
       if (value && typeof value === 'object' && k in value) {
         value = value[k];
       } else {
-        // Return the key if the translation is not found
         return key;
       }
     }
-
-    // If the value is a string, replace parameters
     if (typeof value === 'string') {
       return Object.entries(params).reduce((acc: string, [paramKey, paramValue]) => {
         return acc.replace(`{${paramKey}}`, String(paramValue));
       }, value);
     }
-
-    // Return the key if the value is not a string
     return key;
-  };
-
-  const [repositoryInput, setRepositoryInput] = useState('');
-
-  const REPO_CONFIG_CACHE_KEY = 'deepwikiRepoConfigCache';
-
-  const loadConfigFromCache = (repoUrl: string) => {
-    if (!repoUrl) return;
-    try {
-      const cachedConfigs = localStorage.getItem(REPO_CONFIG_CACHE_KEY);
-      if (cachedConfigs) {
-        const configs = JSON.parse(cachedConfigs);
-        const config = configs[repoUrl.trim()];
-        if (config) {
-          setSelectedLanguage(config.selectedLanguage || language);
-          setIsComprehensiveView(config.isComprehensiveView === undefined ? true : config.isComprehensiveView);
-          setProvider(config.provider || '');
-          setModel(config.model || '');
-          setIsCustomModel(config.isCustomModel || false);
-          setCustomModel(config.customModel || '');
-          setSelectedPlatform(config.selectedPlatform || 'github');
-          setSelectedBranch(config.selectedBranch || 'main'); // Load cached branch or default to 'main'
-          setExcludedDirs(config.excludedDirs || '');
-          setExcludedFiles(config.excludedFiles || '');
-          setIncludedDirs(config.includedDirs || '');
-          setIncludedFiles(config.includedFiles || '');
-        }
-      }
-    } catch (error) {
-      logger.error('Error loading config from localStorage', { error: String(error) });
-    }
-  };
-
-  const handleRepositoryInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newRepoUrl = e.target.value;
-    setRepositoryInput(newRepoUrl);
-    if (newRepoUrl.trim() === "") {
-      // Optionally reset fields if input is cleared
-    } else {
-        loadConfigFromCache(newRepoUrl);
-    }
-  };
-
-  useEffect(() => {
-    if (repositoryInput) {
-      loadConfigFromCache(repositoryInput);
-    }
-  }, []);
-
-  // Provider-based model selection state
-  const [provider, setProvider] = useState<string>('');
-  const [model, setModel] = useState<string>('');
-  const [isCustomModel, setIsCustomModel] = useState<boolean>(false);
-  const [customModel, setCustomModel] = useState<string>('');
-
-  // Wiki type state - default to comprehensive view
-  const [isComprehensiveView, setIsComprehensiveView] = useState<boolean>(true);
-
-  const [excludedDirs, setExcludedDirs] = useState('');
-  const [excludedFiles, setExcludedFiles] = useState('');
-  const [includedDirs, setIncludedDirs] = useState('');
-  const [includedFiles, setIncludedFiles] = useState('');
-  const [selectedPlatform, setSelectedPlatform] = useState<'github' | 'gitlab' | 'bitbucket' | 'azuredevops'>('github');
-  const [accessToken, setAccessToken] = useState('');
-  
-  // Branch selection state - default to 'main' with fallback to 'master'
-  const [selectedBranch, setSelectedBranch] = useState<string>('main');
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedLanguage, setSelectedLanguage] = useState<string>(language);
-
-  // Authentication state
-  const [authRequired, setAuthRequired] = useState<boolean>(false);
-  const [authCode, setAuthCode] = useState<string>('');
-  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
-
-  // Sync the language context with the selectedLanguage state
-  useEffect(() => {
-    setLanguage(selectedLanguage);
-  }, [selectedLanguage, setLanguage]);
-
-  // Fetch authentication status on component mount
-  useEffect(() => {
-    const fetchAuthStatus = async () => {
-      try {
-        setIsAuthLoading(true);
-        const response = await fetch('/api/auth/status');
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const data = await response.json();
-        setAuthRequired(data.auth_required);
-      } catch (err) {
-        logger.error('Failed to fetch auth status', { error: String(err) });
-        // Assuming auth is required if fetch fails to avoid blocking UI for safety
-        setAuthRequired(true);
-      } finally {
-        setIsAuthLoading(false);
-      }
-    };
-
-    fetchAuthStatus();
-  }, []);
-
-  // Parse repository URL/input and extract owner and repo
-  const parseRepositoryInput = (input: string): {
-    owner: string,
-    repo: string,
-    type: string,
-    fullPath?: string,
-    localPath?: string
-  } | null => {
-    input = input.trim();
-
-    let owner = '', repo = '', type = 'github', fullPath;
-    let localPath: string | undefined;
-
-    // Handle Windows absolute paths (e.g., C:\path\to\folder)
-    const windowsPathRegex = /^[a-zA-Z]:\\(?:[^\\/:*?"<>|\r\n]+\\)*[^\\/:*?"<>|\r\n]*$/;
-
-    if (windowsPathRegex.test(input)) {
-      type = 'local';
-      localPath = input;
-      repo = input.split('\\').pop() || 'local-repo';
-      owner = 'local';
-    }
-    // Handle Unix/Linux absolute paths (e.g., /path/to/folder)
-    else if (input.startsWith('/')) {
-      type = 'local';
-      localPath = input;
-      repo = input.split('/').filter(Boolean).pop() || 'local-repo';
-      owner = 'local';
-    }
-    else if (input.includes('dev.azure.com') || input.includes('visualstudio.com')) {
-      // Handle Azure DevOps URLs specifically
-      type = 'azuredevops';
-      
-      // Azure DevOps URL patterns:
-      // https://dev.azure.com/{organization}/{project}/_git/{repository}
-      // https://{organization}.visualstudio.com/{project}/_git/{repository}
-      
-      try {
-        const url = new URL(input);
-        const pathParts = url.pathname.split('/').filter(Boolean);
-        const gitIndex = pathParts.indexOf('_git');
-        
-        logger.debug('Parsing Azure DevOps URL', { 
-          input, 
-          hostname: url.hostname, 
-          pathname: url.pathname,
-          pathParts, 
-          gitIndex,
-          pathPartsLength: pathParts.length
-        });
-        
-        if (url.hostname === 'dev.azure.com') {
-          // Format variations:
-          // 1. dev.azure.com/{organization}/{project}/_git/{repository} (gitIndex = 2)
-          // 2. dev.azure.com/{organization}/_git/{repository} (gitIndex = 1, project = org or repo)
-          if (gitIndex >= 1 && pathParts.length > gitIndex + 1) {
-            owner = pathParts[0]; // organization
-            repo = pathParts[gitIndex + 1];  // repository (after _git)
-            // project is right before _git, or same as org if gitIndex is 1
-            const project = gitIndex >= 2 ? pathParts[gitIndex - 1] : pathParts[0];
-            fullPath = `${owner}/${project}/_git/${repo}`;
-            logger.debug('dev.azure.com parsed', { owner, project, repo });
-          } else {
-            logger.error('dev.azure.com URL parsing failed', { gitIndex, pathPartsLength: pathParts.length, condition: `gitIndex >= 1 && pathParts.length > gitIndex + 1` });
-          }
-        } else if (url.hostname.includes('visualstudio.com')) {
-          // Format: {organization}.visualstudio.com/{project}/_git/{repository}
-          if (gitIndex >= 1 && pathParts.length > gitIndex + 1) {
-            owner = url.hostname.split('.')[0]; // organization from subdomain
-            const project = pathParts[gitIndex - 1]; // project is right before _git
-            repo = pathParts[gitIndex + 1]; // repository
-            fullPath = `${owner}/${project}/_git/${repo}`;
-            logger.debug('visualstudio.com parsed', { owner, project, repo });
-          } else {
-            logger.error('visualstudio.com URL parsing failed', { gitIndex, pathPartsLength: pathParts.length });
-          }
-        }
-        
-        logger.debug('Parsed Azure DevOps result', { owner, repo, fullPath, willReturnNull: !owner || !repo });
-      } catch (error) {
-        logger.error('Error parsing Azure DevOps URL', { error: String(error) });
-        return null;
-      }
-    }
-    else {
-      // Handle other git hosting services
-      const customGitRegex = /^(?:https?:\/\/)?([^\/]+)\/(.+?)\/([^\/]+)(?:\.git)?\/?$/;
-      
-      if (customGitRegex.test(input)) {
-        // Detect repository type based on domain
-        const domain = extractUrlDomain(input);
-        if (domain?.includes('github.com')) {
-          type = 'github';
-        } else if (domain?.includes('gitlab.com') || domain?.includes('gitlab.')) {
-          type = 'gitlab';
-        } else if (domain?.includes('bitbucket.org') || domain?.includes('bitbucket.')) {
-          type = 'bitbucket';
-        } else {
-          type = 'web'; // fallback for other git hosting services
-        }
-
-        fullPath = extractUrlPath(input)?.replace(/\.git$/, '');
-        const parts = fullPath?.split('/') ?? [];
-        if (parts.length >= 2) {
-          repo = parts[parts.length - 1] || '';
-          owner = parts[parts.length - 2] || '';
-        }
-      } else {
-        // Unsupported URL formats
-        logger.error('Unsupported URL format', { input });
-        return null;
-      }
-    }
-
-    if (!owner || !repo) {
-      return null;
-    }
-
-    // Clean values
-    owner = owner.trim();
-    repo = repo.trim();
-
-    // Remove .git suffix if present
-    if (repo.endsWith('.git')) {
-      repo = repo.slice(0, -4);
-    }
-
-    return { owner, repo, type, fullPath, localPath };
-  };
-
-  // State for configuration modal
-  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
-
-  const handleFormSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-
-    // Parse repository input to validate
-    const parsedRepo = parseRepositoryInput(repositoryInput);
-
-    if (!parsedRepo) {
-      setError('Invalid repository format. Please use an Azure DevOps URL like "https://dev.azure.com/org/project/_git/repo".');
-      return;
-    }
-
-    // If valid, open the configuration modal
-    setError(null);
-    setIsConfigModalOpen(true);
-  };
-
-  const validateAuthCode = async () => {
-    try {
-      if(authRequired) {
-        if(!authCode) {
-          return false;
-        }
-        const response = await fetch('/api/auth/validate', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({'code': authCode})
-        });
-        if (!response.ok) {
-          return false;
-        }
-        const data = await response.json();
-        return data.success || false;
-      }
-    } catch {
-      return false;
-    }
-    return true;
-  };
-
-  const handleGenerateWiki = async () => {
-
-    // Check authorization code
-    const validation = await validateAuthCode();
-    if(!validation) {
-      setError(`Failed to validate the authorization code`);
-      logger.error('Failed to validate the authorization code');
-      setIsConfigModalOpen(false);
-      return;
-    }
-
-    // Prevent multiple submissions
-    if (isSubmitting) {
-      logger.debug('Form submission already in progress, ignoring duplicate click');
-      return;
-    }
-
-    try {
-      const currentRepoUrl = repositoryInput.trim();
-      if (currentRepoUrl) {
-        const existingConfigs = JSON.parse(localStorage.getItem(REPO_CONFIG_CACHE_KEY) || '{}');
-        const configToSave = {
-          selectedLanguage,
-          isComprehensiveView,
-          provider,
-          model,
-          isCustomModel,
-          customModel,
-          selectedPlatform,
-          selectedBranch, // Include branch in saved config
-          excludedDirs,
-          excludedFiles,
-          includedDirs,
-          includedFiles,
-        };
-        existingConfigs[currentRepoUrl] = configToSave;
-        localStorage.setItem(REPO_CONFIG_CACHE_KEY, JSON.stringify(existingConfigs));
-      }
-    } catch (error) {
-      logger.error('Error saving config to localStorage', { error: String(error) });
-    }
-
-    setIsSubmitting(true);
-
-    // Parse repository input
-    const parsedRepo = parseRepositoryInput(repositoryInput);
-
-    if (!parsedRepo) {
-      setError('Invalid repository format. Please use an Azure DevOps URL like "https://dev.azure.com/org/project/_git/repo".');
-      setIsSubmitting(false);
-      return;
-    }
-
-    const { owner, repo, type, localPath } = parsedRepo;
-
-    // SECURITY: Store token in sessionStorage instead of URL query params
-    // This prevents token exposure in server logs and browser history
-    const params = new URLSearchParams();
-    if (accessToken) {
-      // Store token securely in sessionStorage with a unique key
-      const tokenKey = `deepwiki_token_${owner}_${repo}`;
-      sessionStorage.setItem(tokenKey, accessToken);
-    }
-    // Always include the type parameter - use detected type from URL parsing
-    params.append('type', type || 'azuredevops');
-    // Add local path if it exists
-    if (localPath) {
-      params.append('local_path', encodeURIComponent(localPath));
-    } else {
-      params.append('repo_url', encodeURIComponent(repositoryInput));
-    }
-    // Add model parameters
-    params.append('provider', provider);
-    params.append('model', model);
-    if (isCustomModel && customModel) {
-      params.append('custom_model', customModel);
-    }
-    
-    // Add branch parameter if specified and not default
-    if (selectedBranch && selectedBranch.trim() !== '' && selectedBranch.trim() !== 'main') {
-      params.append('branch', selectedBranch.trim());
-    }
-    
-    // Add file filters configuration
-    if (excludedDirs) {
-      params.append('excluded_dirs', excludedDirs);
-    }
-    if (excludedFiles) {
-      params.append('excluded_files', excludedFiles);
-    }
-    if (includedDirs) {
-      params.append('included_dirs', includedDirs);
-    }
-    if (includedFiles) {
-      params.append('included_files', includedFiles);
-    }
-
-    // Add language parameter
-    params.append('language', selectedLanguage);
-
-    // Add comprehensive parameter
-    params.append('comprehensive', isComprehensiveView.toString());
-
-    const queryString = params.toString() ? `?${params.toString()}` : '';
-
-    // Navigate to the dynamic route
-    router.push(`/${owner}/${repo}${queryString}`);
-
-    // The isSubmitting state will be reset when the component unmounts during navigation
   };
 
   return (
     <div className="h-screen paper-texture p-4 md:p-8 flex flex-col">
       <header className="max-w-6xl mx-auto mb-6 h-fit w-full">
-        <div
-          className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-[var(--card-bg)] rounded shadow-custom border border-[var(--border-color)] p-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-[var(--card-bg)] rounded shadow-custom border border-[var(--border-color)] p-4">
           <div className="flex items-center">
             <div className="bg-[var(--accent-primary)] p-2 rounded mr-3">
               <AzureDevOpsIcon className="text-2xl text-white" />
@@ -485,85 +81,13 @@ export default function Home() {
               </div>
             </div>
           </div>
-
-          <form onSubmit={handleFormSubmit} className="flex flex-col gap-3 w-full max-w-3xl">
-            {/* Repository URL input and submit button */}
-            <div className="flex flex-col sm:flex-row gap-2">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  value={repositoryInput}
-                  onChange={handleRepositoryInputChange}
-                  placeholder="Enter Azure DevOps URL (e.g., https://dev.azure.com/org/project/_git/repo)"
-                  className="input-azure block w-full pl-10 pr-3 py-2.5 border-[var(--border-color)] rounded bg-transparent text-[var(--foreground)] placeholder:text-[var(--muted)] placeholder:italic focus:outline-none focus:border-[var(--accent-primary)]"
-                />
-                {error && (
-                  <div className="text-[var(--highlight)] text-xs mt-1">
-                    {error}
-                  </div>
-                )}
-              </div>
-              <button
-                type="submit"
-                className="btn-azure px-6 py-2.5 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isSubmitting}
-              >
-                {isSubmitting ? t('common.processing') : t('common.generateWiki')}
-              </button>
-            </div>
-          </form>
-
-          {/* Configuration Modal */}
-          <ConfigurationModal
-            isOpen={isConfigModalOpen}
-            onClose={() => setIsConfigModalOpen(false)}
-            repositoryInput={repositoryInput}
-            selectedLanguage={selectedLanguage}
-            setSelectedLanguage={setSelectedLanguage}
-            supportedLanguages={supportedLanguages}
-            isComprehensiveView={isComprehensiveView}
-            setIsComprehensiveView={setIsComprehensiveView}
-            provider={provider}
-            setProvider={setProvider}
-            model={model}
-            setModel={setModel}
-            isCustomModel={isCustomModel}
-            setIsCustomModel={setIsCustomModel}
-            customModel={customModel}
-            setCustomModel={setCustomModel}
-            selectedPlatform={selectedPlatform}
-            setSelectedPlatform={setSelectedPlatform}
-            selectedBranch={selectedBranch}
-            setSelectedBranch={setSelectedBranch}
-            accessToken={accessToken}
-            setAccessToken={setAccessToken}
-            excludedDirs={excludedDirs}
-            setExcludedDirs={setExcludedDirs}
-            excludedFiles={excludedFiles}
-            setExcludedFiles={setExcludedFiles}
-            includedDirs={includedDirs}
-            setIncludedDirs={setIncludedDirs}
-            includedFiles={includedFiles}
-            setIncludedFiles={setIncludedFiles}
-            onSubmit={handleGenerateWiki}
-            isSubmitting={isSubmitting}
-            authRequired={authRequired}
-            authCode={authCode}
-            setAuthCode={setAuthCode}
-            isAuthLoading={isAuthLoading}
-          />
-
         </div>
       </header>
 
       <main className="flex-1 max-w-6xl mx-auto w-full overflow-y-auto">
-        <div
-          className="min-h-full flex flex-col items-center p-8 pt-10 bg-[var(--card-bg)] rounded shadow-custom card-azure">
-
-          {/* Conditionally show processed projects or welcome content */}
+        <div className="min-h-full flex flex-col items-center p-8 pt-10 bg-[var(--card-bg)] rounded shadow-custom card-azure">
           {!projectsLoading && projects.length > 0 ? (
             <div className="w-full">
-              {/* Header section for existing projects */}
               <div className="flex flex-col items-center w-full max-w-2xl mb-8 mx-auto">
                 <div className="flex flex-col sm:flex-row items-center mb-6 gap-4">
                   <div className="relative">
@@ -577,7 +101,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Show processed projects */}
               <ProcessedProjects
                 showHeader={false}
                 maxItems={6}
@@ -590,7 +113,6 @@ export default function Home() {
             </div>
           ) : (
             <>
-              {/* Header section */}
               <div className="flex flex-col items-center w-full max-w-2xl mb-8">
                 <div className="flex flex-col sm:flex-row items-center mb-6 gap-4">
                   <div className="relative">
@@ -608,67 +130,52 @@ export default function Home() {
                 </p>
               </div>
 
-          {/* Quick Start section - redesigned for better spacing */}
-          <div
-            className="w-full max-w-2xl mb-10 bg-[var(--accent-primary)]/5 border border-[var(--accent-primary)]/20 rounded p-5">
-            <h3 className="text-sm font-semibold text-[var(--accent-primary)] mb-3 flex items-center">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24"
-                stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              {t('home.quickStart')}
-            </h3>
-            <p className="text-sm text-[var(--foreground)] mb-3">{t('home.enterRepoUrl')}</p>
-            <div className="grid grid-cols-1 gap-3 text-xs text-[var(--muted)]">
-              <div
-                className="bg-[var(--background)]/70 p-3 rounded border border-[var(--border-color)] font-mono overflow-x-hidden whitespace-nowrap"
-              >https://dev.azure.com/organization/project/_git/repository
-              </div>
-              <div
-                className="bg-[var(--background)]/70 p-3 rounded border border-[var(--border-color)] font-mono overflow-x-hidden whitespace-nowrap"
-              >https://organization.visualstudio.com/project/_git/repository
-              </div>
-            </div>
-          </div>
-
-          {/* Visualization section - improved for better visibility */}
-          <div
-            className="w-full max-w-2xl mb-8 bg-[var(--background)]/70 rounded-lg p-6 border border-[var(--border-color)]">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 mb-4">
-              <svg xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5 text-[var(--accent-primary)] flex-shrink-0 mt-0.5 sm:mt-0" fill="none"
-                viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-              </svg>
-              <h3 className="text-base font-semibold text-[var(--foreground)]">{t('home.advancedVisualization')}</h3>
-            </div>
-            <p className="text-sm text-[var(--foreground)] mb-5 leading-relaxed">
-              {t('home.diagramDescription')}
-            </p>
-
-            {/* Diagrams with improved layout */}
-            <div className="grid grid-cols-1 gap-6">
-              <div className="bg-[var(--card-bg)] p-4 rounded-lg border border-[var(--border-color)] shadow-custom">
-                <h4 className="text-sm font-medium text-[var(--foreground)] mb-3">{t('home.flowDiagram')}</h4>
-                <Mermaid chart={DEMO_FLOW_CHART} />
+              <div className="w-full max-w-2xl mb-10 bg-[var(--accent-primary)]/5 border border-[var(--accent-primary)]/20 rounded p-5">
+                <h3 className="text-sm font-semibold text-[var(--accent-primary)] mb-3 flex items-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {t('home.quickStart')}
+                </h3>
+                <p className="text-sm text-[var(--foreground)] mb-3">
+                  Use the code processor to generate wikis:
+                </p>
+                <div className="grid grid-cols-1 gap-3 text-xs text-[var(--muted)]">
+                  <div className="bg-[var(--background)]/70 p-3 rounded border border-[var(--border-color)] font-mono overflow-x-hidden whitespace-nowrap">
+                    python -m backend.processor.code_processor --config=backend/run.json
+                  </div>
+                </div>
               </div>
 
-              <div className="bg-[var(--card-bg)] p-4 rounded-lg border border-[var(--border-color)] shadow-custom">
-                <h4 className="text-sm font-medium text-[var(--foreground)] mb-3">{t('home.sequenceDiagram')}</h4>
-                <Mermaid chart={DEMO_SEQUENCE_CHART} />
+              <div className="w-full max-w-2xl mb-8 bg-[var(--background)]/70 rounded-lg p-6 border border-[var(--border-color)]">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 mb-4">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-[var(--accent-primary)] flex-shrink-0 mt-0.5 sm:mt-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  <h3 className="text-base font-semibold text-[var(--foreground)]">{t('home.advancedVisualization')}</h3>
+                </div>
+                <p className="text-sm text-[var(--foreground)] mb-5 leading-relaxed">
+                  {t('home.diagramDescription')}
+                </p>
+
+                <div className="grid grid-cols-1 gap-6">
+                  <div className="bg-[var(--card-bg)] p-4 rounded-lg border border-[var(--border-color)] shadow-custom">
+                    <h4 className="text-sm font-medium text-[var(--foreground)] mb-3">{t('home.flowDiagram')}</h4>
+                    <Mermaid chart={DEMO_FLOW_CHART} />
+                  </div>
+                  <div className="bg-[var(--card-bg)] p-4 rounded-lg border border-[var(--border-color)] shadow-custom">
+                    <h4 className="text-sm font-medium text-[var(--foreground)] mb-3">{t('home.sequenceDiagram')}</h4>
+                    <Mermaid chart={DEMO_SEQUENCE_CHART} />
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
             </>
           )}
         </div>
       </main>
 
       <footer className="max-w-6xl mx-auto mt-8 flex flex-col gap-4 w-full">
-        <div
-          className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[var(--card-bg)] rounded p-4 border border-[var(--border-color)] shadow-custom">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-[var(--card-bg)] rounded p-4 border border-[var(--border-color)] shadow-custom">
           <div className="flex items-center gap-2 shrink-0">
             <MicrosoftLogo className="h-3.5 w-auto opacity-60" />
             <p className="text-[var(--muted)] text-xs whitespace-nowrap">{t('footer.brand')}</p>

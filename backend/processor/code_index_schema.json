@@ -1,0 +1,149 @@
+{
+    "index_name": "code-acs-index",
+    "fields": [
+        {
+            "name": "id",
+            "type": "Edm.String",
+            "key": true,
+            "searchable": true,
+            "filterable": true,
+            "sortable": false,
+            "facetable": false,
+            "retrievable": true,
+            "source_field_name": "",
+            "field_type": "SimpleField"
+        },
+        {
+            "name": "title",
+            "type": "Edm.String",
+            "key": false,
+            "searchable": true,
+            "filterable": true,
+            "sortable": false,
+            "facetable": false,
+            "retrievable": true,
+            "source_field_name": "title",
+            "field_type": "SearchableField"
+        },
+        {
+            "name": "service_id",
+            "type": "Edm.String",
+            "key": false,
+            "searchable": true,
+            "filterable": true,
+            "sortable": false,
+            "facetable": false,
+            "retrievable": true,
+            "source_field_name": "",
+            "field_type": "SimpleField"
+        },
+        {
+            "name": "filepath",
+            "type": "Edm.String",
+            "key": false,
+            "searchable": true,
+            "filterable": true,
+            "sortable": false,
+            "facetable": false,
+            "retrievable": true,
+            "source_field_name": "file_path",
+            "field_type": "SearchableField"
+        },
+        {
+            "name": "content",
+            "type": "Edm.String",
+            "key": false,
+            "searchable": true,
+            "filterable": false,
+            "sortable": false,
+            "facetable": false,
+            "retrievable": true,
+            "source_field_name": "text",
+            "field_type": "SearchableField"
+        },
+        {
+            "name": "raw_content",
+            "type": "Edm.String",
+            "key": false,
+            "searchable": true,
+            "filterable": false,
+            "sortable": false,
+            "facetable": false,
+            "retrievable": true,
+            "source_field_name": "raw_content",
+            "field_type": "SearchableField"
+        },
+        {
+            "name": "key_external_objects",
+            "type": "Edm.String",
+            "key": false,
+            "searchable": true,
+            "filterable": false,
+            "sortable": false,
+            "facetable": false,
+            "retrievable": true,
+            "source_field_name": "key_external_objects",
+            "field_type": "SearchableField"
+        },
+        {
+            "name": "code_description",
+            "type": "Edm.String",
+            "key": false,
+            "searchable": true,
+            "filterable": true,
+            "sortable": false,
+            "facetable": false,
+            "retrievable": true,
+            "source_field_name": "code_description",
+            "field_type": "SearchableField"
+        },
+        {
+            "name": "title_vector",
+            "key": false,
+            "type": "SearchFieldDataType.Collection(SearchFieldDataType.Single)",
+            "searchable": true,
+            "filterable": false,
+            "sortable": false,
+            "facetable": false,
+            "retrievable": true,
+            "source_field_name": "title_vector",
+            "vector_search_dimensions": 3072,
+            "vector_search_configuration": "myHnswProfile",
+            "field_type": "SearchField"
+        },
+        {
+            "name": "content_vector",
+            "key": false,
+            "type": "SearchFieldDataType.Collection(SearchFieldDataType.Single)",
+            "searchable": true,
+            "filterable": false,
+            "sortable": false,
+            "facetable": false,
+            "retrievable": true,
+            "source_field_name": "vector",
+            "vector_search_dimensions": 3072,
+            "vector_search_configuration": "myHnswProfile",
+            "field_type": "SearchField"
+        },
+        {
+            "name": "key_external_objects_vector",
+            "key": false,
+            "type": "SearchFieldDataType.Collection(SearchFieldDataType.Single)",
+            "searchable": true,
+            "filterable": false,
+            "sortable": false,
+            "facetable": false,
+            "retrievable": true,
+            "source_field_name": "key_external_objects_vector",
+            "vector_search_dimensions": 3072,
+            "vector_search_configuration": "myHnswProfile",
+            "field_type": "SearchField"
+        }
+    ],
+    "semanticConfiguration": "my-semantic-config",
+    "prioritized_fields": {
+        "title_field": "title",
+        "prioritized_content_fields": "content",
+        "prioritized_keywords_fields": ""
+    }
+}

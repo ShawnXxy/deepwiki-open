@@ -1,13 +1,16 @@
 """
-Prompt Store - Centralized prompt management for DeepWiki.
+Prompt Store — LLM prompt templates and builders for DeepWiki.
 
-This module organizes all prompts used in the application into separate files
-for better maintainability and reusability.
+Files:
+    chat_system.py      — System prompt builder (selects template by chat mode)
+    deep_research.py    — Multi-turn research templates (first/intermediate/final)
+    simple_chat.py      — Single-turn Q&A system prompt template
+    rag.py              — RAG system prompt + Jinja2 context template
+    wiki_page.py        — Page content template + builder (format_file_paths_list, format_page_catalog)
+    wiki_structure.py   — Structure templates + builder (build_wiki_structure_prompt, file_tree_dirs_only)
 
 Usage:
     from backend.promptstore import RAG_SYSTEM_PROMPT, WIKI_STRUCTURE_PROMPT
-    
-    # Or import specific modules
     from backend.promptstore.rag import RAG_SYSTEM_PROMPT, RAG_TEMPLATE
     from backend.promptstore.wiki_structure import WIKI_STRUCTURE_PROMPT
 """
@@ -32,6 +35,9 @@ from backend.promptstore.deep_research import (
 from backend.promptstore.wiki_structure import (
     WIKI_STRUCTURE_PROMPT,
     WIKI_STRUCTURE_CONCISE_PROMPT,
+    build_wiki_structure_prompt,
+    file_tree_dirs_only,
+    LANGUAGE_DISPLAY_NAMES,
 )
 
 from backend.promptstore.wiki_page import WIKI_PAGE_CONTENT_PROMPT

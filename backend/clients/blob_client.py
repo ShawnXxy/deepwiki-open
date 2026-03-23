@@ -79,10 +79,22 @@ class AzureBlobStorageClient:
                         "(MSI → Azure CLI → VS Code → Environment)")
             self.credential = DefaultAzureCredential()
         
-        # Create blob service client
+        # Create blob service client with larger connection pool.
+        # Default urllib3 pool size (10) causes "Connection pool is full"
+        # warnings during concurrent embedding uploads.
+        from azure.core.pipeline.transport import RequestsTransport
+        import requests
+
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=50, pool_maxsize=50,
+        )
+        session.mount("https://", adapter)
+
         self.blob_service_client = BlobServiceClient(
             account_url=self.account_url,
-            credential=self.credential
+            credential=self.credential,
+            transport=RequestsTransport(session=session),
         )
         
         # Validate connection by ensuring container exists

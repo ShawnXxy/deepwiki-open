@@ -27,8 +27,7 @@ import logger from '@/utils/logger';
  * @param defaultBranch - The default branch name (kept for compatibility but not used in branch-agnostic mode)
  * @returns The complete branch-agnostic URL to the file in the repository
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function generateFileUrl(filePath: string, repoInfo: RepoInfo, _defaultBranch: string = 'main'): string {
+export function generateFileUrl(filePath: string, repoInfo: RepoInfo, defaultBranch: string = 'main'): string {
   // Debug logging (deduplicated by logger)
   logger.debug('Citation: generateFileUrl', {
     filePath,
@@ -51,24 +50,25 @@ export function generateFileUrl(filePath: string, repoInfo: RepoInfo, _defaultBr
     const hostname = url.hostname;
     
     if (hostname === 'github.com' || hostname.includes('github')) {
-      // GitHub URL format (branch-agnostic): https://github.com/owner/repo/blob/HEAD/path
-      // Using HEAD to refer to the default branch without specifying it explicitly
-      return `${repoUrl}/blob/HEAD/${filePath}`;
+      // GitHub: pin to commit hash or branch, fallback to HEAD
+      const ref = defaultBranch || 'HEAD';
+      return `${repoUrl}/blob/${ref}/${filePath}`;
     } else if (hostname === 'gitlab.com' || hostname.includes('gitlab')) {
-      // GitLab URL format (branch-agnostic): https://gitlab.com/owner/repo/-/blob/HEAD/path
-      // Using HEAD to refer to the default branch
-      return `${repoUrl}/-/blob/HEAD/${filePath}`;
+      const ref = defaultBranch || 'HEAD';
+      return `${repoUrl}/-/blob/${ref}/${filePath}`;
     } else if (hostname === 'bitbucket.org' || hostname.includes('bitbucket')) {
-      // Bitbucket URL format (branch-agnostic): https://bitbucket.org/owner/repo/src/HEAD/path
-      // Using HEAD to refer to the default branch
-      return `${repoUrl}/src/HEAD/${filePath}`;
+      const ref = defaultBranch || 'HEAD';
+      return `${repoUrl}/src/${ref}/${filePath}`;
     } else if (hostname === 'dev.azure.com' || hostname.includes('visualstudio.com')) {
-      // Azure DevOps URL format (branch-agnostic):
-      // https://dev.azure.com/{organization}/{project}/_git/{repo}?path=/path-to-file
-      // Removing the &version=GB{branch} parameter entirely to make it branch-agnostic
-      
-      // Ensure filePath starts with '/' for proper URL construction
+      // Azure DevOps: pin to commit hash via version=GC{hash} or branch via version=GB{branch}
       const encodedPath = encodeURIComponent(filePath.startsWith('/') ? filePath : `/${filePath}`);
+      if (defaultBranch && /^[0-9a-f]{7,40}$/.test(defaultBranch)) {
+        // Looks like a commit hash — use GC (git commit) prefix
+        return `${repoUrl}?path=${encodedPath}&version=GC${defaultBranch}`;
+      } else if (defaultBranch) {
+        // Branch name — use GB (git branch) prefix
+        return `${repoUrl}?path=${encodedPath}&version=GB${defaultBranch}`;
+      }
       return `${repoUrl}?path=${encodedPath}`;
     }
   } catch (error) {
