@@ -286,6 +286,7 @@ async def list_wiki_caches() -> list:
     """List all processed wiki projects from storage (blob or local).
 
     Returns a list of dicts with project metadata extracted from filenames.
+    Uses blob last_modified or file mtime for submittedAt.
     """
     projects = []
 
@@ -293,25 +294,35 @@ async def list_wiki_caches() -> list:
         blob_client = get_blob_storage_client()
         if blob_client:
             try:
-                blobs = blob_client.list_blobs(
+                blobs = blob_client.list_blobs_with_metadata(
                     prefix=f"{WIKI_CACHE_BLOB_PREFIX}/deepwiki_cache_"
                 )
-                for blob in blobs:
-                    name = blob.split('/')[-1] if '/' in blob else blob
-                    _parse_cache_filename(name, projects)
+                for blob_info in blobs:
+                    name = blob_info['name']
+                    filename = name.split('/')[-1] if '/' in name else name
+                    mtime = blob_info.get('last_modified', 0)
+                    _parse_cache_filename(filename, projects, mtime)
             except Exception as e:
                 logger.error(f"Error listing wiki caches from blob: {e}")
     else:
         if os.path.exists(WIKI_CACHE_DIR):
             for name in os.listdir(WIKI_CACHE_DIR):
                 if name.startswith('deepwiki_cache_') and name.endswith('.json'):
-                    _parse_cache_filename(name, projects)
+                    mtime = 0
+                    try:
+                        stat = os.stat(os.path.join(WIKI_CACHE_DIR, name))
+                        mtime = int(stat.st_mtime * 1000)
+                    except OSError:
+                        pass
+                    _parse_cache_filename(name, projects, mtime)
 
     projects.sort(key=lambda p: p.get('submittedAt', 0), reverse=True)
     return projects
 
 
-def _parse_cache_filename(filename: str, projects: list) -> None:
+def _parse_cache_filename(
+    filename: str, projects: list, mtime_ms: int = 0
+) -> None:
     """Parse a cache filename and append project metadata to the list."""
     match = _CACHE_PATTERN.match(filename)
     if not match:
@@ -323,7 +334,7 @@ def _parse_cache_filename(filename: str, projects: list) -> None:
         'repo': repo,
         'name': f"{owner}/{repo}",
         'repo_type': repo_type,
-        'submittedAt': 0,
+        'submittedAt': mtime_ms,
         'language': language,
         'comprehensive': mode == 'comprehensive',
         'branch': branch or None,

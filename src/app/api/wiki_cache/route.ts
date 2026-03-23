@@ -12,7 +12,7 @@ import os from 'os';
  * Query params: owner, repo, repo_type, language, comprehensive, branch
  */
 
-const BACKEND_PORT = process.env.FASTAPI_PORT || process.env.PORT;
+const BACKEND_PORT = process.env.FASTAPI_PORT;
 
 function getCacheDir(): string {
   return path.join(os.homedir(), '.adalflow', 'wikicache');

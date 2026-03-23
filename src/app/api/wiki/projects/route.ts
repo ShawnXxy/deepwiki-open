@@ -11,7 +11,7 @@ import os from 'os';
  * In local: scans ~/.adalflow/wikicache/.
  */
 
-const BACKEND_PORT = process.env.FASTAPI_PORT || process.env.PORT;
+const BACKEND_PORT = process.env.FASTAPI_PORT;
 
 interface ProcessedProject {
   id: string;
