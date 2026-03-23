@@ -363,6 +363,7 @@ def _create_or_update_pipeline(
         processor_command()
 
     pipeline_job = deepwiki_pipeline()
+    pipeline_job.experiment_name = f"{owner}-{repo}-{branch}"
 
     # Check if schedule already exists
     try:
