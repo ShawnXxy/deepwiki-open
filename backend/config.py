@@ -17,6 +17,9 @@ from backend.types.config_types import (
     FileFiltersConfig,
     RepositoryConfig,
     LanguageConfig,
+    AzureAccountConfig,
+    AzureAISearchConfig,
+    AzureMLConfig,
 )
 from backend.types.converter import from_dict
 
@@ -44,8 +47,18 @@ raw_auth_mode = os.environ.get('DEEPWIKI_AUTH_MODE', 'False')
 WIKI_AUTH_MODE = raw_auth_mode.lower() in ['true', '1', 't']
 WIKI_AUTH_CODE = os.environ.get('DEEPWIKI_AUTH_CODE', '')
 
-# Configuration directory
+# Configuration directory — set via set_config_dir() or env var
 CONFIG_DIR = os.environ.get('DEEPWIKI_CONFIG_DIR', None)
+
+
+def set_config_dir(path: str) -> None:
+    """Override the configuration directory at runtime.
+
+    Called by ``main()`` when ``--mode cloud`` to switch to
+    ``backend/config/.cloud/`` which has Azure services force-enabled.
+    """
+    global CONFIG_DIR
+    CONFIG_DIR = path
 
 
 # ============================================================================
@@ -85,7 +98,12 @@ def replace_env_placeholders(
 
 
 def load_json_config(filename: str) -> Dict[str, Any]:
-    """Load JSON configuration file from config directory."""
+    """Load JSON configuration file from config directory.
+
+    Resolution order:
+    1. ``CONFIG_DIR`` (set via ``set_config_dir()`` or env var)
+    2. ``backend/config/`` (default)
+    """
     try:
         if CONFIG_DIR:
             config_path = Path(CONFIG_DIR) / filename
@@ -138,6 +156,26 @@ def get_managed_identity_client_id() -> Optional[str]:
     """Get the managed identity client ID from infra.json."""
     infra = get_infra_config()
     return infra.managed_identity.client_id
+
+
+def get_account_config() -> AzureAccountConfig:
+    """Get Azure account info (subscription_id, resource_group) from infra.json."""
+    infra = get_infra_config()
+    return infra.account
+
+
+def enable_cloud_services() -> None:
+    """Force-enable cloud services (AI Search, AML, Blob) for cloud mode.
+
+    Called by _run_cloud_mode() so that cloud resources are created
+    even when infra.json has enabled=false (the default for local dev).
+    Mutates the cached InfraConfig in place.
+    """
+    infra = get_infra_config()
+    infra.azure_ai_search.enabled = True
+    infra.azure_blob_storage.enabled = True
+    infra.azure_ml.enabled = True
+    logger.info("Cloud services force-enabled: AI Search, Blob, AML")
 
 
 def get_azure_openai_config() -> Dict[str, str]:
@@ -569,45 +607,33 @@ def load_lang_config() -> Dict[str, Any]:
     return get_lang_config()
 
 
-def get_search_config() -> Dict[str, Any]:
+def get_search_config() -> 'AzureAISearchConfig':
     """Get Azure AI Search configuration from infra.json.
 
     Returns:
-        Dict with keys: enabled, endpoint, api_version
+        AzureAISearchConfig Pydantic model
     """
     infra = get_infra_config()
     search = getattr(infra, 'azure_ai_search', None)
     if search is None:
-        return {"enabled": False, "endpoint": "", "api_version": "2024-07-01"}
-    return {
-        "enabled": getattr(search, 'enabled', False),
-        "endpoint": getattr(search, 'endpoint', ''),
-        "api_version": getattr(search, 'api_version', '2024-07-01'),
-    }
+        return AzureAISearchConfig()
+    return search
 
 
 def is_search_configured() -> bool:
     """Check if Azure AI Search is enabled and configured."""
     cfg = get_search_config()
-    return cfg.get("enabled", False) and bool(cfg.get("endpoint"))
+    return cfg.enabled and bool(cfg.endpoint)
 
 
-def get_aml_config() -> Dict[str, Any]:
+def get_aml_config() -> 'AzureMLConfig':
     """Get Azure ML configuration from infra.json.
 
     Returns:
-        Dict with keys: enabled, workspace_name, resource_group, subscription_id
+        AzureMLConfig Pydantic model (check .enabled before using)
     """
     infra = get_infra_config()
     aml = getattr(infra, 'azure_ml', None)
     if aml is None:
-        return {
-            "enabled": False, "workspace_name": "",
-            "resource_group": "", "subscription_id": "",
-        }
-    return {
-        "enabled": getattr(aml, 'enabled', False),
-        "workspace_name": getattr(aml, 'workspace_name', ''),
-        "resource_group": getattr(aml, 'resource_group', ''),
-        "subscription_id": getattr(aml, 'subscription_id', ''),
-    }
+        return AzureMLConfig()
+    return aml

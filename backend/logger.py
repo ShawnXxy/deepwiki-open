@@ -304,7 +304,7 @@ def setup_logging(
     if log_dir:
         log_dir_path = Path(log_dir)
     else:
-        base_dir = Path(__file__).parent.parent.parent
+        base_dir = Path(__file__).parent.parent
         log_dir_path = base_dir / "logs"
     log_dir_path.mkdir(parents=True, exist_ok=True)
     
@@ -391,7 +391,7 @@ def get_frontend_logger() -> logging.Logger:
         _frontend_logger.propagate = False
         
         # Setup log file
-        base_dir = Path(__file__).parent.parent.parent
+        base_dir = Path(__file__).parent.parent
         log_dir = base_dir / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         

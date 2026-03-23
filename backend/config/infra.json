@@ -1,4 +1,8 @@
 {
+  "account": {
+    "subscription_id": "4f3f8f41-5643-4664-8c12-ce6b78ceb81f",
+    "resource_group": "RG-ORCAS-DEEPWIKI"
+  },
   "managed_identity": {
     "name": "mid-orcas-deepwiki",
     "client_id": "6de9d24d-f0d1-433f-9387-5a9192aebbc6"
@@ -28,13 +32,13 @@
   "azure_ai_search": {
     "enabled": false,
     "endpoint": "https://acsorcascodewiki.search.windows.net",
-    "api_version": "2024-07-01"
+    "api_version": "2024-07-01",
+    "recreate_index": false,
+    "indexer_interval": "PT24H"
   },
   "azure_ml": {
     "enabled": false,
     "workspace_name": "aml-orcas-codewiki",
-    "resource_group": "RG-ORCAS-DEEPWIKI",
-    "subscription_id": "4f3f8f41-5643-4664-8c12-ce6b78ceb81f",
     "compute_name": "deepwiki-compute",
     "compute_size": "STANDARD_D2_V2",
     "compute_min_instances": 0,

@@ -516,32 +516,6 @@ export default function RepoWikiPage() {
                       <div className="mb-3 text-xs text-emerald-600 dark:text-emerald-400">Link copied to clipboard</div>
                     )}
 
-                    {/* Relevant source files block */}
-                    {generatedPages[currentPageId].filePaths?.length > 0 && (
-                      <details className="mb-5 border border-[var(--border-color)] rounded-md overflow-hidden">
-                        <summary className="px-4 py-2.5 bg-[var(--background)]/50 text-sm font-medium text-[var(--foreground)] cursor-pointer hover:bg-[var(--background)]/70 select-none">
-                          Relevant source files ({generatedPages[currentPageId].filePaths.length})
-                        </summary>
-                        <div className="px-4 py-2 text-xs space-y-1">
-                          {generatedPages[currentPageId].filePaths.map((fp, i) => {
-                            const url = generateFileUrl(fp, effectiveRepoInfo, commitHash || detectCurrentBranch(effectiveRepoInfo, 'master') || 'master');
-                            return (
-                              <div key={i}>
-                                <a
-                                  href={url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-[var(--accent-primary)] hover:underline font-mono"
-                                >
-                                  {fp}
-                                </a>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </details>
-                    )}
-
                     <div className="prose prose-sm md:prose-base lg:prose-lg max-w-none">
                       <Markdown
                         content={processCitations(

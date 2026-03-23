@@ -1,8 +1,13 @@
 """
 Azure AI Search client for DeepWiki cloud mode.
 
-Manages per-repo search indexes: create, push documents, query, delete.
+Manages per-repo search indexes, data sources, and indexers.
 Each repo+branch gets its own index: "deepwiki-{owner}-{repo}-{branch}".
+
+Resources created per repo:
+    Index:       deepwiki-{owner}-{repo}-{branch}
+    Data source: deepwiki-{owner}-{repo}-{branch}-datasource
+    Indexer:     deepwiki-{owner}-{repo}-{branch}-indexer
 """
 
 import json
@@ -11,7 +16,7 @@ import re
 from pathlib import Path
 from typing import List, Optional
 
-from backend.config import get_search_config
+from backend.config import get_search_config, get_infra_config
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +63,39 @@ def _get_search_documents_client(index_name: str):
     )
 
 
+def _get_indexer_client():
+    """Create an authenticated SearchIndexerClient."""
+    from azure.search.documents.indexes import SearchIndexerClient
+    from azure.identity import DefaultAzureCredential
+
+    config = get_search_config()
+    credential = DefaultAzureCredential()
+    return SearchIndexerClient(
+        endpoint=config.endpoint,
+        credential=credential,
+    )
+
+
+def _build_blob_connection_string() -> str:
+    """Build ResourceId-format connection string for blob data source.
+
+    Uses account.subscription_id, account.resource_group, and
+    azure_blob_storage.account_name from infra.json.
+    """
+    infra = get_infra_config()
+    return (
+        f"ResourceId=/subscriptions/{infra.account.subscription_id}"
+        f"/resourceGroups/{infra.account.resource_group}"
+        f"/providers/Microsoft.Storage"
+        f"/storageAccounts/{infra.azure_blob_storage.account_name};"
+    )
+
+
 def _load_index_schema() -> dict:
-    """Load index schema from Deployments/index/code_index_schema.json."""
+    """Load index schema from backend/processor/code_index_schema.json."""
     schema_path = (
-        Path(__file__).parent.parent.parent
-        / 'Deployments' / 'index' / 'code_index_schema.json'
+        Path(__file__).parent.parent
+        / 'processor' / 'code_index_schema.json'
     )
     if not schema_path.exists():
         raise FileNotFoundError(f"Index schema not found at {schema_path}")
@@ -261,6 +294,205 @@ def search(
         })
 
     return docs
+
+
+def search_as_documents(
+    index_name: str,
+    query: str,
+    top_k: int = 40,
+    vector: Optional[List[float]] = None,
+    filter_expr: Optional[str] = None,
+) -> list:
+    """Hybrid search returning adalflow Document objects.
+
+    Wraps search() and converts results to Document objects compatible
+    with the RAG pipeline (same shape as FAISS retrieval output).
+
+    Args:
+        index_name: Index to search
+        query: Text query
+        top_k: Number of results
+        vector: Optional query embedding vector (3072-dim)
+        filter_expr: Optional OData filter (e.g. "filepath eq 'src/main.py'")
+
+    Returns:
+        List of adalflow Document objects with text, vector=None, meta_data
+    """
+    from azure.search.documents.models import VectorizedQuery
+    from adalflow.core.types import Document
+
+    client = _get_search_documents_client(index_name)
+
+    vector_queries = []
+    if vector:
+        vector_queries.append(
+            VectorizedQuery(
+                vector=vector,
+                k_nearest_neighbors=top_k,
+                fields="content_vector",
+            )
+        )
+
+    results = client.search(
+        search_text=query,
+        vector_queries=vector_queries if vector_queries else None,
+        filter=filter_expr,
+        top=top_k,
+        select=["id", "title", "filepath", "content", "raw_content"],
+    )
+
+    docs = []
+    for result in results:
+        meta = {
+            'file_path': result.get('filepath', ''),
+            'raw_content': result.get('raw_content', ''),
+            'search_score': result.get('@search.score', 0),
+        }
+        doc = Document(
+            text=result.get('content', ''),
+            meta_data=meta,
+        )
+        docs.append(doc)
+
+    return docs
+
+
+def create_data_source(
+    index_name: str, repo_name: str, branch: str
+) -> str:
+    """Create or update blob data source for a repo's vectors.
+
+    Points to the blob folder: vectors/{repo_name}_{branch}/
+    inside the configured blob container (e.g. deepwiki-data).
+
+    Args:
+        index_name: Associated index name (used to derive data source name)
+        repo_name: Repository name (owner_repo format)
+        branch: Branch name
+
+    Returns:
+        Data source name
+    """
+    from azure.search.documents.indexes.models import (
+        SearchIndexerDataSourceConnection,
+        SearchIndexerDataContainer,
+    )
+
+    infra = get_infra_config()
+    ds_name = f"{index_name}-datasource"
+    branch_suffix = branch.strip() if branch and branch.strip() else 'main'
+    blob_folder = f"vectors/{repo_name}_{branch_suffix}"
+
+    container = SearchIndexerDataContainer(
+        name=infra.azure_blob_storage.container_name,
+        query=blob_folder,
+    )
+
+    connection = SearchIndexerDataSourceConnection(
+        name=ds_name,
+        type="azureblob",
+        connection_string=_build_blob_connection_string(),
+        container=container,
+    )
+
+    client = _get_indexer_client()
+    client.create_or_update_data_source_connection(connection)
+    logger.info(f"Created/updated data source: {ds_name} → {blob_folder}")
+    return ds_name
+
+
+def create_indexer(
+    index_name: str,
+    data_source_name: str,
+    interval: str = "PT24H",
+) -> str:
+    """Create or update a scheduled indexer that syncs blob → index.
+
+    Args:
+        index_name: Target search index name
+        data_source_name: Data source to read from
+        interval: ISO 8601 schedule interval (default PT24H = daily)
+
+    Returns:
+        Indexer name
+    """
+    from azure.search.documents.indexes.models import (
+        SearchIndexer,
+        IndexingSchedule,
+        IndexingParameters,
+        FieldMapping,
+    )
+
+    indexer_name = f"{index_name}-indexer"
+
+    # Field mappings: map JSON fields from blob to index schema
+    field_mappings = [
+        FieldMapping(
+            source_field_name="file_path",
+            target_field_name="filepath",
+        ),
+        FieldMapping(
+            source_field_name="text",
+            target_field_name="content",
+        ),
+    ]
+
+    indexer = SearchIndexer(
+        name=indexer_name,
+        description="DeepWiki vector indexer — syncs JSON vectors from blob",
+        target_index_name=index_name,
+        data_source_name=data_source_name,
+        schedule=IndexingSchedule(interval=interval),
+        parameters=IndexingParameters(
+            batch_size=10,
+            max_failed_items=-1,
+            configuration={
+                "dataToExtract": "contentAndMetadata",
+                "parsingMode": "json",
+            },
+        ),
+        field_mappings=field_mappings,
+    )
+
+    client = _get_indexer_client()
+    client.create_or_update_indexer(indexer)
+    logger.info(
+        f"Created/updated indexer: {indexer_name} "
+        f"(schedule={interval})"
+    )
+    return indexer_name
+
+
+def run_indexer(index_name: str) -> None:
+    """Manually trigger an indexer run for immediate sync.
+
+    Call this after the processor writes vectors to blob
+    so they become searchable without waiting for the next schedule.
+    """
+    indexer_name = f"{index_name}-indexer"
+    client = _get_indexer_client()
+    try:
+        client.run_indexer(indexer_name)
+        logger.info(f"Triggered indexer run: {indexer_name}")
+    except Exception as e:
+        logger.warning(f"Could not trigger indexer {indexer_name}: {e}")
+
+
+def delete_indexer(index_name: str) -> None:
+    """Delete indexer and data source for an index."""
+    indexer_name = f"{index_name}-indexer"
+    ds_name = f"{index_name}-datasource"
+    client = _get_indexer_client()
+    try:
+        client.delete_indexer(indexer_name)
+        logger.info(f"Deleted indexer: {indexer_name}")
+    except Exception as e:
+        logger.warning(f"Could not delete indexer {indexer_name}: {e}")
+    try:
+        client.delete_data_source_connection(ds_name)
+        logger.info(f"Deleted data source: {ds_name}")
+    except Exception as e:
+        logger.warning(f"Could not delete data source {ds_name}: {e}")
 
 
 def delete_index(index_name: str) -> None:

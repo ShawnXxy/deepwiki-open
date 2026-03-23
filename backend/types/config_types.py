@@ -17,6 +17,12 @@ class ManagedIdentityConfig(BaseModel):
     client_id: str
 
 
+class AzureAccountConfig(BaseModel):
+    """Azure account info shared by all services."""
+    subscription_id: str = ""
+    resource_group: str = ""
+
+
 class AzureOpenAIConfig(BaseModel):
     """Azure OpenAI configuration for text generation."""
     endpoint: str
@@ -52,14 +58,14 @@ class AzureAISearchConfig(BaseModel):
     enabled: bool = False
     endpoint: str = ""
     api_version: str = "2024-07-01"
+    recreate_index: bool = False
+    indexer_interval: str = "PT24H"
 
 
 class AzureMLConfig(BaseModel):
     """Azure Machine Learning configuration (includes pipeline settings)."""
     enabled: bool = False
     workspace_name: str = ""
-    resource_group: str = ""
-    subscription_id: str = ""
     compute_name: str = "deepwiki-compute"
     compute_size: str = "STANDARD_D2_V2"
     compute_min_instances: int = 0
@@ -71,6 +77,9 @@ class AzureMLConfig(BaseModel):
 
 class InfraConfig(BaseModel):
     """Main infrastructure configuration from infra.json."""
+    account: AzureAccountConfig = Field(
+        default_factory=AzureAccountConfig
+    )
     managed_identity: ManagedIdentityConfig
     azure_openai: AzureOpenAIConfig
     azure_openai_embedding: AzureOpenAIEmbeddingConfig

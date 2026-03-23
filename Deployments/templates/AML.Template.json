@@ -161,6 +161,7 @@
         "storageAccountFileDataPrivilegedContributorRoleId": "69566ab7-960f-475b-8e7c-b3118f30c6bd",
         "containerRegistryAcrPullRoleId": "7f951dda-4ed3-4680-a7ca-43fe172d538d",
         "containerRegistryAcrPushRoleId": "8311e382-0749-4cb8-b61a-304f252e45ec",
+        "azureAIAdministratorRoleId": "b78c5d69-af96-48a3-bf8d-a8b4d589de94",
         "azureMLDataScientistRoleId": "f6c7c914-8db3-469d-8ca1-694a8f32e121",
         "contributorRoleId": "b24988ac-6180-42a0-ab88-20f7382dd24c",
         "cognitiveServicesUserRoleId": "a97b65f3-24c7-4388-baec-2e87135dc908",
@@ -623,6 +624,22 @@
             ],
             "properties": {
                 "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('containerRegistryAcrPullRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "comments": "Azure AI Administrator on Container Registry (managed identity)",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('containerRegistryName'), parameters('deepWikiIdentityName'), variables('azureAIAdministratorRoleId')))]",
+            "scope": "[variables('containerRegistryId')]",
+            "dependsOn": [
+                "[variables('containerRegistryId')]",
+                "[variables('deepWikiIdentityId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('azureAIAdministratorRoleId'))]",
                 "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
                 "principalType": "ServicePrincipal"
             }

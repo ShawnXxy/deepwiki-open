@@ -2,6 +2,9 @@
 RAG (Retrieval Augmented Generation) component.
 
 Provides the main RAG class for document retrieval and answer generation.
+Supports two retrieval backends:
+  - FAISS (local/Docker): loads vectors into memory, nearest-neighbor search
+  - AI Search (cloud): hybrid text+vector query against Azure AI Search index
 """
 
 import logging
@@ -10,7 +13,7 @@ from typing import List, Tuple
 import adalflow as adal
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
 
-from backend.config import configs
+from backend.config import configs, is_search_configured
 from backend.clients.embedding_client import get_embedder
 from backend.modules.embedder.memory import Memory
 from backend.modules.embedder.response import RAGAnswer
@@ -99,6 +102,8 @@ IMPORTANT FORMATTING RULES:
         """Initialize the database manager with local storage"""
         self.db_manager = DatabaseManager()
         self.transformed_docs = []
+        self.use_cloud_search = False
+        self.cloud_index_name = None
 
     def _validate_and_filter_embeddings(self, documents: List) -> List:
         """
@@ -208,25 +213,43 @@ IMPORTANT FORMATTING RULES:
     ):
         """
         Prepare the retriever for a repository.
-        Will load database from local storage if available.
 
-        Args:
-            repo_url_or_path: URL or local path to the repository
-            type: Repository type (github, gitlab, bitbucket, azuredevops)
-            access_token: Optional access token for private repositories
-            branch: Optional specific branch to clone/process
-            excluded_dirs: Optional list of directories to exclude from 
-                          processing
-            excluded_files: Optional list of file patterns to exclude from
-                           processing
-            included_dirs: Optional list of directories to include exclusively
-            included_files: Optional list of file patterns to include 
-                           exclusively
-            force_reprocess: If True, ignore existing pkl/vectors and create fresh JSON vectors.
-                            Use this to migrate from pkl to vector-based storage.
+        In cloud mode (AI Search configured) with force_reprocess=False:
+            Skips local vector loading and FAISS — queries go to AI Search.
+        In cloud mode with force_reprocess=True (processor run):
+            Must embed documents first (FAISS path), then AI Search is used
+            after vectors are pushed to the search index.
+        In local/Docker mode: loads vectors and builds FAISS index as before.
         """
         self.initialize_db_manager()
         self.repo_url_or_path = repo_url_or_path
+
+        # --- Cloud mode: use AI Search for READ-ONLY retrieval ---
+        # Skip this shortcut when force_reprocess=True (processor must embed first)
+        if is_search_configured() and not force_reprocess:
+            from backend.clients.search_client import (
+                get_index_name, index_exists,
+            )
+            # Derive index name from repo URL
+            from backend.processor.code_processor import _extract_owner_repo
+            owner, repo = _extract_owner_repo(repo_url_or_path)
+            branch_suffix = branch.strip() if branch and branch.strip() else 'main'
+            idx_name = get_index_name(owner, repo, branch_suffix)
+
+            if index_exists(idx_name):
+                self.use_cloud_search = True
+                self.cloud_index_name = idx_name
+                logger.info(
+                    f"[RAG] Cloud mode: using AI Search index '{idx_name}'"
+                )
+                return
+            else:
+                logger.warning(
+                    f"[RAG] AI Search configured but index '{idx_name}' "
+                    f"not found — falling back to FAISS"
+                )
+
+        # --- Local/Docker mode: load vectors + build FAISS ---
         self.transformed_docs = self.db_manager.prepare_database(
             repo_url_or_path,
             type,
@@ -291,12 +314,16 @@ IMPORTANT FORMATTING RULES:
         """
         Process a query using RAG.
 
-        Args:
-            query: The user's query
+        Uses AI Search in cloud mode, FAISS in local mode.
 
         Returns:
             Tuple of (RAGAnswer, retrieved_documents)
         """
+        # --- Cloud path: AI Search hybrid query ---
+        if self.use_cloud_search and self.cloud_index_name:
+            return self._call_cloud(query, language)
+
+        # --- Local path: FAISS ---
         try:
             retrieved_documents = self.retriever(query)
 
@@ -320,6 +347,60 @@ IMPORTANT FORMATTING RULES:
             )
             return error_response, []
 
+    def _extract_query_vector(self, query: str):
+        """Embed a query and extract the vector for AI Search."""
+        embedding_output = self.embedder([query])
+        # EmbedderOutput has .data list of Embedding objects
+        if hasattr(embedding_output, 'data') and embedding_output.data:
+            first = embedding_output.data[0]
+            if hasattr(first, 'embedding'):
+                return first.embedding
+            elif isinstance(first, list):
+                return first
+        # Fallback: try direct list access
+        if isinstance(embedding_output, list) and embedding_output:
+            if hasattr(embedding_output[0], 'embedding'):
+                return embedding_output[0].embedding
+            return embedding_output[0]
+        logger.warning("[RAG] Could not extract embedding vector")
+        return None
+
+    def _call_cloud(self, query: str, language: str = "en"):
+        """Execute retrieval via AI Search (cloud mode)."""
+        from backend.clients.search_client import search_as_documents
+
+        try:
+            query_vector = self._extract_query_vector(query)
+            top_k = configs.get("retriever", {}).get("top_k", 40)
+
+            docs = search_as_documents(
+                index_name=self.cloud_index_name,
+                query=query,
+                top_k=top_k,
+                vector=query_vector,
+            )
+            logger.info(
+                f"[RAG] Cloud search returned {len(docs)} results"
+            )
+
+            # Wrap in a result structure compatible with FAISS output
+            class _CloudResult:
+                def __init__(self, documents):
+                    self.documents = documents
+                    self.doc_indices = list(range(len(documents)))
+
+            return [_CloudResult(docs)]
+
+        except Exception as e:
+            logger.error(f"Error in cloud RAG call: {e}")
+
+            class _EmptyResult:
+                def __init__(self):
+                    self.documents = []
+                    self.doc_indices = []
+
+            return [_EmptyResult()]
+
     def call_with_file_filter(
         self,
         query: str,
@@ -330,20 +411,18 @@ IMPORTANT FORMATTING RULES:
         """
         Retrieve chunks with priority for specific files.
 
-        Strategy:
-        1. Collect ALL chunks from the declared relevant files
-        2. Run normal semantic search for supplementary context
+        Strategy (both local and cloud):
+        1. Collect chunks from declared relevant files
+        2. Run semantic search for supplementary context
         3. Merge: file-filtered chunks first, then semantic (deduplicated)
-
-        Args:
-            query: The search query (typically a page title)
-            file_paths: List of relevant file paths to prioritize
-            top_k: Override for semantic search top_k (default: use config)
-            language: Language code
-
-        Returns:
-            Retrieved documents with file-filtered priority
         """
+        # --- Cloud path ---
+        if self.use_cloud_search and self.cloud_index_name:
+            return self._call_with_file_filter_cloud(
+                query, file_paths, top_k, language
+            )
+
+        # --- Local path: FAISS ---
         try:
             # Step 1: Get ALL chunks from declared relevant files
             file_chunks = [
@@ -386,3 +465,76 @@ IMPORTANT FORMATTING RULES:
             logger.error(f"Error in file-filtered RAG call: {str(e)}")
             # Fallback to regular retrieval
             return self.call(query, language)
+
+    def _call_with_file_filter_cloud(
+        self,
+        query: str,
+        file_paths: List[str],
+        top_k: int = None,
+        language: str = "en",
+    ):
+        """File-priority retrieval via AI Search (cloud mode).
+
+        1. Query AI Search filtered to declared files
+        2. Query AI Search unfiltered for semantic context
+        3. Merge: file-filtered first, then semantic (deduplicated)
+        """
+        from backend.clients.search_client import search_as_documents
+
+        try:
+            effective_top_k = (
+                top_k or configs.get("retriever", {}).get("top_k", 40)
+            )
+
+            # Embed the query once
+            query_vector = self._extract_query_vector(query)
+
+            # Step 1: Get chunks from declared files via filter
+            file_chunks = []
+            if file_paths:
+                # Build OData filter: filepath eq 'a' or filepath eq 'b'
+                conditions = [
+                    f"filepath eq '{fp}'" for fp in file_paths
+                ]
+                filter_expr = " or ".join(conditions)
+                file_chunks = search_as_documents(
+                    index_name=self.cloud_index_name,
+                    query=query,
+                    top_k=effective_top_k,
+                    vector=query_vector,
+                    filter_expr=filter_expr,
+                )
+            logger.info(
+                f"[RAG] Cloud file-filtered: {len(file_chunks)} chunks "
+                f"from {len(file_paths)} declared files"
+            )
+
+            # Step 2: Unfiltered semantic search
+            semantic_docs = search_as_documents(
+                index_name=self.cloud_index_name,
+                query=query,
+                top_k=effective_top_k,
+                vector=query_vector,
+            )
+
+            # Step 3: Merge — file chunks first, deduplicate
+            seen_texts = {doc.text for doc in file_chunks}
+            for doc in semantic_docs:
+                if doc.text not in seen_texts:
+                    file_chunks.append(doc)
+                    seen_texts.add(doc.text)
+
+            logger.info(
+                f"[RAG] Cloud merged: {len(file_chunks)} total chunks"
+            )
+
+            class _CloudResult:
+                def __init__(self, documents):
+                    self.documents = documents
+                    self.doc_indices = list(range(len(documents)))
+
+            return [_CloudResult(file_chunks)]
+
+        except Exception as e:
+            logger.error(f"Error in cloud file-filtered RAG: {e}")
+            return self._call_cloud(query, language)
