@@ -296,7 +296,10 @@ def step_push_to_search(owner, repo, branch):
         return
 
     print("\n--- Step 5: Pushing vectors to AI Search ---")
-    repo_name = f"{owner}_{repo}"
+    # Use bare repo name (not owner_repo) — this matches what
+    # indexer.py._extract_repo_name_from_url() produces for ADO repos,
+    # which is what vector_storage uses as the blob path prefix.
+    repo_name = repo
     vector_storage = get_vector_storage()
     docs = vector_storage.load_documents(repo_name, branch)
 
