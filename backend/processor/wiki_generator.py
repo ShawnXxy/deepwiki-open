@@ -277,8 +277,20 @@ def generate_wiki(
 
     file_tree = build_file_tree(repo_path)
     readme = read_readme(repo_path)
-    print(f"  File tree: {len(file_tree.splitlines())} entries")
+    file_count = len(file_tree.splitlines())
+    print(f"  File tree: {file_count} entries")
     print(f"  README: {len(readme)} chars")
+
+    # For large repos, use directory-only tree to stay within model input limits
+    # (e.g., gpt-5.1 max input = 272K tokens ≈ 800K chars)
+    _MAX_FILE_TREE_ENTRIES = 10000
+    if file_count > _MAX_FILE_TREE_ENTRIES:
+        logger.info(
+            f"Large repo ({file_count} files), switching to "
+            f"directory-only tree for structure generation"
+        )
+        file_tree = _file_tree_dirs_only(file_tree)
+        print(f"  → Using directory-only tree ({len(file_tree.splitlines())} dirs)")
 
     # Step 2: Get LLM client
     from backend.config import get_azure_ai_client
