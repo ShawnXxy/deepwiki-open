@@ -3,6 +3,7 @@
     - Key Vault Secrets Officer
     - Key Vault Certificate User
     - Azure AI Administrator
+    - Key Vault Administrator
 
 - Azure Cognitive Search (AI Search) access: the identity has granted below roles :
     - Search Index Data Reader

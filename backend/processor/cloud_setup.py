@@ -323,6 +323,7 @@ def _create_or_update_pipeline(
     config: dict,
 ) -> None:
     """Create or update an AML scheduled pipeline job."""
+    import re
     from azure.ai.ml import command, Input
     from azure.ai.ml.dsl import pipeline
     from azure.ai.ml.entities import (
@@ -363,14 +364,18 @@ def _create_or_update_pipeline(
         processor_command()
 
     pipeline_job = deepwiki_pipeline()
-    pipeline_job.experiment_name = f"{owner}-{repo}-{branch}"
+    # Experiment name: letters, numbers, underscores, dashes only
+    experiment = re.sub(r'[^a-zA-Z0-9_-]', '-', f"{owner}-{repo}-{branch}")
+    pipeline_job.experiment_name = experiment
 
     # Check if schedule already exists
+    is_new = True
     try:
         ml_client.schedules.get(name)
         # Disable old, create new
         ml_client.schedules.begin_disable(name).result()
         logger.info(f"Disabled existing schedule: {name}")
+        is_new = False
     except Exception:
         pass  # Schedule doesn't exist yet
 
@@ -387,6 +392,8 @@ def _create_or_update_pipeline(
 
     ml_client.schedules.begin_create_or_update(schedule).result()
     logger.info(f"Created/updated schedule: {name} (every {interval_hours}h)")
+    # RecurrenceTrigger fires immediately on creation — no explicit first run needed
+    print(f"  ✓ Schedule {'updated' if not is_new else 'created'}: {name}")
 
 
 def teardown_cloud_resources(owner: str, repo: str, branch: str) -> None:
