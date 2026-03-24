@@ -4,8 +4,8 @@ Document processing and transformation for RAG.
 Provides functions for reading, splitting, and embedding documents.
 """
 
+import gc
 import os
-import glob
 import logging
 from typing import List
 
@@ -103,6 +103,11 @@ def read_all_documents(
 
     logger.info(f"Reading documents from {path}")
 
+    # Build extension sets for O(1) lookup
+    code_ext_set = set(code_extensions)
+    doc_ext_set = set(doc_extensions)
+    all_ext_set = code_ext_set | doc_ext_set
+
     def _compute_file_url(relative_path: str) -> str:
         """Helper to compute the file URL based on repo settings."""
         if not repo_url or not repo_url.startswith(("http://", "https://")):
@@ -135,92 +140,103 @@ def read_all_documents(
 
         return relative_path
 
-    # Process code files first
-    for ext in code_extensions:
-        files = glob.glob(f"{path}/**/*{ext}", recursive=True)
-        for file_path in files:
-            # Check if file should be processed based on inclusion/exclusion rules
-            relative_path = os.path.relpath(file_path, path)
-            file_size = os.path.getsize(file_path)
-            if not file_filter.should_process_file(relative_path, file_size):
+    # Single os.walk() pass — replaces 22 separate glob traversals
+    # Collect code files and doc files in one traversal
+    skip_dirs = {
+        '.git', 'node_modules', '__pycache__', '.venv', 'venv',
+        'dist', 'build', '.next', '.nuxt', 'coverage', '.tox',
+        'egg-info', '.eggs',
+    }
+    code_files = []
+    doc_files = []
+
+    for root, dirs, files in os.walk(path):
+        # Prune excluded directories in-place
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for fname in files:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in all_ext_set:
                 continue
+            full_path = os.path.join(root, fname)
+            if ext in code_ext_set:
+                code_files.append((full_path, ext))
+            else:
+                doc_files.append((full_path, ext))
 
-            try:
-                # Use safe_read_file for automatic encoding detection
-                content = safe_read_file(file_path)
+    # Process code files first (higher priority for embedding)
+    for file_path, ext in code_files:
+        relative_path = os.path.relpath(file_path, path)
+        try:
+            file_size = os.path.getsize(file_path)
+        except OSError:
+            continue
+        if not file_filter.should_process_file(relative_path, file_size):
+            continue
 
-                # Determine if this is an implementation file
-                is_implementation = (
-                    not relative_path.startswith("test_")
-                    and not relative_path.startswith("app_")
-                    and "test" not in relative_path.lower()
+        try:
+            content = safe_read_file(file_path)
+
+            is_implementation = (
+                not relative_path.startswith("test_")
+                and not relative_path.startswith("app_")
+                and "test" not in relative_path.lower()
+            )
+
+            token_count = count_tokens(content, embedder_type)
+            if token_count > MAX_EMBEDDING_TOKENS * 10:
+                logger.info(
+                    f"Large code file {relative_path}: "
+                    f"{token_count} tokens "
+                    f"(will be split into ~{token_count // 2000} chunks)"
                 )
 
-                # Log token count for large files — no skip needed since
-                # split_code_at_boundaries() handles any file size by
-                # splitting into ~2000-token chunks at logical boundaries.
-                token_count = count_tokens(content, embedder_type)
-                if token_count > MAX_EMBEDDING_TOKENS * 10:
-                    logger.info(
-                        f"Large code file {relative_path}: "
-                        f"{token_count} tokens "
-                        f"(will be split into ~{token_count // 2000} chunks)"
-                    )
-
-                doc = Document(
-                    text=content,
-                    meta_data={
-                        "file_path": relative_path,
-                        "type": ext[1:],
-                        "is_code": True,
-                        "is_implementation": is_implementation,
-                        "url": _compute_file_url(relative_path),
-                        "raw_content": content,
-                        "token_count": token_count,
-                    },
-                )
-                documents.append(doc)
-            except Exception as e:
-                logger.error(f"[BE] Error reading {file_path}: {e}")
+            doc = Document(
+                text=content,
+                meta_data={
+                    "file_path": relative_path,
+                    "type": ext[1:],
+                    "is_code": True,
+                    "is_implementation": is_implementation,
+                    "url": _compute_file_url(relative_path),
+                    "token_count": token_count,
+                },
+            )
+            documents.append(doc)
+        except Exception as e:
+            logger.error(f"[BE] Error reading {file_path}: {e}")
 
     # Then process documentation files
-    for ext in doc_extensions:
-        files = glob.glob(f"{path}/**/*{ext}", recursive=True)
-        for file_path in files:
-            # Check if file should be processed based on inclusion/exclusion rules
-            relative_path = os.path.relpath(file_path, path)
+    for file_path, ext in doc_files:
+        relative_path = os.path.relpath(file_path, path)
+        try:
             file_size = os.path.getsize(file_path)
-            if not file_filter.should_process_file(relative_path, file_size):
+        except OSError:
+            continue
+        if not file_filter.should_process_file(relative_path, file_size):
+            continue
+
+        try:
+            content = safe_read_file(file_path)
+
+            token_count = count_tokens(content, embedder_type)
+            if token_count > MAX_EMBEDDING_TOKENS * 10:
+                logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
                 continue
 
-            try:
-                # Use safe_read_file for automatic encoding detection
-                content = safe_read_file(file_path)
-
-                # Check token count — doc files are split by
-                # _split_doc_text() so moderate sizes are fine.
-                # Skip only extremely large docs (likely auto-generated
-                # data files like vectors.txt, test fixtures, etc.)
-                token_count = count_tokens(content, embedder_type)
-                if token_count > MAX_EMBEDDING_TOKENS * 10:
-                    logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
-                    continue
-
-                doc = Document(
-                    text=content,
-                    meta_data={
-                        "file_path": relative_path,
-                        "type": ext[1:],
-                        "is_code": False,
-                        "is_implementation": False,
-                        "url": _compute_file_url(relative_path),
-                        "raw_content": content,
-                        "token_count": token_count,
-                    },
-                )
-                documents.append(doc)
-            except Exception as e:
-                logger.error(f"[BE] Error reading {file_path}: {e}")
+            doc = Document(
+                text=content,
+                meta_data={
+                    "file_path": relative_path,
+                    "type": ext[1:],
+                    "is_code": False,
+                    "is_implementation": False,
+                    "url": _compute_file_url(relative_path),
+                    "token_count": token_count,
+                },
+            )
+            documents.append(doc)
+        except Exception as e:
+            logger.error(f"[BE] Error reading {file_path}: {e}")
 
     logger.info(f"Found {len(documents)} documents")
     return documents
@@ -398,6 +414,10 @@ def transform_documents_and_save_as_json(
         f"{len(enriched_chunks)} enriched chunks"
     )
 
+    # Release raw documents — content is now in enriched_chunks
+    del documents
+    gc.collect()
+
     # Step 2: Embed the enriched chunks (splitting already done)
     embed_pipeline = prepare_embed_only_pipeline()
 
@@ -427,6 +447,11 @@ def transform_documents_and_save_as_json(
 
     # Get transformed documents with embeddings
     transformed_docs = db.get_transformed_data(key="embed_only")
+
+    # Release LocalDB and enriched_chunks — data is in transformed_docs now
+    del db
+    del enriched_chunks
+    gc.collect()
 
     if not transformed_docs:
         logger.warning("[Vec] No documents after embedding")

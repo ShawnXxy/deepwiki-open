@@ -286,6 +286,12 @@ IMPORTANT FORMATTING RULES:
                 document_map_func=lambda doc: doc.vector,
             )
             logger.info("FAISS retriever created successfully")
+
+            # Strip embedding vectors from document list — FAISS has
+            # its own copy.  Keeps text + meta_data for lookup but
+            # frees ~12 KB per chunk (3072 floats × 4 bytes).
+            for doc in self.transformed_docs:
+                doc.vector = None
         except Exception as e:
             logger.error(f"Error creating FAISS retriever: {str(e)}")
             # Try to provide more specific error information

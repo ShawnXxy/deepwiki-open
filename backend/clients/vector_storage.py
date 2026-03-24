@@ -25,7 +25,7 @@ JSON format per chunk file:
             "file_path": "src/backend/main.py",
             "type": "py",
             "url": "https://github.com/owner/repo/blob/branch/src/backend/main.py",
-            "raw_content": "...",
+            "raw_chunk_text": "...",
             ...
         }
     }
