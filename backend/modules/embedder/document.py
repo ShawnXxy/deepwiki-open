@@ -419,12 +419,11 @@ def transform_documents_and_save_as_json(
     gc.collect()
 
     # Step 2: Embed in batches to limit peak memory
-    # Instead of loading all chunks into one LocalDB, process in groups
-    # of EMBED_BATCH_SIZE. Each batch: create LocalDB → embed → extract
-    # → save to JSON → release. This keeps peak memory at ~batch_size
-    # × 14KB instead of all_chunks × 14KB.
+    # Calls the embedder directly (bypasses adalflow LocalDB + ToEmbeddings
+    # which has an index bug when batch_size < doc count).
+    # Each batch: embed via API → assign vectors → save to JSON → release.
     EMBED_BATCH_SIZE = 500
-    embed_pipeline = prepare_embed_only_pipeline()
+    embedder = get_embedder()
     vector_storage = get_vector_storage()
     all_transformed: List[Document] = []
 
@@ -445,17 +444,26 @@ def transform_documents_and_save_as_json(
         end = min(start + EMBED_BATCH_SIZE, total_chunks)
         batch = enriched_chunks[start:end]
 
-        # Embed this batch
-        db = LocalDB()
-        db.register_transformer(
-            transformer=embed_pipeline, key="embed_only"
-        )
-        db.load(batch)
-        db.transform(key="embed_only")
-        batch_transformed = db.get_transformed_data(key="embed_only")
+        # Embed this batch by calling the embedder directly in
+        # sub-batches of api_batch_size (avoids adalflow index bug)
+        for sub_start in range(0, len(batch), api_batch_size):
+            sub_end = min(sub_start + api_batch_size, len(batch))
+            sub_batch = batch[sub_start:sub_end]
+            texts = [doc.text for doc in sub_batch]
+            result = embedder(texts)
+            if hasattr(result, 'data') and result.data:
+                for i, emb in enumerate(result.data):
+                    if i < len(sub_batch):
+                        sub_batch[i].vector = (
+                            emb.embedding if hasattr(emb, 'embedding')
+                            else emb
+                        )
 
-        # Release LocalDB immediately
-        del db
+        # Filter out docs that failed to get embeddings
+        batch_transformed = [
+            doc for doc in batch
+            if hasattr(doc, 'vector') and doc.vector is not None
+        ]
 
         if not batch_transformed:
             logger.warning(
