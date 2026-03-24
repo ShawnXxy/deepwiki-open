@@ -4,6 +4,7 @@ Database management for RAG document storage.
 Provides the DatabaseManager class for managing document databases.
 """
 
+import gc
 import os
 import logging
 from typing import List
@@ -438,8 +439,13 @@ class DatabaseManager:
             repo_name,
             branch_suffix
         )
-        
-        logger.info(f"[Vec] Total documents: {len(documents)}")
+
+        # Release raw documents — content is in transformed_docs now
+        doc_count = len(documents)
+        del documents
+        gc.collect()
+
+        logger.info(f"[Vec] Total documents: {doc_count}")
         logger.info(f"[Vec] Total transformed chunks: {len(transformed_docs)}")
 
         # ====================================================================

@@ -418,65 +418,97 @@ def transform_documents_and_save_as_json(
     del documents
     gc.collect()
 
-    # Step 2: Embed the enriched chunks (splitting already done)
+    # Step 2: Embed in batches to limit peak memory
+    # Instead of loading all chunks into one LocalDB, process in groups
+    # of EMBED_BATCH_SIZE. Each batch: create LocalDB → embed → extract
+    # → save to JSON → release. This keeps peak memory at ~batch_size
+    # × 14KB instead of all_chunks × 14KB.
+    EMBED_BATCH_SIZE = 500
     embed_pipeline = prepare_embed_only_pipeline()
-
-    db = LocalDB()
-    db.register_transformer(
-        transformer=embed_pipeline, key="embed_only"
-    )
-    db.load(enriched_chunks)
+    vector_storage = get_vector_storage()
+    all_transformed: List[Document] = []
 
     import time
-    batch_size = configs.get("embedder", {}).get("batch_size", 10)
-    total_batches = (len(enriched_chunks) + batch_size - 1) // batch_size
+    total_chunks = len(enriched_chunks)
+    total_batches = (total_chunks + EMBED_BATCH_SIZE - 1) // EMBED_BATCH_SIZE
+    api_batch_size = configs.get("embedder", {}).get("batch_size", 10)
     logger.info(
-        f"[Vec] Starting embedding: {len(enriched_chunks)} chunks "
-        f"in ~{total_batches} batches (batch_size={batch_size})"
+        f"[Vec] Starting embedding: {total_chunks} chunks "
+        f"in {total_batches} embed batches "
+        f"(embed_batch={EMBED_BATCH_SIZE}, api_batch={api_batch_size})"
     )
     embed_start = time.time()
+    chunks_saved = 0
 
-    db.transform(key="embed_only")
+    for batch_idx in range(total_batches):
+        start = batch_idx * EMBED_BATCH_SIZE
+        end = min(start + EMBED_BATCH_SIZE, total_chunks)
+        batch = enriched_chunks[start:end]
+
+        # Embed this batch
+        db = LocalDB()
+        db.register_transformer(
+            transformer=embed_pipeline, key="embed_only"
+        )
+        db.load(batch)
+        db.transform(key="embed_only")
+        batch_transformed = db.get_transformed_data(key="embed_only")
+
+        # Release LocalDB immediately
+        del db
+
+        if not batch_transformed:
+            logger.warning(
+                f"[Vec] Batch {batch_idx + 1}/{total_batches}: "
+                f"no documents after embedding"
+            )
+            continue
+
+        # Save this batch to vector storage immediately
+        if not vector_storage.save_documents(
+            batch_transformed,
+            repo_name,
+            branch,
+            progress_callback=(
+                lambda saved, total: progress_callback(
+                    chunks_saved + saved, total_chunks
+                )
+            ) if progress_callback else None
+        ):
+            raise ValueError(
+                f"[Vec] Failed to save batch {batch_idx + 1} "
+                f"for {repo_name}_{branch}"
+            )
+
+        chunks_saved += len(batch_transformed)
+        all_transformed.extend(batch_transformed)
+
+        logger.info(
+            f"[Vec] Batch {batch_idx + 1}/{total_batches}: "
+            f"embedded + saved {len(batch_transformed)} chunks "
+            f"({chunks_saved}/{total_chunks} total)"
+        )
+
+        # Release batch references
+        del batch_transformed, batch
+        gc.collect()
+
+    # Release enriched_chunks — all data is in all_transformed now
+    del enriched_chunks
+    gc.collect()
 
     embed_elapsed = time.time() - embed_start
     logger.info(
         f"[Vec] Embedding completed in {embed_elapsed:.1f}s "
-        f"({len(enriched_chunks) / max(embed_elapsed, 0.1):.0f} "
-        f"chunks/sec)"
+        f"({total_chunks / max(embed_elapsed, 0.1):.0f} chunks/sec)"
     )
 
-    # Get transformed documents with embeddings
-    transformed_docs = db.get_transformed_data(key="embed_only")
-
-    # Release LocalDB and enriched_chunks — data is in transformed_docs now
-    del db
-    del enriched_chunks
-    gc.collect()
-
-    if not transformed_docs:
+    if not all_transformed:
         logger.warning("[Vec] No documents after embedding")
         return []
 
     logger.info(
-        f"[Vec] Generated embeddings for {len(transformed_docs)} chunks, "
-        f"saving as JSON..."
-    )
-
-    # Step 4: Save to JSON vector storage
-    vector_storage = get_vector_storage()
-
-    if not vector_storage.save_documents(
-        transformed_docs,
-        repo_name,
-        branch,
-        progress_callback=progress_callback
-    ):
-        raise ValueError(
-            f"[Vec] Failed to save vectors for {repo_name}_{branch}"
-        )
-
-    logger.info(
-        f"[Vec] Successfully saved {len(transformed_docs)} "
+        f"[Vec] Successfully embedded and saved {len(all_transformed)} "
         f"enriched chunks as JSON"
     )
-    return transformed_docs
+    return all_transformed
