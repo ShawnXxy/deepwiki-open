@@ -14,6 +14,7 @@ Modes:
 """
 
 import argparse
+import gc
 import json
 import logging
 import os
@@ -357,6 +358,10 @@ def _process(mode, repo_url, branch, language, comprehensive):
         logger.error(f"Wiki generation failed: {e}", exc_info=True)
         print(f"\n  ERROR in wiki generation: {e}")
         sys.exit(1)
+
+    # Free FAISS index + transformed_docs before save/push
+    del retriever
+    gc.collect()
 
     # Save wiki cache: local disk (local/docker) or blob (cloud)
     step_save_wiki(wiki_data, language, comprehensive)
