@@ -179,7 +179,9 @@ def setup_cloud_resources(
         Dict with created resource names
     """
     result = {}
-    repo_name = f"{owner}_{repo}"
+    # Use bare repo name (not owner_repo) for blob paths — matches
+    # what indexer._extract_repo_name_from_url() produces for ADO repos.
+    repo_name = repo
 
     # --- AI Search: index + data source + indexer ---
     if is_search_configured():

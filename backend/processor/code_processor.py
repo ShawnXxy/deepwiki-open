@@ -14,6 +14,7 @@ Modes:
 """
 
 import argparse
+import gc
 import json
 import logging
 import os
@@ -284,7 +285,11 @@ def step_save_wiki(wiki_data, language, comprehensive):
 
 
 def step_push_to_search(owner, repo, branch):
-    """Push vectors to AI Search and trigger indexer (cloud only)."""
+    """Push vectors to AI Search and trigger indexer (cloud only).
+
+    Loads and pushes in batches of PUSH_BATCH_SIZE to avoid holding
+    all vectors in memory at once (~725MB for 50K chunks).
+    """
     from backend.clients.search_client import (
         get_index_name, push_documents, run_indexer, index_exists,
     )
@@ -296,16 +301,39 @@ def step_push_to_search(owner, repo, branch):
         return
 
     print("\n--- Step 5: Pushing vectors to AI Search ---")
-    repo_name = f"{owner}_{repo}"
+    # Use bare repo name (not owner_repo) — matches what
+    # indexer.py._extract_repo_name_from_url() produces for ADO repos.
+    repo_name = repo
     vector_storage = get_vector_storage()
+
+    # Load all doc paths first (lightweight — just file listing)
     docs = vector_storage.load_documents(repo_name, branch)
 
     if not docs:
         print("  No vector documents found to push")
         return
 
-    count = push_documents(idx_name, docs, repo_name, branch)
-    print(f"  Pushed {count} documents to AI Search")
+    # Push in batches to limit memory during upload
+    PUSH_BATCH_SIZE = 1000
+    total = len(docs)
+    pushed = 0
+    for i in range(0, total, PUSH_BATCH_SIZE):
+        batch = docs[i:i + PUSH_BATCH_SIZE]
+        push_documents(idx_name, batch, repo_name, branch)
+        pushed += len(batch)
+        # Release batch vectors after push
+        for doc in batch:
+            doc.vector = None
+        logger.info(
+            f"Pushed batch {i // PUSH_BATCH_SIZE + 1}: "
+            f"{pushed}/{total} docs"
+        )
+
+    del docs
+    import gc
+    gc.collect()
+
+    print(f"  Pushed {pushed} documents to AI Search")
     run_indexer(idx_name)
     print("  Indexer triggered")
 
@@ -354,6 +382,10 @@ def _process(mode, repo_url, branch, language, comprehensive):
         logger.error(f"Wiki generation failed: {e}", exc_info=True)
         print(f"\n  ERROR in wiki generation: {e}")
         sys.exit(1)
+
+    # Free FAISS index + transformed_docs before save/push
+    del retriever
+    gc.collect()
 
     # Save wiki cache: local disk (local/docker) or blob (cloud)
     step_save_wiki(wiki_data, language, comprehensive)

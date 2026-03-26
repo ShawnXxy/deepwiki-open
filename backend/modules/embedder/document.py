@@ -4,8 +4,8 @@ Document processing and transformation for RAG.
 Provides functions for reading, splitting, and embedding documents.
 """
 
+import gc
 import os
-import glob
 import logging
 from typing import List
 
@@ -103,6 +103,11 @@ def read_all_documents(
 
     logger.info(f"Reading documents from {path}")
 
+    # Build extension sets for O(1) lookup
+    code_ext_set = set(code_extensions)
+    doc_ext_set = set(doc_extensions)
+    all_ext_set = code_ext_set | doc_ext_set
+
     def _compute_file_url(relative_path: str) -> str:
         """Helper to compute the file URL based on repo settings."""
         if not repo_url or not repo_url.startswith(("http://", "https://")):
@@ -135,92 +140,103 @@ def read_all_documents(
 
         return relative_path
 
-    # Process code files first
-    for ext in code_extensions:
-        files = glob.glob(f"{path}/**/*{ext}", recursive=True)
-        for file_path in files:
-            # Check if file should be processed based on inclusion/exclusion rules
-            relative_path = os.path.relpath(file_path, path)
-            file_size = os.path.getsize(file_path)
-            if not file_filter.should_process_file(relative_path, file_size):
+    # Single os.walk() pass — replaces 22 separate glob traversals
+    # Collect code files and doc files in one traversal
+    skip_dirs = {
+        '.git', 'node_modules', '__pycache__', '.venv', 'venv',
+        'dist', 'build', '.next', '.nuxt', 'coverage', '.tox',
+        'egg-info', '.eggs',
+    }
+    code_files = []
+    doc_files = []
+
+    for root, dirs, files in os.walk(path):
+        # Prune excluded directories in-place
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for fname in files:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in all_ext_set:
                 continue
+            full_path = os.path.join(root, fname)
+            if ext in code_ext_set:
+                code_files.append((full_path, ext))
+            else:
+                doc_files.append((full_path, ext))
 
-            try:
-                # Use safe_read_file for automatic encoding detection
-                content = safe_read_file(file_path)
+    # Process code files first (higher priority for embedding)
+    for file_path, ext in code_files:
+        relative_path = os.path.relpath(file_path, path)
+        try:
+            file_size = os.path.getsize(file_path)
+        except OSError:
+            continue
+        if not file_filter.should_process_file(relative_path, file_size):
+            continue
 
-                # Determine if this is an implementation file
-                is_implementation = (
-                    not relative_path.startswith("test_")
-                    and not relative_path.startswith("app_")
-                    and "test" not in relative_path.lower()
+        try:
+            content = safe_read_file(file_path)
+
+            is_implementation = (
+                not relative_path.startswith("test_")
+                and not relative_path.startswith("app_")
+                and "test" not in relative_path.lower()
+            )
+
+            token_count = count_tokens(content, embedder_type)
+            if token_count > MAX_EMBEDDING_TOKENS * 10:
+                logger.info(
+                    f"Large code file {relative_path}: "
+                    f"{token_count} tokens "
+                    f"(will be split into ~{token_count // 2000} chunks)"
                 )
 
-                # Log token count for large files — no skip needed since
-                # split_code_at_boundaries() handles any file size by
-                # splitting into ~2000-token chunks at logical boundaries.
-                token_count = count_tokens(content, embedder_type)
-                if token_count > MAX_EMBEDDING_TOKENS * 10:
-                    logger.info(
-                        f"Large code file {relative_path}: "
-                        f"{token_count} tokens "
-                        f"(will be split into ~{token_count // 2000} chunks)"
-                    )
-
-                doc = Document(
-                    text=content,
-                    meta_data={
-                        "file_path": relative_path,
-                        "type": ext[1:],
-                        "is_code": True,
-                        "is_implementation": is_implementation,
-                        "url": _compute_file_url(relative_path),
-                        "raw_content": content,
-                        "token_count": token_count,
-                    },
-                )
-                documents.append(doc)
-            except Exception as e:
-                logger.error(f"[BE] Error reading {file_path}: {e}")
+            doc = Document(
+                text=content,
+                meta_data={
+                    "file_path": relative_path,
+                    "type": ext[1:],
+                    "is_code": True,
+                    "is_implementation": is_implementation,
+                    "url": _compute_file_url(relative_path),
+                    "token_count": token_count,
+                },
+            )
+            documents.append(doc)
+        except Exception as e:
+            logger.error(f"[BE] Error reading {file_path}: {e}")
 
     # Then process documentation files
-    for ext in doc_extensions:
-        files = glob.glob(f"{path}/**/*{ext}", recursive=True)
-        for file_path in files:
-            # Check if file should be processed based on inclusion/exclusion rules
-            relative_path = os.path.relpath(file_path, path)
+    for file_path, ext in doc_files:
+        relative_path = os.path.relpath(file_path, path)
+        try:
             file_size = os.path.getsize(file_path)
-            if not file_filter.should_process_file(relative_path, file_size):
+        except OSError:
+            continue
+        if not file_filter.should_process_file(relative_path, file_size):
+            continue
+
+        try:
+            content = safe_read_file(file_path)
+
+            token_count = count_tokens(content, embedder_type)
+            if token_count > MAX_EMBEDDING_TOKENS * 10:
+                logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
                 continue
 
-            try:
-                # Use safe_read_file for automatic encoding detection
-                content = safe_read_file(file_path)
-
-                # Check token count — doc files are split by
-                # _split_doc_text() so moderate sizes are fine.
-                # Skip only extremely large docs (likely auto-generated
-                # data files like vectors.txt, test fixtures, etc.)
-                token_count = count_tokens(content, embedder_type)
-                if token_count > MAX_EMBEDDING_TOKENS * 10:
-                    logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
-                    continue
-
-                doc = Document(
-                    text=content,
-                    meta_data={
-                        "file_path": relative_path,
-                        "type": ext[1:],
-                        "is_code": False,
-                        "is_implementation": False,
-                        "url": _compute_file_url(relative_path),
-                        "raw_content": content,
-                        "token_count": token_count,
-                    },
-                )
-                documents.append(doc)
-            except Exception as e:
-                logger.error(f"[BE] Error reading {file_path}: {e}")
+            doc = Document(
+                text=content,
+                meta_data={
+                    "file_path": relative_path,
+                    "type": ext[1:],
+                    "is_code": False,
+                    "is_implementation": False,
+                    "url": _compute_file_url(relative_path),
+                    "token_count": token_count,
+                },
+            )
+            documents.append(doc)
+        except Exception as e:
+            logger.error(f"[BE] Error reading {file_path}: {e}")
 
     logger.info(f"Found {len(documents)} documents")
     return documents
@@ -342,116 +358,351 @@ def transform_documents_and_save_to_db(
     return db
 
 
+def _compute_file_url(
+    relative_path: str,
+    repo_url: str,
+    repo_type: str,
+    branch: str,
+) -> str:
+    """Compute the source URL for a file in a repository."""
+    if not repo_url or not repo_url.startswith(("http://", "https://")):
+        return relative_path
+
+    file_path = relative_path.replace("\\", "/")
+    if not file_path.startswith("/"):
+        file_path = "/" + file_path
+
+    branch_name = branch if branch and branch.strip() else "main"
+
+    if repo_type == "azuredevops":
+        return (
+            f"{repo_url.rstrip('/')}?version=GB{branch_name}"
+            f"&path={file_path}"
+        )
+    elif repo_type in ["github", "gitlab"]:
+        base_url = repo_url
+        if base_url.endswith(".git"):
+            base_url = base_url[:-4]
+        return f"{base_url.rstrip('/')}/blob/{branch_name}{file_path}"
+    elif repo_type == "bitbucket":
+        base_url = repo_url
+        if base_url.endswith(".git"):
+            base_url = base_url[:-4]
+        return f"{base_url.rstrip('/')}/src/{branch_name}{file_path}"
+
+    return relative_path
+
+
 def transform_documents_and_save_as_json(
-    documents: List[Document],
+    repo_path: str,
     repo_name: str,
     branch: str,
+    repo_url: str = None,
+    repo_type: str = None,
+    excluded_dirs: List[str] = None,
+    excluded_files: List[str] = None,
+    included_dirs: List[str] = None,
+    included_files: List[str] = None,
     progress_callback: callable = None
-) -> List[Document]:
+) -> int:
     """
-    Transforms documents and saves them as JSON chunk files.
+    Reads, splits, embeds and saves documents as JSON chunk files.
 
-    Uses code-aware splitting (processor_design approach) for code files:
-    - Splits at function/class boundaries instead of arbitrary token positions
-    - Enriches embedding text with file context and structural metadata
-    - Extracts code elements (functions, classes) for richer retrieval
+    Fused pipeline: reads files in batches of FILE_BATCH_SIZE to avoid
+    loading the entire repository into memory at once (~5GB for large
+    repos). Each batch is read → split into enriched chunks → released.
+    Then all chunks are embedded in batches and saved to vector storage.
 
-    For documentation files:
-    - Splits at heading/paragraph boundaries
-    - Adds file path context to embedding text
+    Does NOT accumulate all transformed documents in memory. Returns
+    the total chunk count. Callers that need the documents (e.g. for
+    FAISS) should load them from vector storage afterward.
 
     Storage structure:
         vectors/{repo_name}_{branch}/
             └── {source_file_path}_chunk_001.json
-            └── {source_file_path}_chunk_002.json
             ...
 
     Args:
-        documents: List of Document objects (raw, before splitting)
+        repo_path: Local path to cloned repository
         repo_name: Repository name (owner_repo format)
         branch: Branch name
-        progress_callback: Optional callback(saved, total) for progress updates
+        repo_url: Repository URL (for file link metadata)
+        repo_type: Repository type (azuredevops, github, etc.)
+        excluded_dirs: Directories to exclude
+        excluded_files: File patterns to exclude
+        included_dirs: Directories to include exclusively
+        included_files: File patterns to include exclusively
+        progress_callback: Optional callback(saved, total) for progress
 
     Returns:
-        List of transformed Document objects with embeddings
+        Total number of chunks embedded and saved
 
     Raises:
-        ConnectionError: If Azure Blob Storage is configured but connection fails
+        ConnectionError: If Azure Blob Storage is configured but fails
         ValueError: If transformation or saving fails
     """
+    import time
+
+    # ================================================================
+    # Step 1: Collect file paths (lightweight — no content read)
+    # ================================================================
+    code_extensions = {
+        ".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp",
+        ".go", ".rs", ".jsx", ".tsx", ".html", ".css", ".php",
+        ".swift", ".cs",
+    }
+    doc_extensions = {".md", ".txt", ".rst", ".json", ".yaml", ".yml"}
+    all_ext_set = code_extensions | doc_extensions
+
+    # Build file filter
+    has_dirs = included_dirs is not None and len(included_dirs) > 0
+    has_files = included_files is not None and len(included_files) > 0
+    if has_dirs or has_files:
+        file_filter = FileFilter(
+            included_dirs=set(included_dirs) if included_dirs else set(),
+            included_patterns=(
+                set(included_files) if included_files else set()
+            ),
+            max_file_size_mb=10,
+        )
+    else:
+        file_filters = get_file_filters_config()
+        final_excluded_dirs = set(file_filters["excluded_dirs"])
+        final_excluded_patterns = set(file_filters["excluded_files"])
+        if excluded_dirs is not None:
+            final_excluded_dirs.update(excluded_dirs)
+        if excluded_files is not None:
+            final_excluded_patterns.update(excluded_files)
+        file_filter = FileFilter(
+            excluded_dirs=final_excluded_dirs,
+            excluded_patterns=final_excluded_patterns,
+            max_file_size_mb=10,
+        )
+
+    skip_dirs = {
+        '.git', 'node_modules', '__pycache__', '.venv', 'venv',
+        'dist', 'build', '.next', '.nuxt', 'coverage', '.tox',
+        'egg-info', '.eggs',
+    }
+
+    # Walk directory once — collect (full_path, relative_path, ext, is_code)
+    # This is lightweight: ~300 bytes per entry, ~10MB for 35K files
+    file_infos = []
+    for root, dirs, files in os.walk(repo_path):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for fname in files:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in all_ext_set:
+                continue
+            full_path = os.path.join(root, fname)
+            relative_path = os.path.relpath(full_path, repo_path)
+            try:
+                file_size = os.path.getsize(full_path)
+            except OSError:
+                continue
+            if not file_filter.should_process_file(
+                relative_path, file_size
+            ):
+                continue
+            is_code = ext in code_extensions
+            file_infos.append(
+                (full_path, relative_path, ext, is_code)
+            )
+
+    # Sort: code files first (higher priority), then docs
+    file_infos.sort(key=lambda fi: (not fi[3], fi[1]))
+
+    total_files = len(file_infos)
+    if total_files == 0:
+        logger.warning("[Vec] No files found to process")
+        return []
+
     logger.info(
-        f"[Vec] Transforming {len(documents)} documents for "
-        f"{repo_name}_{branch} (code-aware splitting)"
+        f"[Vec] Collected {total_files} file paths for "
+        f"{repo_name}_{branch}"
     )
 
-    # Step 1: Code-aware splitting + structural enrichment
-    # This replaces the naive TextSplitter with boundary-aware splitting
-    # and enriches each chunk with file context for better embedding quality
-    enriched_chunks = split_and_enrich_documents(documents)
+    # ================================================================
+    # Step 2: Fused read + split in batches of FILE_BATCH_SIZE
+    # Peak memory: ~FILE_BATCH_SIZE files (~150MB) instead of all
+    # files (~5GB for large repos)
+    # ================================================================
+    FILE_BATCH_SIZE = 1000
+    enriched_chunks: List[Document] = []
+    files_read = 0
+    read_start = time.time()
+
+    total_file_batches = (
+        (total_files + FILE_BATCH_SIZE - 1) // FILE_BATCH_SIZE
+    )
+
+    for fb_idx in range(total_file_batches):
+        fb_start = fb_idx * FILE_BATCH_SIZE
+        fb_end = min(fb_start + FILE_BATCH_SIZE, total_files)
+        batch_infos = file_infos[fb_start:fb_end]
+
+        # Read this batch of files into Documents
+        batch_docs = []
+        for full_path, relative_path, ext, is_code in batch_infos:
+            try:
+                content = safe_read_file(full_path)
+
+                token_count = count_tokens(content)
+                if not is_code and token_count > MAX_EMBEDDING_TOKENS * 10:
+                    logger.warning(
+                        f"Skipping large file {relative_path}: "
+                        f"{token_count} tokens"
+                    )
+                    continue
+
+                is_implementation = is_code and (
+                    not relative_path.startswith("test_")
+                    and not relative_path.startswith("app_")
+                    and "test" not in relative_path.lower()
+                )
+
+                doc = Document(
+                    text=content,
+                    meta_data={
+                        "file_path": relative_path,
+                        "type": ext[1:],
+                        "is_code": is_code,
+                        "is_implementation": is_implementation,
+                        "url": _compute_file_url(
+                            relative_path, repo_url, repo_type, branch
+                        ),
+                    },
+                )
+                batch_docs.append(doc)
+            except Exception as e:
+                logger.error(f"[BE] Error reading {full_path}: {e}")
+
+        if batch_docs:
+            batch_chunks = split_and_enrich_documents(batch_docs)
+            enriched_chunks.extend(batch_chunks)
+            del batch_chunks
+
+        files_read += len(batch_infos)
+        del batch_docs
+        gc.collect()
+
+        if total_file_batches > 1:
+            logger.info(
+                f"[Vec] Read+split batch {fb_idx + 1}/"
+                f"{total_file_batches}: {files_read}/{total_files} "
+                f"files -> {len(enriched_chunks)} chunks so far"
+            )
+
+    # Release file_infos
+    del file_infos
+    gc.collect()
+
+    read_elapsed = time.time() - read_start
+    logger.info(
+        f"[Vec] Read+split complete: {files_read} files -> "
+        f"{len(enriched_chunks)} enriched chunks in "
+        f"{read_elapsed:.1f}s"
+    )
 
     if not enriched_chunks:
         logger.warning("[Vec] No chunks after splitting")
         return []
 
-    logger.info(
-        f"[Vec] Code-aware split: {len(documents)} files -> "
-        f"{len(enriched_chunks)} enriched chunks"
+    # ================================================================
+    # Step 3: Embed in batches (direct embedder calls)
+    # No accumulation — each batch is saved to disk and released.
+    # ================================================================
+    EMBED_BATCH_SIZE = 500
+    embedder = get_embedder()
+    vector_storage = get_vector_storage()
+
+    total_chunks = len(enriched_chunks)
+    total_batches = (
+        (total_chunks + EMBED_BATCH_SIZE - 1) // EMBED_BATCH_SIZE
     )
-
-    # Step 2: Embed the enriched chunks (splitting already done)
-    embed_pipeline = prepare_embed_only_pipeline()
-
-    db = LocalDB()
-    db.register_transformer(
-        transformer=embed_pipeline, key="embed_only"
-    )
-    db.load(enriched_chunks)
-
-    import time
-    batch_size = configs.get("embedder", {}).get("batch_size", 10)
-    total_batches = (len(enriched_chunks) + batch_size - 1) // batch_size
+    api_batch_size = configs.get("embedder", {}).get("batch_size", 10)
     logger.info(
-        f"[Vec] Starting embedding: {len(enriched_chunks)} chunks "
-        f"in ~{total_batches} batches (batch_size={batch_size})"
+        f"[Vec] Starting embedding: {total_chunks} chunks "
+        f"in {total_batches} embed batches "
+        f"(embed_batch={EMBED_BATCH_SIZE}, api_batch={api_batch_size})"
     )
     embed_start = time.time()
+    chunks_saved = 0
 
-    db.transform(key="embed_only")
+    for batch_idx in range(total_batches):
+        start = batch_idx * EMBED_BATCH_SIZE
+        end = min(start + EMBED_BATCH_SIZE, total_chunks)
+        batch = enriched_chunks[start:end]
+
+        # Embed via direct API calls in sub-batches
+        for sub_start in range(0, len(batch), api_batch_size):
+            sub_end = min(sub_start + api_batch_size, len(batch))
+            sub_batch = batch[sub_start:sub_end]
+            texts = [doc.text for doc in sub_batch]
+            result = embedder(texts)
+            if hasattr(result, 'data') and result.data:
+                for i, emb in enumerate(result.data):
+                    if i < len(sub_batch):
+                        sub_batch[i].vector = (
+                            emb.embedding
+                            if hasattr(emb, 'embedding')
+                            else emb
+                        )
+
+        batch_transformed = [
+            doc for doc in batch
+            if hasattr(doc, 'vector') and doc.vector is not None
+        ]
+
+        if not batch_transformed:
+            logger.warning(
+                f"[Vec] Batch {batch_idx + 1}/{total_batches}: "
+                f"no documents after embedding"
+            )
+            continue
+
+        if not vector_storage.save_documents(
+            batch_transformed,
+            repo_name,
+            branch,
+            progress_callback=(
+                lambda saved, total: progress_callback(
+                    chunks_saved + saved, total_chunks
+                )
+            ) if progress_callback else None
+        ):
+            raise ValueError(
+                f"[Vec] Failed to save batch {batch_idx + 1} "
+                f"for {repo_name}_{branch}"
+            )
+
+        chunks_saved += len(batch_transformed)
+
+        logger.info(
+            f"[Vec] Batch {batch_idx + 1}/{total_batches}: "
+            f"embedded + saved {len(batch_transformed)} chunks "
+            f"({chunks_saved}/{total_chunks} total)"
+        )
+
+        # Release batch — vectors NOT accumulated in memory
+        del batch_transformed, batch
+        gc.collect()
+
+    del enriched_chunks
+    gc.collect()
 
     embed_elapsed = time.time() - embed_start
     logger.info(
         f"[Vec] Embedding completed in {embed_elapsed:.1f}s "
-        f"({len(enriched_chunks) / max(embed_elapsed, 0.1):.0f} "
-        f"chunks/sec)"
+        f"({total_chunks / max(embed_elapsed, 0.1):.0f} chunks/sec)"
     )
 
-    # Get transformed documents with embeddings
-    transformed_docs = db.get_transformed_data(key="embed_only")
-
-    if not transformed_docs:
+    if chunks_saved == 0:
         logger.warning("[Vec] No documents after embedding")
-        return []
+        return 0
 
     logger.info(
-        f"[Vec] Generated embeddings for {len(transformed_docs)} chunks, "
-        f"saving as JSON..."
-    )
-
-    # Step 4: Save to JSON vector storage
-    vector_storage = get_vector_storage()
-
-    if not vector_storage.save_documents(
-        transformed_docs,
-        repo_name,
-        branch,
-        progress_callback=progress_callback
-    ):
-        raise ValueError(
-            f"[Vec] Failed to save vectors for {repo_name}_{branch}"
-        )
-
-    logger.info(
-        f"[Vec] Successfully saved {len(transformed_docs)} "
+        f"[Vec] Successfully embedded and saved {chunks_saved} "
         f"enriched chunks as JSON"
     )
-    return transformed_docs
+    return chunks_saved

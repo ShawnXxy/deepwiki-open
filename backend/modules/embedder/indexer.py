@@ -15,7 +15,7 @@ from backend.paths import get_adalflow_root_path
 from backend.config import configs
 from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
 from backend.clients.vector_storage import get_vector_storage
-from backend.modules.embedder.document import read_all_documents, transform_documents_and_save_as_json
+from backend.modules.embedder.document import transform_documents_and_save_as_json
 from backend.modules.repository.git_ops import download_repo, detect_default_branch
 
 logger = logging.getLogger(__name__)
@@ -415,32 +415,38 @@ class DatabaseManager:
         # STEP 2: Create new database using JSON format
         # ========================================================================
         logger.info("[Vec] Creating new embeddings with JSON vector storage...")
-        documents = read_all_documents(
+
+        # Fused read+split+embed: reads files in batches of 1000 to
+        # avoid loading the entire repository into memory at once.
+        # Returns chunk count (not the docs themselves) to avoid
+        # accumulating all vectors in memory.
+        chunk_count = transform_documents_and_save_as_json(
             self.repo_paths["save_repo_dir"],
+            repo_name,
+            branch_suffix,
             repo_url=self.repo_url_or_path,
             repo_type=self.repo_paths.get("repo_type"),
-            branch=self.repo_paths.get("branch_suffix"),
             excluded_dirs=excluded_dirs,
             excluded_files=excluded_files,
             included_dirs=included_dirs,
-            included_files=included_files
+            included_files=included_files,
         )
-        
-        if not documents:
+
+        if chunk_count == 0:
             logger.warning("No documents found to process")
             return []
-        
-        logger.info(f"[Vec] Processing {len(documents)} documents...")
-        
-        # Use new JSON format for storage
-        transformed_docs = transform_documents_and_save_as_json(
-            documents,
-            repo_name,
-            branch_suffix
+
+        logger.info(
+            f"[Vec] Embedded {chunk_count} chunks, "
+            f"loading from storage for FAISS..."
         )
-        
-        logger.info(f"[Vec] Total documents: {len(documents)}")
-        logger.info(f"[Vec] Total transformed chunks: {len(transformed_docs)}")
+
+        # Load from vector storage for FAISS construction.
+        # This re-reads from disk/blob but avoids holding all
+        # vectors in memory during the entire embedding phase.
+        transformed_docs = vector_storage.load_documents(
+            repo_name, branch_suffix
+        )
 
         # ====================================================================
         # STEP 3: Orphan cleanup (only during force_reprocess)

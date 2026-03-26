@@ -577,10 +577,16 @@ def split_and_enrich_documents(
                     elements,
                 )
 
+                # Exclude bulky keys from parent meta_data to avoid
+                # duplicating full file content into every chunk
+                chunk_meta = {
+                    k: v for k, v in doc.meta_data.items()
+                    if k not in ('raw_content', 'token_count')
+                }
                 chunk_doc = Document(
                     text=enriched_text,
                     meta_data={
-                        **doc.meta_data,
+                        **chunk_meta,
                         'raw_chunk_text': chunk['text'],
                         'section_type': chunk.get('section_type', 'code'),
                         'start_line': chunk.get('start_line', 0),
@@ -613,10 +619,14 @@ def split_and_enrich_documents(
                 enriched_text = build_enriched_doc_text(
                     chunk_text, file_path
                 )
+                chunk_meta = {
+                    k: v for k, v in doc.meta_data.items()
+                    if k not in ('raw_content', 'token_count')
+                }
                 chunk_doc = Document(
                     text=enriched_text,
                     meta_data={
-                        **doc.meta_data,
+                        **chunk_meta,
                         'raw_chunk_text': chunk_text,
                         'section_type': file_section_type,
                         'start_line': 0,

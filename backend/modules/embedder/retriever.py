@@ -109,6 +109,9 @@ IMPORTANT FORMATTING RULES:
         """
         Validate embeddings and filter out documents with invalid or mismatched embedding sizes.
 
+        Single-pass: collects size counts and valid docs simultaneously,
+        then filters by the most common size.
+
         Args:
             documents: List of documents with embeddings
 
@@ -119,10 +122,9 @@ IMPORTANT FORMATTING RULES:
             logger.warning("No documents provided for embedding validation")
             return []
 
-        valid_documents = []
-        embedding_sizes = {}
+        embedding_sizes = {}  # size -> count
+        docs_by_size = {}     # size -> list of docs
 
-        # First pass: collect all embedding sizes and count occurrences
         for i, doc in enumerate(documents):
             if not hasattr(doc, 'vector') or doc.vector is None:
                 logger.warning(f"Document {i} has no embedding vector, skipping")
@@ -132,70 +134,76 @@ IMPORTANT FORMATTING RULES:
                 if isinstance(doc.vector, list):
                     embedding_size = len(doc.vector)
                 elif hasattr(doc.vector, 'shape'):
-                    embedding_size = doc.vector.shape[0] if len(doc.vector.shape) == 1 else doc.vector.shape[-1]
+                    embedding_size = (
+                        doc.vector.shape[0]
+                        if len(doc.vector.shape) == 1
+                        else doc.vector.shape[-1]
+                    )
                 elif hasattr(doc.vector, '__len__'):
                     embedding_size = len(doc.vector)
                 else:
-                    logger.warning(f"Document {i} has invalid embedding vector type: {type(doc.vector)}, skipping")
+                    logger.warning(
+                        f"Document {i} has invalid embedding vector "
+                        f"type: {type(doc.vector)}, skipping"
+                    )
                     continue
 
                 if embedding_size == 0:
                     logger.warning(f"Document {i} has empty embedding vector, skipping")
                     continue
 
-                embedding_sizes[embedding_size] = embedding_sizes.get(embedding_size, 0) + 1
+                embedding_sizes[embedding_size] = (
+                    embedding_sizes.get(embedding_size, 0) + 1
+                )
+                if embedding_size not in docs_by_size:
+                    docs_by_size[embedding_size] = []
+                docs_by_size[embedding_size].append(doc)
 
             except Exception as e:
-                logger.warning(f"Error checking embedding size for document {i}: {str(e)}, skipping")
+                logger.warning(
+                    f"Error checking embedding size for document {i}: "
+                    f"{str(e)}, skipping"
+                )
                 continue
 
         if not embedding_sizes:
             logger.error("No valid embeddings found in any documents")
             return []
 
-        # Find the most common embedding size (this should be the correct one)
-        target_size = max(embedding_sizes.keys(), key=lambda k: embedding_sizes[k])
-        logger.info(f"Target embedding size: {target_size} (found in {embedding_sizes[target_size]} documents)")
+        # Pick the most common size
+        target_size = max(
+            embedding_sizes.keys(), key=lambda k: embedding_sizes[k]
+        )
+        logger.info(
+            f"Target embedding size: {target_size} "
+            f"(found in {embedding_sizes[target_size]} documents)"
+        )
 
-        # Log all embedding sizes found
         for size, count in embedding_sizes.items():
             if size != target_size:
-                logger.warning(f"Found {count} documents with incorrect embedding size {size}, will be filtered out")
+                logger.warning(
+                    f"Found {count} documents with incorrect "
+                    f"embedding size {size}, will be filtered out"
+                )
 
-        # Second pass: filter documents with the target embedding size
-        for i, doc in enumerate(documents):
-            if not hasattr(doc, 'vector') or doc.vector is None:
-                continue
+        valid_documents = docs_by_size.get(target_size, [])
 
-            try:
-                if isinstance(doc.vector, list):
-                    embedding_size = len(doc.vector)
-                elif hasattr(doc.vector, 'shape'):
-                    embedding_size = doc.vector.shape[0] if len(doc.vector.shape) == 1 else doc.vector.shape[-1]
-                elif hasattr(doc.vector, '__len__'):
-                    embedding_size = len(doc.vector)
-                else:
-                    continue
-
-                if embedding_size == target_size:
-                    valid_documents.append(doc)
-                else:
-                    # Log which document is being filtered out
-                    file_path = getattr(doc, 'meta_data', {}).get('file_path', f'document_{i}')
-                    logger.warning(f"Filtering out document '{file_path}' due to embedding size mismatch: {embedding_size} != {target_size}")
-
-            except Exception as e:
-                file_path = getattr(doc, 'meta_data', {}).get('file_path', f'document_{i}')
-                logger.warning(f"Error validating embedding for document '{file_path}': {str(e)}, skipping")
-                continue
-
-        logger.info(f"Embedding validation complete: {len(valid_documents)}/{len(documents)} documents have valid embeddings")
+        logger.info(
+            f"Embedding validation complete: "
+            f"{len(valid_documents)}/{len(documents)} documents "
+            f"have valid embeddings"
+        )
 
         if len(valid_documents) == 0:
-            logger.error("No documents with valid embeddings remain after filtering")
+            logger.error(
+                "No documents with valid embeddings remain after filtering"
+            )
         elif len(valid_documents) < len(documents):
             filtered_count = len(documents) - len(valid_documents)
-            logger.warning(f"Filtered out {filtered_count} documents due to embedding issues")
+            logger.warning(
+                f"Filtered out {filtered_count} documents "
+                f"due to embedding issues"
+            )
 
         return valid_documents
 
@@ -286,6 +294,12 @@ IMPORTANT FORMATTING RULES:
                 document_map_func=lambda doc: doc.vector,
             )
             logger.info("FAISS retriever created successfully")
+
+            # Strip embedding vectors from document list — FAISS has
+            # its own copy.  Keeps text + meta_data for lookup but
+            # frees ~12 KB per chunk (3072 floats × 4 bytes).
+            for doc in self.transformed_docs:
+                doc.vector = None
         except Exception as e:
             logger.error(f"Error creating FAISS retriever: {str(e)}")
             # Try to provide more specific error information
