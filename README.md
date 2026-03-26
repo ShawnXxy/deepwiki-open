@@ -40,6 +40,13 @@ The general workflow is:
 │  │  Reads wiki from blob, Ask/Chat via AI Search                     │
 │  └───────────────────────────────────────────────────────────────────┘
 ```
+### Stack
+
+![img](./img/stack.png)
+
+### Flow
+
+![img](./img/flow.png)
 
 ### Three Processing Modes
 
