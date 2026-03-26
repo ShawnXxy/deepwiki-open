@@ -40,7 +40,7 @@
     "enabled": false,
     "workspace_name": "aml-orcas-codewiki",
     "compute_name": "deepwiki-compute",
-    "compute_size": "STANDARD_D2_V2",
+    "compute_size": "STANDARD_D11_V2",
     "compute_min_instances": 0,
     "compute_max_instances": 10,
     "schedule_interval_hours": 480,
