@@ -404,7 +404,7 @@ def transform_documents_and_save_as_json(
     included_dirs: List[str] = None,
     included_files: List[str] = None,
     progress_callback: callable = None
-) -> List[Document]:
+) -> int:
     """
     Reads, splits, embeds and saves documents as JSON chunk files.
 
@@ -412,6 +412,10 @@ def transform_documents_and_save_as_json(
     loading the entire repository into memory at once (~5GB for large
     repos). Each batch is read → split into enriched chunks → released.
     Then all chunks are embedded in batches and saved to vector storage.
+
+    Does NOT accumulate all transformed documents in memory. Returns
+    the total chunk count. Callers that need the documents (e.g. for
+    FAISS) should load them from vector storage afterward.
 
     Storage structure:
         vectors/{repo_name}_{branch}/
@@ -431,7 +435,7 @@ def transform_documents_and_save_as_json(
         progress_callback: Optional callback(saved, total) for progress
 
     Returns:
-        List of transformed Document objects with embeddings
+        Total number of chunks embedded and saved
 
     Raises:
         ConnectionError: If Azure Blob Storage is configured but fails
@@ -606,11 +610,11 @@ def transform_documents_and_save_as_json(
 
     # ================================================================
     # Step 3: Embed in batches (direct embedder calls)
+    # No accumulation — each batch is saved to disk and released.
     # ================================================================
     EMBED_BATCH_SIZE = 500
     embedder = get_embedder()
     vector_storage = get_vector_storage()
-    all_transformed: List[Document] = []
 
     total_chunks = len(enriched_chunks)
     total_batches = (
@@ -673,7 +677,6 @@ def transform_documents_and_save_as_json(
             )
 
         chunks_saved += len(batch_transformed)
-        all_transformed.extend(batch_transformed)
 
         logger.info(
             f"[Vec] Batch {batch_idx + 1}/{total_batches}: "
@@ -681,6 +684,7 @@ def transform_documents_and_save_as_json(
             f"({chunks_saved}/{total_chunks} total)"
         )
 
+        # Release batch — vectors NOT accumulated in memory
         del batch_transformed, batch
         gc.collect()
 
@@ -693,12 +697,12 @@ def transform_documents_and_save_as_json(
         f"({total_chunks / max(embed_elapsed, 0.1):.0f} chunks/sec)"
     )
 
-    if not all_transformed:
+    if chunks_saved == 0:
         logger.warning("[Vec] No documents after embedding")
-        return []
+        return 0
 
     logger.info(
-        f"[Vec] Successfully embedded and saved {len(all_transformed)} "
+        f"[Vec] Successfully embedded and saved {chunks_saved} "
         f"enriched chunks as JSON"
     )
-    return all_transformed
+    return chunks_saved
