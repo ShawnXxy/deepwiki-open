@@ -418,9 +418,9 @@ class DatabaseManager:
 
         # Fused read+split+embed: reads files in batches of 1000 to
         # avoid loading the entire repository into memory at once.
-        # Returns chunk count (not the docs themselves) to avoid
-        # accumulating all vectors in memory.
-        chunk_count = transform_documents_and_save_as_json(
+        # Returns (chunk_count, documents) — documents have vectors
+        # attached, ready for FAISS construction without disk reload.
+        chunk_count, transformed_docs = transform_documents_and_save_as_json(
             self.repo_paths["save_repo_dir"],
             repo_name,
             branch_suffix,
@@ -438,14 +438,7 @@ class DatabaseManager:
 
         logger.info(
             f"[Vec] Embedded {chunk_count} chunks, "
-            f"loading from storage for FAISS..."
-        )
-
-        # Load from vector storage for FAISS construction.
-        # This re-reads from disk/blob but avoids holding all
-        # vectors in memory during the entire embedding phase.
-        transformed_docs = vector_storage.load_documents(
-            repo_name, branch_suffix
+            f"using returned docs for FAISS (no disk reload)"
         )
 
         # ====================================================================

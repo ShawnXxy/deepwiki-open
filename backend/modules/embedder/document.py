@@ -7,7 +7,7 @@ Provides functions for reading, splitting, and embedding documents.
 import gc
 import os
 import logging
-from typing import List
+from typing import List, Tuple
 
 import adalflow as adal
 from adalflow.core.types import Document
@@ -404,7 +404,7 @@ def transform_documents_and_save_as_json(
     included_dirs: List[str] = None,
     included_files: List[str] = None,
     progress_callback: callable = None
-) -> int:
+) -> Tuple[int, List[Document]]:
     """
     Reads, splits, embeds and saves documents as JSON chunk files.
 
@@ -413,9 +413,9 @@ def transform_documents_and_save_as_json(
     Peak memory is bounded by FILE_BATCH_SIZE (~120 MB) regardless of
     total repo size, instead of growing with total chunk count.
 
-    Does NOT accumulate all transformed documents in memory. Returns
-    the total chunk count. Callers that need the documents (e.g. for
-    FAISS) should load them from vector storage afterward.
+    Returns both the chunk count and the embedded documents so that
+    callers (e.g. FAISS) can use them directly without reloading
+    from disk.
 
     Storage structure:
         vectors/{repo_name}_{branch}/
@@ -435,7 +435,10 @@ def transform_documents_and_save_as_json(
         progress_callback: Optional callback(saved, total) for progress
 
     Returns:
-        Total number of chunks embedded and saved
+        Tuple of (chunk_count, documents):
+            chunk_count: Total number of chunks embedded and saved
+            documents: List of Document objects with vectors attached,
+                ready for FAISS index construction
 
     Raises:
         ConnectionError: If Azure Blob Storage is configured but fails
@@ -515,7 +518,7 @@ def transform_documents_and_save_as_json(
     total_files = len(file_infos)
     if total_files == 0:
         logger.warning("[Vec] No files found to process")
-        return 0
+        return 0, []
 
     logger.info(
         f"[Vec] Collected {total_files} file paths for "
@@ -539,6 +542,7 @@ def transform_documents_and_save_as_json(
     files_read = 0
     chunks_saved = 0
     total_chunks = 0
+    all_embedded_docs: List[Document] = []
     pipeline_start = time.time()
 
     total_file_batches = (
@@ -668,6 +672,7 @@ def transform_documents_and_save_as_json(
                     f"for {repo_name}_{branch}"
                 )
 
+            all_embedded_docs.extend(batch_transformed)
             chunks_saved += len(batch_transformed)
             del batch_transformed, embed_batch
             gc.collect()
@@ -695,10 +700,10 @@ def transform_documents_and_save_as_json(
 
     if chunks_saved == 0:
         logger.warning("[Vec] No documents after embedding")
-        return 0
+        return 0, []
 
     logger.info(
         f"[Vec] Successfully embedded and saved {chunks_saved} "
         f"enriched chunks as JSON"
     )
-    return chunks_saved
+    return chunks_saved, all_embedded_docs
