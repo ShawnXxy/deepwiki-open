@@ -408,10 +408,10 @@ def transform_documents_and_save_as_json(
     """
     Reads, splits, embeds and saves documents as JSON chunk files.
 
-    Fused pipeline: reads files in batches of FILE_BATCH_SIZE to avoid
-    loading the entire repository into memory at once (~5GB for large
-    repos). Each batch is read → split into enriched chunks → released.
-    Then all chunks are embedded in batches and saved to vector storage.
+    Fully fused pipeline: each file batch is read → split → embedded →
+    saved to disk in one pass. No intermediate accumulation of all chunks.
+    Peak memory is bounded by FILE_BATCH_SIZE (~120 MB) regardless of
+    total repo size, instead of growing with total chunk count.
 
     Does NOT accumulate all transformed documents in memory. Returns
     the total chunk count. Callers that need the documents (e.g. for
@@ -515,7 +515,7 @@ def transform_documents_and_save_as_json(
     total_files = len(file_infos)
     if total_files == 0:
         logger.warning("[Vec] No files found to process")
-        return []
+        return 0
 
     logger.info(
         f"[Vec] Collected {total_files} file paths for "
@@ -523,17 +523,33 @@ def transform_documents_and_save_as_json(
     )
 
     # ================================================================
-    # Step 2: Fused read + split in batches of FILE_BATCH_SIZE
-    # Peak memory: ~FILE_BATCH_SIZE files (~150MB) instead of all
-    # files (~5GB for large repos)
+    # Step 2: Fused read + split + embed + save pipeline
+    #
+    # Each file batch is read → split → embedded → saved to disk
+    # in one pass. No accumulation of all chunks in memory.
+    # Peak memory: ~FILE_BATCH_SIZE files worth of chunks (~120MB)
+    # instead of ALL chunks across ALL batches (~1.5GB for 100K).
     # ================================================================
     FILE_BATCH_SIZE = 1000
-    enriched_chunks: List[Document] = []
+    EMBED_BATCH_SIZE = 500
+    embedder = get_embedder()
+    vector_storage = get_vector_storage()
+    api_batch_size = configs.get("embedder", {}).get("batch_size", 10)
+
     files_read = 0
-    read_start = time.time()
+    chunks_saved = 0
+    total_chunks = 0
+    pipeline_start = time.time()
 
     total_file_batches = (
         (total_files + FILE_BATCH_SIZE - 1) // FILE_BATCH_SIZE
+    )
+
+    logger.info(
+        f"[Vec] Starting fused pipeline: {total_files} files "
+        f"in {total_file_batches} file batches "
+        f"(file_batch={FILE_BATCH_SIZE}, embed_batch={EMBED_BATCH_SIZE}, "
+        f"api_batch={api_batch_size})"
     )
 
     for fb_idx in range(total_file_batches):
@@ -541,7 +557,7 @@ def transform_documents_and_save_as_json(
         fb_end = min(fb_start + FILE_BATCH_SIZE, total_files)
         batch_infos = file_infos[fb_start:fb_end]
 
-        # Read this batch of files into Documents
+        # --- Read this batch of files into Documents ---
         batch_docs = []
         for full_path, relative_path, ext, is_code in batch_infos:
             try:
@@ -577,124 +593,104 @@ def transform_documents_and_save_as_json(
             except Exception as e:
                 logger.error(f"[BE] Error reading {full_path}: {e}")
 
+        # --- Split into enriched chunks ---
+        batch_chunks = []
         if batch_docs:
             batch_chunks = split_and_enrich_documents(batch_docs)
-            enriched_chunks.extend(batch_chunks)
-            del batch_chunks
+        del batch_docs
+        gc.collect()
 
         files_read += len(batch_infos)
-        del batch_docs
+        total_chunks += len(batch_chunks)
+
+        if not batch_chunks:
+            if total_file_batches > 1:
+                logger.info(
+                    f"[Vec] File batch {fb_idx + 1}/"
+                    f"{total_file_batches}: {files_read}/{total_files} "
+                    f"files -> 0 chunks (skipped)"
+                )
+            continue
+
+        # --- Embed + save this batch's chunks immediately ---
+        batch_embed_batches = (
+            (len(batch_chunks) + EMBED_BATCH_SIZE - 1) // EMBED_BATCH_SIZE
+        )
+        for eb_idx in range(batch_embed_batches):
+            eb_start = eb_idx * EMBED_BATCH_SIZE
+            eb_end = min(eb_start + EMBED_BATCH_SIZE, len(batch_chunks))
+            embed_batch = batch_chunks[eb_start:eb_end]
+
+            # Embed via direct API calls in sub-batches
+            for sub_start in range(0, len(embed_batch), api_batch_size):
+                sub_end = min(
+                    sub_start + api_batch_size, len(embed_batch)
+                )
+                sub_batch = embed_batch[sub_start:sub_end]
+                texts = [doc.text for doc in sub_batch]
+                result = embedder(texts)
+                if hasattr(result, 'data') and result.data:
+                    for i, emb in enumerate(result.data):
+                        if i < len(sub_batch):
+                            sub_batch[i].vector = (
+                                emb.embedding
+                                if hasattr(emb, 'embedding')
+                                else emb
+                            )
+
+            batch_transformed = [
+                doc for doc in embed_batch
+                if hasattr(doc, 'vector') and doc.vector is not None
+            ]
+
+            if not batch_transformed:
+                logger.warning(
+                    f"[Vec] File batch {fb_idx + 1}, embed batch "
+                    f"{eb_idx + 1}: no documents after embedding"
+                )
+                continue
+
+            # Capture chunks_saved in a default argument to avoid
+            # late-binding closure issues with the lambda
+            if not vector_storage.save_documents(
+                batch_transformed,
+                repo_name,
+                branch,
+                progress_callback=(
+                    lambda saved, total, _base=chunks_saved: (
+                        progress_callback(_base + saved, total_chunks)
+                    )
+                ) if progress_callback else None
+            ):
+                raise ValueError(
+                    f"[Vec] Failed to save file batch {fb_idx + 1} "
+                    f"embed batch {eb_idx + 1} "
+                    f"for {repo_name}_{branch}"
+                )
+
+            chunks_saved += len(batch_transformed)
+            del batch_transformed, embed_batch
+            gc.collect()
+
+        del batch_chunks
         gc.collect()
 
         if total_file_batches > 1:
             logger.info(
-                f"[Vec] Read+split batch {fb_idx + 1}/"
+                f"[Vec] File batch {fb_idx + 1}/"
                 f"{total_file_batches}: {files_read}/{total_files} "
-                f"files -> {len(enriched_chunks)} chunks so far"
+                f"files, {chunks_saved}/{total_chunks} chunks saved"
             )
 
     # Release file_infos
     del file_infos
     gc.collect()
 
-    read_elapsed = time.time() - read_start
+    pipeline_elapsed = time.time() - pipeline_start
     logger.info(
-        f"[Vec] Read+split complete: {files_read} files -> "
-        f"{len(enriched_chunks)} enriched chunks in "
-        f"{read_elapsed:.1f}s"
-    )
-
-    if not enriched_chunks:
-        logger.warning("[Vec] No chunks after splitting")
-        return []
-
-    # ================================================================
-    # Step 3: Embed in batches (direct embedder calls)
-    # No accumulation — each batch is saved to disk and released.
-    # ================================================================
-    EMBED_BATCH_SIZE = 500
-    embedder = get_embedder()
-    vector_storage = get_vector_storage()
-
-    total_chunks = len(enriched_chunks)
-    total_batches = (
-        (total_chunks + EMBED_BATCH_SIZE - 1) // EMBED_BATCH_SIZE
-    )
-    api_batch_size = configs.get("embedder", {}).get("batch_size", 10)
-    logger.info(
-        f"[Vec] Starting embedding: {total_chunks} chunks "
-        f"in {total_batches} embed batches "
-        f"(embed_batch={EMBED_BATCH_SIZE}, api_batch={api_batch_size})"
-    )
-    embed_start = time.time()
-    chunks_saved = 0
-
-    for batch_idx in range(total_batches):
-        start = batch_idx * EMBED_BATCH_SIZE
-        end = min(start + EMBED_BATCH_SIZE, total_chunks)
-        batch = enriched_chunks[start:end]
-
-        # Embed via direct API calls in sub-batches
-        for sub_start in range(0, len(batch), api_batch_size):
-            sub_end = min(sub_start + api_batch_size, len(batch))
-            sub_batch = batch[sub_start:sub_end]
-            texts = [doc.text for doc in sub_batch]
-            result = embedder(texts)
-            if hasattr(result, 'data') and result.data:
-                for i, emb in enumerate(result.data):
-                    if i < len(sub_batch):
-                        sub_batch[i].vector = (
-                            emb.embedding
-                            if hasattr(emb, 'embedding')
-                            else emb
-                        )
-
-        batch_transformed = [
-            doc for doc in batch
-            if hasattr(doc, 'vector') and doc.vector is not None
-        ]
-
-        if not batch_transformed:
-            logger.warning(
-                f"[Vec] Batch {batch_idx + 1}/{total_batches}: "
-                f"no documents after embedding"
-            )
-            continue
-
-        if not vector_storage.save_documents(
-            batch_transformed,
-            repo_name,
-            branch,
-            progress_callback=(
-                lambda saved, total: progress_callback(
-                    chunks_saved + saved, total_chunks
-                )
-            ) if progress_callback else None
-        ):
-            raise ValueError(
-                f"[Vec] Failed to save batch {batch_idx + 1} "
-                f"for {repo_name}_{branch}"
-            )
-
-        chunks_saved += len(batch_transformed)
-
-        logger.info(
-            f"[Vec] Batch {batch_idx + 1}/{total_batches}: "
-            f"embedded + saved {len(batch_transformed)} chunks "
-            f"({chunks_saved}/{total_chunks} total)"
-        )
-
-        # Release batch — vectors NOT accumulated in memory
-        del batch_transformed, batch
-        gc.collect()
-
-    del enriched_chunks
-    gc.collect()
-
-    embed_elapsed = time.time() - embed_start
-    logger.info(
-        f"[Vec] Embedding completed in {embed_elapsed:.1f}s "
-        f"({total_chunks / max(embed_elapsed, 0.1):.0f} chunks/sec)"
+        f"[Vec] Fused pipeline complete in {pipeline_elapsed:.1f}s: "
+        f"{files_read} files -> {chunks_saved} chunks saved "
+        f"({chunks_saved / max(pipeline_elapsed, 0.1):.0f} chunks/sec)"
     )
 
     if chunks_saved == 0:
