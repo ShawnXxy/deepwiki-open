@@ -241,6 +241,62 @@ def step_embed(repo_url, token, branch):
     return rag
 
 
+def step_embed_cloud(repo_url, token, branch):
+    """Embed documents and save to blob (cloud mode, no FAISS).
+
+    Skips FAISS construction and document accumulation since wiki
+    generation will use Azure AI Search for retrieval instead.
+    Returns (chunk_count, owner, repo, branch_suffix) for downstream steps.
+    """
+    from backend.modules.embedder.indexer import DatabaseManager
+    from backend.modules.embedder.document import (
+        transform_documents_and_save_as_json,
+    )
+    from backend.clients.vector_storage import get_vector_storage
+
+    print("\n--- Step 2: Embedding documents (cloud mode) ---")
+    db_manager = DatabaseManager()
+    db_manager._create_repo(
+        repo_url, 'azuredevops', token, branch,
+        force_reprocess=True,
+    )
+
+    repo_name = db_manager.repo_paths["repo_name"]
+    branch_suffix = db_manager.repo_paths["branch_suffix"]
+
+    # Delete legacy pkl if exists
+    db_manager._delete_legacy_pkl(repo_name, branch_suffix)
+
+    # Snapshot for orphan cleanup
+    vector_storage = get_vector_storage()
+    old_files = vector_storage.list_files(repo_name, branch_suffix)
+
+    # Fused embed+save pipeline — skip all_embedded_docs accumulation
+    chunk_count, _ = transform_documents_and_save_as_json(
+        db_manager.repo_paths["save_repo_dir"],
+        repo_name,
+        branch_suffix,
+        repo_url=repo_url,
+        repo_type='azuredevops',
+        skip_accumulate=True,
+    )
+
+    # Orphan cleanup
+    if old_files:
+        new_files = vector_storage.list_files(repo_name, branch_suffix)
+        orphans = old_files - new_files
+        if orphans:
+            logger.info(
+                f"[Vec] Cleaning {len(orphans)} orphan files"
+            )
+            vector_storage.delete_files(
+                repo_name, branch_suffix, orphans
+            )
+
+    print(f"  Embedded {chunk_count} chunks (saved to blob, no FAISS)")
+    return chunk_count
+
+
 def step_generate_wiki(
     repo_url, branch, repo_path, retriever,
     commit_hash, language, comprehensive, owner, repo,
@@ -293,14 +349,21 @@ def step_save_wiki(wiki_data, language, comprehensive):
         print(f"  ERROR saving wiki cache: {e}")
 
 
-def step_push_to_search(owner, repo, branch):
+def step_push_to_search(owner, repo, branch, wait=False):
     """Push vectors to AI Search and trigger indexer (cloud only).
 
     Loads and pushes in batches of PUSH_BATCH_SIZE to avoid holding
     all vectors in memory at once (~725MB for 50K chunks).
+
+    Args:
+        owner: Repo owner
+        repo: Repo name
+        branch: Branch name
+        wait: If True, block until indexer completes (for cloud-first flow)
     """
     from backend.clients.search_client import (
-        get_index_name, push_documents, run_indexer, index_exists,
+        get_index_name, push_documents, run_indexer,
+        index_exists, wait_for_indexer,
     )
     from backend.clients.vector_storage import get_vector_storage
 
@@ -346,16 +409,74 @@ def step_push_to_search(owner, repo, branch):
     run_indexer(idx_name)
     print("  Indexer triggered")
 
+    if wait:
+        print("  Waiting for indexer to complete...")
+        success = wait_for_indexer(idx_name, timeout_seconds=600)
+        if not success:
+            print("  WARNING: Indexer did not complete in time")
+            logger.error(
+                "Indexer timeout — wiki generation may have "
+                "incomplete results"
+            )
+        else:
+            print("  Indexer completed successfully")
+
 
 # ============================================================================
 # Processing pipeline (all modes)
 # ============================================================================
+
+def step_generate_wiki_cloud(
+    repo_url, branch, repo_path, owner, repo,
+    commit_hash, language, comprehensive,
+):
+    """Generate wiki using Azure AI Search for retrieval (cloud mode).
+
+    Creates a lightweight RAG instance with cloud search enabled.
+    No FAISS, no in-memory document loading (~50 MB steady-state).
+    """
+    from backend.modules.embedder.retriever import RAG
+    from backend.clients.search_client import get_index_name
+    from backend.processor.wiki_generator import generate_wiki
+
+    print("\n--- Step 3: Generating wiki (cloud retrieval) ---")
+
+    # Create lightweight RAG for cloud retrieval only
+    rag = RAG(provider='azure')
+    idx_name = get_index_name(owner, repo, branch or 'main')
+    rag.prepare_for_cloud(idx_name)
+
+    # Release unused components
+    rag.generator = None
+    rag.memory = None
+    rag.db_manager = None
+
+    return generate_wiki(
+        repo_url=repo_url,
+        branch=branch,
+        repo_type='azuredevops',
+        repo_path=repo_path,
+        retriever=rag,
+        commit_hash=commit_hash,
+        language=language,
+        comprehensive=comprehensive,
+        owner=owner,
+        repo=repo,
+    )
+
 
 def _process(mode, repo_url, branch, language, comprehensive):
     """Run the processing pipeline using step functions.
 
     The mode determines auth; config (already set before this call)
     determines storage backend (local/blob) and retrieval (FAISS/AI Search).
+
+    Cloud mode uses a reordered pipeline:
+        embed → push to AI Search → wait for indexer → generate via Search
+    This avoids building FAISS (~1.5 GB) during wiki generation.
+
+    Local/Docker mode uses the original pipeline:
+        embed + FAISS → generate via FAISS → push to Search (if configured)
     """
     owner, repo = _extract_owner_repo(repo_url)
     repo_name = f"{owner}_{repo}"
@@ -372,36 +493,56 @@ def _process(mode, repo_url, branch, language, comprehensive):
 
     token = resolve_auth(mode)
 
-    # Clone to local temp disk (all modes - even cloud clones locally
+    # Clone to local temp disk (all modes — even cloud clones locally
     # on AML compute; vectors and wiki go to blob via storage abstraction)
     repo_dir, commit_hash = step_clone(repo_url, token, branch, repo_name)
 
-    # Embed: vectors saved to local disk (local/docker) or blob (cloud)
-    # This is driven by config: azure_blob_storage.enabled
-    retriever = step_embed(repo_url, token, branch)
-
-    # Generate wiki: retrieval via FAISS (local/docker) or AI Search (cloud)
-    # Driven by config: azure_ai_search.enabled + is_search_configured()
-    try:
-        wiki_data = step_generate_wiki(
-            repo_url, branch, repo_dir, retriever,
-            commit_hash, language, comprehensive, owner, repo,
-        )
-    except Exception as e:
-        logger.error(f"Wiki generation failed: {e}", exc_info=True)
-        print(f"\n  ERROR in wiki generation: {e}")
-        sys.exit(1)
-
-    # Free FAISS index + transformed_docs before save/push
-    del retriever
-    gc.collect()
-
-    # Save wiki cache: local disk (local/docker) or blob (cloud)
-    step_save_wiki(wiki_data, language, comprehensive)
-
-    # Cloud only: push vectors to AI Search for indexer sync
     if mode == 'cloud':
-        step_push_to_search(owner, repo, branch)
+        # ============================================================
+        # CLOUD MODE: embed → push to search → generate via search
+        # No FAISS, no in-memory document loading (~120 MB peak)
+        # ============================================================
+        step_embed_cloud(repo_url, token, branch)
+
+        step_push_to_search(owner, repo, branch, wait=True)
+
+        try:
+            wiki_data = step_generate_wiki_cloud(
+                repo_url, branch, repo_dir, owner, repo,
+                commit_hash, language, comprehensive,
+            )
+        except Exception as e:
+            logger.error(
+                f"Wiki generation failed: {e}", exc_info=True
+            )
+            print(f"\n  ERROR in wiki generation: {e}")
+            sys.exit(1)
+
+        step_save_wiki(wiki_data, language, comprehensive)
+    else:
+        # ============================================================
+        # LOCAL / DOCKER MODE: embed + FAISS → generate via FAISS
+        # (unchanged from existing implementation)
+        # ============================================================
+        retriever = step_embed(repo_url, token, branch)
+
+        try:
+            wiki_data = step_generate_wiki(
+                repo_url, branch, repo_dir, retriever,
+                commit_hash, language, comprehensive, owner, repo,
+            )
+        except Exception as e:
+            logger.error(
+                f"Wiki generation failed: {e}", exc_info=True
+            )
+            print(f"\n  ERROR in wiki generation: {e}")
+            sys.exit(1)
+
+        # Free FAISS index + transformed_docs before save/push
+        del retriever
+        gc.collect()
+
+        step_save_wiki(wiki_data, language, comprehensive)
 
     print(f"\n{'='*60}")
     print("Processing complete")

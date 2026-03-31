@@ -337,6 +337,25 @@ IMPORTANT FORMATTING RULES:
                 logger.error(f"Sample embedding sizes: {', '.join(sizes)}")
             raise
 
+    def prepare_for_cloud(self, index_name: str):
+        """Configure RAG for cloud-only retrieval (no FAISS).
+
+        Used by the processor in cloud mode when Azure AI Search is
+        the retrieval backend. Skips document loading and FAISS
+        construction entirely.
+
+        Args:
+            index_name: AI Search index name to query
+        """
+        self.use_cloud_search = True
+        self.cloud_index_name = index_name
+        self.transformed_docs = []
+        self._file_path_index = {}
+        logger.info(
+            f"[RAG] Cloud-only mode: "
+            f"using AI Search index '{index_name}'"
+        )
+
     def call(self, query: str, language: str = "en") -> Tuple[List]:
         """
         Process a query using RAG.

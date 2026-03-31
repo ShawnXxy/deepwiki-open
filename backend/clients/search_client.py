@@ -482,6 +482,75 @@ def run_indexer(index_name: str) -> None:
         logger.warning(f"Could not trigger indexer {indexer_name}: {e}")
 
 
+def wait_for_indexer(
+    index_name: str,
+    timeout_seconds: int = 300,
+    poll_interval: int = 10,
+) -> bool:
+    """Wait for the indexer to complete its current run.
+
+    Polls indexer status until success, failure, or timeout.
+
+    Args:
+        index_name: Index name (indexer name derived as {index_name}-indexer)
+        timeout_seconds: Maximum wait time (default 5 minutes)
+        poll_interval: Seconds between status checks (default 10s)
+
+    Returns:
+        True if indexer completed successfully, False on timeout/failure
+    """
+    import time
+
+    indexer_name = f"{index_name}-indexer"
+    client = _get_indexer_client()
+    start = time.time()
+
+    while time.time() - start < timeout_seconds:
+        try:
+            status = client.get_indexer_status(indexer_name)
+            last_result = status.last_result
+            if last_result is None:
+                logger.info(
+                    f"Indexer {indexer_name}: no run yet, waiting..."
+                )
+                time.sleep(poll_interval)
+                continue
+
+            run_status = str(last_result.status)
+            if run_status in ("success", "Success"):
+                elapsed = time.time() - start
+                item_count = getattr(last_result, 'item_count', '?')
+                logger.info(
+                    f"Indexer {indexer_name} completed in "
+                    f"{elapsed:.0f}s ({item_count} items indexed)"
+                )
+                return True
+            elif run_status in ("inProgress", "InProgress"):
+                logger.info(
+                    f"Indexer {indexer_name}: in progress, "
+                    f"waiting {poll_interval}s..."
+                )
+                time.sleep(poll_interval)
+            else:
+                errors = getattr(last_result, 'errors', '')
+                logger.warning(
+                    f"Indexer {indexer_name} status: {run_status}"
+                    f" — {errors}"
+                )
+                return False
+        except Exception as e:
+            logger.warning(
+                f"Error polling indexer {indexer_name}: {e}, "
+                f"retrying..."
+            )
+            time.sleep(poll_interval)
+
+    logger.error(
+        f"Indexer {indexer_name} timed out after {timeout_seconds}s"
+    )
+    return False
+
+
 def delete_indexer(index_name: str) -> None:
     """Delete indexer and data source for an index."""
     indexer_name = f"{index_name}-indexer"

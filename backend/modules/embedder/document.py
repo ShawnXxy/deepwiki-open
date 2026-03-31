@@ -403,7 +403,8 @@ def transform_documents_and_save_as_json(
     excluded_files: List[str] = None,
     included_dirs: List[str] = None,
     included_files: List[str] = None,
-    progress_callback: callable = None
+    progress_callback: callable = None,
+    skip_accumulate: bool = False,
 ) -> Tuple[int, List[Document]]:
     """
     Reads, splits, embeds and saves documents as JSON chunk files.
@@ -415,7 +416,8 @@ def transform_documents_and_save_as_json(
 
     Returns both the chunk count and the embedded documents so that
     callers (e.g. FAISS) can use them directly without reloading
-    from disk.
+    from disk. When skip_accumulate=True (cloud mode), returns an
+    empty list to avoid holding all documents in memory.
 
     Storage structure:
         vectors/{repo_name}_{branch}/
@@ -433,12 +435,15 @@ def transform_documents_and_save_as_json(
         included_dirs: Directories to include exclusively
         included_files: File patterns to include exclusively
         progress_callback: Optional callback(saved, total) for progress
+        skip_accumulate: If True, skip collecting documents for return
+            (cloud mode — FAISS not needed, saves ~1.5 GB for 100K chunks)
 
     Returns:
         Tuple of (chunk_count, documents):
             chunk_count: Total number of chunks embedded and saved
             documents: List of Document objects with vectors attached,
-                ready for FAISS index construction
+                ready for FAISS index construction.
+                Empty list when skip_accumulate=True.
 
     Raises:
         ConnectionError: If Azure Blob Storage is configured but fails
@@ -672,7 +677,8 @@ def transform_documents_and_save_as_json(
                     f"for {repo_name}_{branch}"
                 )
 
-            all_embedded_docs.extend(batch_transformed)
+            if not skip_accumulate:
+                all_embedded_docs.extend(batch_transformed)
             chunks_saved += len(batch_transformed)
             del batch_transformed, embed_batch
             gc.collect()
