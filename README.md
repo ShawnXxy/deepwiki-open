@@ -14,6 +14,14 @@ The general workflow is:
 6. Organize everything into a structured wiki
 7. Enable intelligent Q&A with the repository through the Ask feature
 
+### Branch Policy
+
+| Branch | Purpose | Status |
+|--------|---------|--------|
+| `main` | Original upstream public branch (fork origin) | **Do not modify.** Not maintained or updated. Do not contribute to this branch. |
+| `orcas` | Production-ready branch with V2 architecture designed | **Active development.** All new work targets this branch. |
+| `orcas-release-v1` | Last stable release on V1 architecture | **Frozen.** Reference only. |
+
 ## Architecture V2 (Current)
 
 ```
@@ -82,6 +90,7 @@ For detailed module documentation, see:
 - [backend/modules/embedder/README.md](backend/modules/embedder/README.md) — Code splitting, embedding, FAISS retrieval
 - [backend/modules/repository/README.md](backend/modules/repository/README.md) — Git operations
 - [backend/modules/wiki/README.md](backend/modules/wiki/README.md) — Wiki cache, data models, export
+- [src/components/DESIGN.md](src/components/DESIGN.md) — Frontend architecture, component reference, Mermaid rendering pipeline
 
 > **Architecture Note**: The backend uses a modular architecture with clear separation of concerns:
 > - **modules/**: Domain-specific business logic
