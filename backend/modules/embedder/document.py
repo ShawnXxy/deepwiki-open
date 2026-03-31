@@ -533,8 +533,8 @@ def transform_documents_and_save_as_json(
     # Peak memory: ~FILE_BATCH_SIZE files worth of chunks (~120MB)
     # instead of ALL chunks across ALL batches (~1.5GB for 100K).
     # ================================================================
-    FILE_BATCH_SIZE = 1000
-    EMBED_BATCH_SIZE = 500
+    FILE_BATCH_SIZE = configs.get("embedder", {}).get("file_batch_size", 1000)
+    EMBED_BATCH_SIZE = configs.get("embedder", {}).get("embed_batch_size", 500)
     embedder = get_embedder()
     vector_storage = get_vector_storage()
     api_batch_size = configs.get("embedder", {}).get("batch_size", 10)

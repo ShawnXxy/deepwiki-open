@@ -10,6 +10,28 @@ Runs as a one-shot CLI command — no server required. Transforms a code reposit
 
 **Pipeline:** Clone repo → Embed documents → Generate wiki → Save cache
 
+<details>
+The pipeline runs in 5 sequential steps in code_processor.py:
+
+Step 1 — Clone: Git clone to ~/.adalflow/repos/. Low memory.
+Step 2 — Embed (document.py + indexer.py):
+- Phase A: Walk filesystem, collect file paths (~300B/file, lightweight)
+- Phase B: Read files in batches of FILE_BATCH_SIZE=1000, split into chunks, enrich with metadata → accumulate ALL chunks in enriched_chunks list
+- Phase C: Embed in batches of EMBED_BATCH_SIZE=500, save each batch to JSON on disk immediately
+
+Step 3 — Build FAISS & Generate Wiki (retriever.py + wiki_generator.py):
+- Load ALL vector JSON files from disk into transformed_docs
+- Build FAISS in-memory index
+- Strip .vector from docs (saves ~12KB/chunk)
+  
+  For each page (~20-25): query FAISS for top-40 chunks → LLM generates page
+  
+Step 4 — Save cache: Serialize WikiCacheData to JSON on disk/blob (~500KB-5MB)
+
+Step 5 — Push to AI Search (cloud only): Load vectors from disk in batches of 1000, push, release
+
+</details>
+
 ## Files
 
 | File | Purpose |

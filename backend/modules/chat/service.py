@@ -214,11 +214,16 @@ def format_context_text(
             header += f"\n({' | '.join(summary_parts)})"
         header += "\n"
 
-        # Use raw_chunk_text from metadata for display (clean code),
-        # falling back to doc.text for legacy chunks
+        # Derive display text: strip enrichment header from doc.text.
+        # New chunks store _header_len (offset of raw code in .text).
+        # Legacy chunks (loaded from old JSON) store raw_chunk_text.
         chunk_texts = []
         for doc in docs:
-            raw_text = doc.meta_data.get('raw_chunk_text', doc.text)
+            header_len = doc.meta_data.get('_header_len')
+            if header_len is not None:
+                raw_text = doc.text[header_len:]
+            else:
+                raw_text = doc.meta_data.get('raw_chunk_text', doc.text)
             section_type = doc.meta_data.get('section_type', '')
             start_line = doc.meta_data.get('start_line')
             end_line = doc.meta_data.get('end_line')

@@ -229,6 +229,15 @@ def step_embed(repo_url, token, branch):
         force_reprocess=True,
     )
     print(f"  Retriever ready ({len(rag.transformed_docs)} docs)")
+
+    # Release components unused during processor wiki generation:
+    # - generator: wiki_generator.py uses its own _call_llm()
+    # - memory: no conversation history during batch processing
+    # - db_manager: database already prepared, not needed further
+    rag.generator = None
+    rag.memory = None
+    rag.db_manager = None
+
     return rag
 
 

@@ -221,7 +221,11 @@ def push_documents(
             "title": meta.get('file_path', ''),
             "filepath": meta.get('file_path', ''),
             "content": doc.text or '',
-            "raw_content": meta.get('raw_chunk_text', doc.text or ''),
+            "raw_content": (
+                doc.text[meta['_header_len']:]
+                if '_header_len' in meta
+                else meta.get('raw_chunk_text', doc.text or '')
+            ),
             "service_id": repo_name,
             "content_vector": doc.vector if doc.vector else [],
         }

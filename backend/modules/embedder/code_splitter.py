@@ -587,7 +587,7 @@ def split_and_enrich_documents(
                     text=enriched_text,
                     meta_data={
                         **chunk_meta,
-                        'raw_chunk_text': chunk['text'],
+                        '_header_len': len(enriched_text) - len(chunk['text']),
                         'section_type': chunk.get('section_type', 'code'),
                         'start_line': chunk.get('start_line', 0),
                         'end_line': chunk.get('end_line', 0),
@@ -627,7 +627,7 @@ def split_and_enrich_documents(
                     text=enriched_text,
                     meta_data={
                         **chunk_meta,
-                        'raw_chunk_text': chunk_text,
+                        '_header_len': len(enriched_text) - len(chunk_text),
                         'section_type': file_section_type,
                         'start_line': 0,
                         'end_line': 0,
