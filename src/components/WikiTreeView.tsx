@@ -87,7 +87,7 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
       <div key={sectionId} className="mb-2">
         <div className="flex items-center">
           <button
-            className="flex-shrink-0 p-1 rounded hover:bg-[var(--background)]/70 transition-colors"
+            className="flex-shrink-0 w-6 flex items-center justify-center rounded hover:bg-[var(--background)]/70 transition-colors"
             onClick={(e) => toggleSection(sectionId, e)}
           >
             {isExpanded ? (
@@ -110,12 +110,12 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
               }
             }}
           >
-            <span className="truncate">{section.title}</span>
+            <span className="truncate"><span className="text-[var(--muted)] mr-1.5 font-normal">{sectionId}</span>{section.title}</span>
           </button>
         </div>
 
         {isExpanded && (
-          <div className={`ml-4 mt-1 space-y-1 ${level > 0 ? 'pl-2 border-l border-[var(--border-color)]/30' : ''}`}>
+          <div className="ml-4 mt-1 space-y-1 pl-2 border-l border-[var(--border-color)]/30">
             {/* Render child pages (skip the overview page — it's the section header) */}
             {childPages.map(pageId => {
               const page = wikiStructure.pages.find(p => p.id === pageId);
@@ -133,15 +133,7 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
                   onClick={() => onPageSelect(pageId)}
                 >
                   <div className="flex items-center">
-                    <div
-                      className={`w-2 h-2 rounded-full mr-2 flex-shrink-0 ${
-                        page.importance === 'high'
-                          ? 'bg-[#0078d4]'
-                          : page.importance === 'medium'
-                          ? 'bg-[#50e6ff]'
-                          : 'bg-[#a0aec0]'
-                      }`}
-                    ></div>
+                    <span className="text-[var(--muted)] mr-1.5 text-xs flex-shrink-0">{pageId}</span>
                     <span className="truncate">{page.title}</span>
                   </div>
                 </button>
@@ -182,12 +174,12 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
         <div className="flex items-center">
           {hasChildren ? (
             <button
-              className="flex-shrink-0 p-1 rounded hover:bg-[var(--background)]/70 transition-colors"
+              className="flex-shrink-0 w-6 flex items-center justify-center rounded hover:bg-[var(--background)]/70 transition-colors"
               onClick={(e) => toggleSection(section.id, e)}
             >
               {isExpanded ? <FaChevronDown className="text-xs" /> : <FaChevronRight className="text-xs" />}
             </button>
-          ) : <span className="w-6" />}
+          ) : <span className="w-6 flex-shrink-0" />}
           <button
             className={`flex-1 text-left px-1 py-1 rounded-md text-sm font-medium transition-colors ${
               isOverviewSelected
@@ -202,7 +194,7 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
               }
             }}
           >
-            <span className="truncate">{section.title}</span>
+            <span className="truncate"><span className="text-[var(--muted)] mr-1.5 font-normal">{section.id}</span>{section.title}</span>
           </button>
         </div>
 
@@ -221,7 +213,7 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
                   }`}
                   onClick={() => onPageSelect(pageId)}
                 >
-                  <span className="truncate">{page.title}</span>
+                  <span className="truncate"><span className="text-[var(--muted)] mr-1.5 text-xs">{pageId}</span>{page.title}</span>
                 </button>
               );
             })}
