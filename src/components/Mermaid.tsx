@@ -4,7 +4,7 @@ import logger from '../utils/logger';
 
 // Initialize mermaid with minimal config - styles are in globals.css
 mermaid.initialize({
-  startOnLoad: true,
+  startOnLoad: false,
   theme: 'neutral',
   securityLevel: 'loose',
   suppressErrorRendering: true,
@@ -51,13 +51,6 @@ const CloseIcon = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
        fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-  </svg>
-);
-
-const WarningIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
   </svg>
 );
 
@@ -135,115 +128,128 @@ const FullScreenModal: React.FC<{
 };
 
 /**
- * Sanitizes Mermaid diagram content to fix common parsing issues
- * @param content - Raw Mermaid diagram content  
- * @returns Sanitized content safe for Mermaid rendering
+ * Sanitize mermaid content with progressive levels of aggressiveness.
+ *
+ * Level 0 — Structural fixes only (mismatched diagram types, missing
+ *           participants, source citations). Safe for all diagrams.
+ * Level 1 — Escape special characters in labels and edge text.
+ *           Fixes the majority of LLM-generated syntax errors.
+ * Level 2 — Strip all advanced features that LLMs frequently break
+ *           (activation markers, nested shapes). Last resort before
+ *           falling back to a code-block display.
  */
-const sanitizeMermaidContent = (content: string): string => {
+function sanitizeAtLevel(content: string, level: number): string {
   if (!content) return content;
 
-  let sanitized = content;
-  const isFlowchart = /^\s*(graph|flowchart)\s+(TB|TD|BT|RL|LR)/im.test(sanitized);
-  const isSequenceDiagram = /^\s*sequenceDiagram/im.test(sanitized);
+  let s = content;
+  const isFlowchart = /^\s*(graph|flowchart)\s+(TB|TD|BT|RL|LR)/im.test(s);
+  const isSequence = /^\s*sequenceDiagram/im.test(s);
 
-  // Fix sequence diagram issues
-  if (isSequenceDiagram) {
-    // Extract all participant declarations
-    const participantRegex = /^\s*participant\s+(\w+)(?:\s+as\s+.+)?$/gim;
-    const declaredParticipants = new Set<string>();
-    let match;
-    while ((match = participantRegex.exec(sanitized)) !== null) {
-      declaredParticipants.add(match[1]);
-    }
+  // ── Level 0: structural / cross-syntax fixes (always applied) ──────────
 
-    // Find all used participants in messages
-    const messageRegex = /^\s*(\w+)\s*(->>?|-->>?|-\)|\)\)|->x|-->x)\s*[+-]?(\w+)/gim;
-    const usedParticipants = new Set<string>();
-    let msgMatch;
-    const tempContent = sanitized;
-    while ((msgMatch = messageRegex.exec(tempContent)) !== null) {
-      usedParticipants.add(msgMatch[1]); // From participant
-      usedParticipants.add(msgMatch[3]); // To participant
-    }
-
-    // Add missing participant declarations at the top
-    const missingParticipants = Array.from(usedParticipants).filter(p => !declaredParticipants.has(p));
-    if (missingParticipants.length > 0) {
-      const sequenceDiagramLine = sanitized.match(/^(\s*sequenceDiagram\s*)$/im);
-      if (sequenceDiagramLine && sequenceDiagramLine.index !== undefined) {
-        const insertPos = sequenceDiagramLine.index + sequenceDiagramLine[0].length;
-        const declarations = missingParticipants.map(p => `\n    participant ${p}`).join('');
-        sanitized = sanitized.slice(0, insertPos) + declarations + sanitized.slice(insertPos);
-      }
-    }
-
-    // Fix invalid arrow syntax like )|  - should be -) for async
-    sanitized = sanitized.replace(/(\w+)\s*\)\|\s*(\w+)/g, '$1 -) $2');
-    
-    // Fix PS syntax error - likely meant -) for async or ->> for sync
-    sanitized = sanitized.replace(/(\w+)\s*PS\s*(\w+)/g, '$1 -) $2');
-  }
-
-  // Convert sequence arrows to flowchart arrows when misused
-  if (isFlowchart && !isSequenceDiagram) {
-    sanitized = sanitized
-      .replace(/(\w+)\s*-->>\s*(\w+)/g, '$1 -.-> $2')
-      .replace(/(\w+)\s*->>\s*(\w+)/g, '$1 --> $2')
-      .replace(/(\w+)\s*->>([^>])/g, '$1 -->$2')
-      .replace(/(\w+)\s*-->>([^>])/g, '$1 -.->$2');
-  }
-
-  // Fix edge labels - remove special chars
-  sanitized = sanitized.replace(/-->\|([^|]+)\|/g, (_, label) => 
-    `-->|${label.replace(/[<>]/g, '').trim()}|`
-  );
-
-  // Fix parentheses in square bracket labels
-  sanitized = sanitized.replace(/(\w+)\[([^\]]*\([^)]*\)[^\]]*)\]/g, (_, nodeId, label) => 
-    `${nodeId}["${label.replace(/\(/g, '❨').replace(/\)/g, '❩')}"]`
-  );
-
-  // Fix commas in node labels
-  sanitized = sanitized.replace(/(\w+)\[([^\]]*,[^\]]*)\]/g, (match, nodeId, label) => {
-    if (label.startsWith('"') && label.endsWith('"')) return match;
-    return `${nodeId}["${label.replace(/,/g, ';')}"]`;
-  });
-
-  // Convert source citations to comments
-  sanitized = sanitized.replace(/Sources:\s*\[([^\]]+)\]\(\)/g, '%% Source: $1');
-  sanitized = sanitized.replace(/Sources:\s*(\[([^\]]+)\]\([^)]+\)(?:,\s*)?)+/g, (match) => {
+  // Convert source citations to mermaid comments
+  s = s.replace(/Sources:\s*\[([^\]]+)\]\(\)/g, '%% Source: $1');
+  s = s.replace(/Sources:\s*(\[([^\]]+)\]\([^)]+\)(?:,\s*)?)+/g, (match) => {
     const citations: string[] = [];
     let m;
-    const pattern = /\[([^\]]+)\]\(([^)]+)\)/g;
-    while ((m = pattern.exec(match)) !== null) {
-      citations.push(`%% Source: ${m[1]} - ${m[2]}`);
-    }
+    const p = /\[([^\]]+)\]\(([^)]+)\)/g;
+    while ((m = p.exec(match)) !== null) citations.push(`%% Source: ${m[1]} - ${m[2]}`);
     return citations.join('\n');
   });
+  s = s.replace(/\[([^\]]*)\]\(\)(?!\s*-->|\s*---|\s*--)/g, '($1)');
 
-  // Fix standalone brackets with empty URLs
-  sanitized = sanitized.replace(/\[([^\]]*)\]\(\)(?!\s*-->|\s*---|\s*--)/g, '($1)');
-
-  // Fix nested parentheses in round-bracket nodes
-  sanitized = sanitized.replace(/(\w+)\(([^)]*\([^)]*\)[^)]*)\)/g, (_, nodeId, label) => 
-    `${nodeId}(${label.replace(/\(/g, '❨').replace(/\)/g, '❩')})`
-  );
-
-  if (content !== sanitized) {
-    logger.debug('Mermaid content sanitized', {
-      original: content.substring(0, 200),
-      sanitized: sanitized.substring(0, 200)
-    });
+  if (isSequence) {
+    // Auto-declare missing participants
+    const declared = new Set<string>();
+    for (const m of s.matchAll(/^\s*participant\s+(\w+)/gim)) declared.add(m[1]);
+    const used = new Set<string>();
+    for (const m of s.matchAll(/^\s*(\w+)\s*(->>?|-->>?|-\)|\)\)|->x|-->x)\s*[+-]?(\w+)/gim)) {
+      used.add(m[1]); used.add(m[3]);
+    }
+    const missing = [...used].filter(p => !declared.has(p));
+    if (missing.length) {
+      const anchor = s.match(/^(\s*sequenceDiagram\s*)$/im);
+      if (anchor?.index !== undefined) {
+        const pos = anchor.index + anchor[0].length;
+        s = s.slice(0, pos) + missing.map(p => `\n    participant ${p}`).join('') + s.slice(pos);
+      }
+    }
+    // Fix obviously wrong arrow tokens
+    s = s.replace(/(\w+)\s*\)\|\s*(\w+)/g, '$1 -) $2');
+    s = s.replace(/(\w+)\s*PS\s*(\w+)/g, '$1 -) $2');
   }
 
-  return sanitized;
-};
+  if (isFlowchart && !isSequence) {
+    // Convert misused sequence arrows in flowcharts
+    s = s.replace(/(\w+)\s*-->>\s*(\w+)/g, '$1 -.-> $2');
+    s = s.replace(/(\w+)\s*->>\s*(\w+)/g, '$1 --> $2');
+    s = s.replace(/(\w+)\s*->>([^>])/g, '$1 -->$2');
+    s = s.replace(/(\w+)\s*-->>([^>])/g, '$1 -.->$2');
+    // Convert sequence-style colon labels to pipe labels
+    s = s.replace(/(\w+)\s*(-->|-.->)\s*(\w+):\s*(.+)$/gm, '$1 $2|$4| $3');
+  }
+
+  if (level === 0) return s;
+
+  // ── Level 1: escape special chars in labels and messages ───────────────
+
+  if (isSequence) {
+    // Curly braces in message text
+    s = s.replace(/(:\s*[^:\n]*)\{([^}\n]*)\}/g, '$1($2)');
+  }
+
+  if (isFlowchart || (!isSequence && !isFlowchart)) {
+    // Escape edge labels (pipe-delimited text between arrows)
+    const escapeLabel = (_: string, label: string) =>
+      label.replace(/[<>]/g, '').replace(/\(/g, '❨').replace(/\)/g, '❩').trim();
+    s = s.replace(/-->\|([^|]+)\|/g, (m, l) => `-->|${escapeLabel(m, l)}|`);
+    s = s.replace(/-\.->\|([^|]+)\|/g, (m, l) => `-.->|${escapeLabel(m, l)}|`);
+
+    // Parentheses inside square-bracket labels
+    s = s.replace(/(\w+)\[([^\]]*\([^)]*\)[^\]]*)\]/g, (_, id, l) =>
+      `${id}["${l.replace(/\(/g, '❨').replace(/\)/g, '❩')}"]`
+    );
+
+    // Nested square brackets inside labels
+    s = s.replace(/(\w+)\[("?)([^\]"]*)\[([^\]]*)\]([^\]"]*)\2\]/g,
+      (_, id, _q, a, inner, b) => `${id}["${a}⟦${inner}⟧${b}"]`
+    );
+
+    // Commas in unquoted labels
+    s = s.replace(/(\w+)\[([^\]]*,[^\]]*)\]/g, (match, id, l) => {
+      if (l.startsWith('"') && l.endsWith('"')) return match;
+      return `${id}["${l.replace(/,/g, ';')}"]`;
+    });
+
+    // Nested parentheses in round-bracket nodes
+    s = s.replace(/(\w+)\(([^)]*\([^)]*\)[^)]*)\)/g, (_, id, l) =>
+      `${id}(${l.replace(/\(/g, '❨').replace(/\)/g, '❩')})`
+    );
+  }
+
+  if (level === 1) return s;
+
+  // ── Level 2: strip advanced features that LLMs frequently break ────────
+
+  if (isSequence) {
+    // Strip activation markers (+/-) — LLMs mismatch them constantly
+    s = s.replace(/(->>?|-->>?)\s*([+-])\s*/g, '$1 ');
+    s = s.replace(/(\w+)\s*([+-])\s*(->>?|-->>?)/g, '$1 $3');
+  }
+
+  // Quote ALL unquoted square-bracket labels as a nuclear option
+  s = s.replace(/(\w+)\[([^\]"]+)\]/g, (match, id, label) => {
+    if (/^[a-zA-Z0-9 _.:-]+$/.test(label)) return match; // already safe
+    return `${id}["${label.replace(/"/g, '#quot;')}"]`;
+  });
+
+  return s;
+}
 
 const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled = false }) => {
   const [svg, setSvg] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const mermaidRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const idRef = useRef(`mermaid-${Math.random().toString(36).substring(2, 9)}`);
   const isDarkMode = typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches;
@@ -279,56 +285,58 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
     setTimeout(initPanZoom, 100);
   }, [svg, zoomingEnabled]);
 
-  // Render chart when content changes
+  // Render chart with progressive sanitization: try increasing levels
+  // until one succeeds, or fall back to displaying source code.
   useEffect(() => {
     if (!chart) return;
     let isMounted = true;
+    // Each attempt needs a unique ID to avoid mermaid ID collisions
+    const baseId = idRef.current;
+
+    const tryRender = async (text: string, attempt: number): Promise<string | null> => {
+      // Validate syntax first — parse() with suppressErrors silently returns
+      // false without triggering console.error or Next.js error overlay.
+      // Only proceed to render() when we know the syntax is valid.
+      const parseResult = await mermaid.parse(text, { suppressErrors: true });
+      if (!parseResult) return null;
+
+      try {
+        const id = attempt === 0 ? baseId : `${baseId}-r${attempt}`;
+        const { svg } = await mermaid.render(id, text);
+        return svg;
+      } catch {
+        return null;
+      }
+    };
 
     const renderChart = async () => {
       if (!isMounted) return;
+      setError(null);
+      setSvg('');
 
-      try {
-        setError(null);
-        setSvg('');
-
-        const sanitizedChart = sanitizeMermaidContent(chart);
-        const { svg: rendered } = await mermaid.render(idRef.current, sanitizedChart);
-
+      // Progressive rendering: try level 0 → 1 → 2
+      for (let level = 0; level <= 2; level++) {
         if (!isMounted) return;
+        const sanitized = sanitizeAtLevel(chart, level);
+        const rendered = await tryRender(sanitized, level);
 
-        // Add dark mode attribute
-        let processed = rendered;
-        if (isDarkMode) {
-          processed = processed.replace('<svg ', '<svg data-theme="dark" ');
-        }
-
-        setSvg(processed);
-        setTimeout(() => mermaid.contentLoaded(), 50);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : String(err);
-        // Use warn instead of error — Mermaid syntax issues are expected
-        // and handled gracefully in the UI with a fallback display.
-        logger.warn('Mermaid rendering issue', {
-          chart: chart.substring(0, 200)
-        });
-
-        if (isMounted) {
-          setError(`Failed to render diagram: ${errorMsg}`);
-          if (mermaidRef.current) {
-            const sanitized = sanitizeMermaidContent(chart);
-            mermaidRef.current.innerHTML = `
-              <div class="text-red-500 dark:text-red-400 text-xs mb-1">Syntax error in diagram</div>
-              <details class="text-xs mb-2">
-                <summary class="cursor-pointer text-gray-600 dark:text-gray-400">Show original</summary>
-                <pre class="text-xs overflow-auto p-2 bg-gray-100 dark:bg-gray-800 rounded mt-1">${chart}</pre>
-              </details>
-              <details class="text-xs">
-                <summary class="cursor-pointer text-gray-600 dark:text-gray-400">Show sanitized</summary>
-                <pre class="text-xs overflow-auto p-2 bg-gray-100 dark:bg-gray-800 rounded mt-1">${sanitized}</pre>
-              </details>
-            `;
+        if (rendered && isMounted) {
+          let processed = rendered;
+          if (isDarkMode) {
+            processed = processed.replace('<svg ', '<svg data-theme="dark" ');
           }
+          setSvg(processed);
+          if (level > 0) {
+            logger.debug('Mermaid rendered after sanitization', { level, chart: chart.substring(0, 100) });
+          }
+          return;
         }
+      }
+
+      // All levels failed — show source as fallback
+      if (isMounted) {
+        logger.warn('Mermaid rendering failed at all levels', { chart: chart.substring(0, 200) });
+        setError('Diagram could not be rendered');
       }
     };
 
@@ -340,20 +348,14 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
     if (!error && svg) setIsFullscreen(true);
   }, [error, svg]);
 
-  // Error state
+  // Error fallback — show source as formatted code block instead of ugly error
   if (error) {
     return (
-      <div className={`border border-[var(--highlight)]/30 rounded-md p-4 bg-[var(--highlight)]/5 ${className}`}>
-        <div className="flex items-center mb-3">
-          <div className="text-[var(--highlight)] text-xs font-medium flex items-center">
-            <WarningIcon />
-            Diagram Rendering Error
-          </div>
+      <div className={`my-4 rounded-md overflow-hidden text-sm shadow-sm ${className}`}>
+        <div className="bg-gray-800 text-gray-200 px-5 py-2 text-sm flex justify-between items-center">
+          <span className="text-[var(--muted)] text-xs">mermaid (source)</span>
         </div>
-        <div ref={mermaidRef} className="text-xs overflow-auto" />
-        <div className="mt-3 text-xs text-[var(--muted)]">
-          The diagram contains syntax errors and cannot be rendered.
-        </div>
+        <pre className="text-xs overflow-auto p-4 bg-gray-900 text-gray-300 leading-relaxed">{chart}</pre>
       </div>
     );
   }
