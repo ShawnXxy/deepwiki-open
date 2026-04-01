@@ -8,6 +8,8 @@ Supports two retrieval backends:
 """
 
 import logging
+import threading
+import time
 from typing import Dict, List, Tuple
 
 import adalflow as adal
@@ -24,6 +26,19 @@ logger = logging.getLogger(__name__)
 
 # Maximum token limit for embedding models
 MAX_INPUT_TOKENS = 7500  # Safe threshold below 8192 token limit
+
+# ---------------------------------------------------------------------------
+# Module-level FAISS retriever cache
+#
+# Loading 20K+ JSON vector files and building a FAISS index can take
+# many minutes. This cache keeps the result in memory so subsequent
+# chat requests for the same repo reuse the existing index.
+#
+# Cache key: (repo_name, branch)
+# Cache value: dict with retriever, transformed_docs, file_path_index, ts
+# ---------------------------------------------------------------------------
+_faiss_cache: Dict[str, dict] = {}
+_faiss_cache_lock = threading.Lock()
 
 
 class RAG(adal.Component):
@@ -228,6 +243,9 @@ IMPORTANT FORMATTING RULES:
             Must embed documents first (FAISS path), then AI Search is used
             after vectors are pushed to the search index.
         In local/Docker mode: loads vectors and builds FAISS index as before.
+
+        FAISS results are cached in-memory so subsequent chat requests
+        for the same repo skip the expensive JSON-load + index-build step.
         """
         self.initialize_db_manager()
         self.repo_url_or_path = repo_url_or_path
@@ -258,6 +276,28 @@ IMPORTANT FORMATTING RULES:
                 )
 
         # --- Local/Docker mode: load vectors + build FAISS ---
+
+        # Derive cache key from repo URL and branch
+        repo_name = repo_url_or_path.rstrip('/').split('/')[-1].replace('.git', '')
+        branch_suffix = branch.strip() if branch and branch.strip() else 'main'
+        cache_key = f"{repo_name}_{branch_suffix}"
+
+        # Check the in-memory cache (fast path)
+        if not force_reprocess:
+            with _faiss_cache_lock:
+                cached = _faiss_cache.get(cache_key)
+            if cached:
+                self.retriever = cached["retriever"]
+                self.transformed_docs = cached["transformed_docs"]
+                self._file_path_index = cached["file_path_index"]
+                age = time.time() - cached["ts"]
+                logger.info(
+                    f"[RAG] Cache HIT for {cache_key} "
+                    f"({len(self.transformed_docs)} docs, "
+                    f"age={age:.0f}s)"
+                )
+                return
+
         self.transformed_docs = self.db_manager.prepare_database(
             repo_url_or_path,
             type,
@@ -313,6 +353,17 @@ IMPORTANT FORMATTING RULES:
                 f"Built file-path index: "
                 f"{len(self._file_path_index)} unique files"
             )
+
+            # Store in module-level cache for reuse across requests
+            with _faiss_cache_lock:
+                _faiss_cache[cache_key] = {
+                    "retriever": self.retriever,
+                    "transformed_docs": self.transformed_docs,
+                    "file_path_index": self._file_path_index,
+                    "ts": time.time(),
+                }
+            logger.info(f"[RAG] Cached FAISS index for {cache_key}")
+
         except Exception as e:
             logger.error(f"Error creating FAISS retriever: {str(e)}")
             # Try to provide more specific error information

@@ -135,3 +135,57 @@ async def health_check():
         "timestamp": datetime.now().isoformat(),
         "service": "deepwiki-chat",
     }
+
+
+@app.get("/health/openai")
+async def health_openai():
+    """Test Azure OpenAI connectivity by listing deployments.
+
+    Uses the raw OpenAI sync client directly — avoids adalflow
+    parameter conversion that may not match newer model APIs.
+    """
+    import asyncio
+    from backend.config import get_azure_ai_client, get_azure_deployment_name
+
+    try:
+        azure_config = get_azure_openai_config()
+        deployment = azure_config.get("deployment", "o4-mini")
+        model = get_azure_ai_client(deployment)
+        deployment_name = get_azure_deployment_name(deployment)
+
+        def _sync_ping():
+            # Get the underlying OpenAI sync client
+            sync_client = model.sync_client
+            # Simple completions call with minimal overhead
+            resp = sync_client.chat.completions.create(
+                model=deployment_name,
+                messages=[{"role": "user", "content": "hi"}],
+                max_completion_tokens=5,
+            )
+            return resp
+
+        await asyncio.wait_for(
+            asyncio.to_thread(_sync_ping),
+            timeout=30,
+        )
+
+        return {
+            "status": "connected",
+            "model": deployment_name,
+            "timestamp": datetime.now().isoformat(),
+        }
+    except asyncio.TimeoutError:
+        return {
+            "status": "error",
+            "message": "Azure OpenAI request timed out (30s)",
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        msg = str(e)
+        if len(msg) > 300:
+            msg = msg[:300] + "..."
+        return {
+            "status": "error",
+            "message": msg,
+            "timestamp": datetime.now().isoformat(),
+        }
