@@ -8,16 +8,24 @@
     "client_id": "6de9d24d-f0d1-433f-9387-5a9192aebbc6"
   },
   "azure_openai": {
-    "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
-    "api_version": "2025-04-01-preview",
-    "deployment": "gpt-5.1-chat",
-    "temperature": 1.0
-  },
-  "azure_openai_embedding": {
-    "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
-    "api_version": "2024-12-01-preview",
-    "deployment": "text-embedding-3-large",
-    "dimensions": 3072
+    "chat": {
+      "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
+      "api_version": "2025-04-01-preview",
+      "deployment": "gpt-5.1-chat",
+      "temperature": 1.0
+    },
+    "reasoning": {
+      "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
+      "api_version": "2025-04-01-preview",
+      "deployment": "gpt-5.1",
+      "temperature": 1.0
+    },
+    "embedding": {
+      "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
+      "api_version": "2024-12-01-preview",
+      "deployment": "text-embedding-3-large",
+      "dimensions": 3072
+    }
   },
   "azure_blob_storage": {
     "enabled": false,

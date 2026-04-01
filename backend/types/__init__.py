@@ -6,8 +6,9 @@ Provides type classes for configuration management.
 from .config_types import (
     # Infra config types
     ManagedIdentityConfig,
-    AzureOpenAIConfig,
+    AzureOpenAILLMConfig,
     AzureOpenAIEmbeddingConfig,
+    AzureOpenAIGroupConfig,
     AzureBlobStorageConfig,
     AzureApplicationInsightsConfig,
     InfraConfig,
@@ -62,8 +63,9 @@ from .processor_types import (
 __all__ = [
     # Infra config
     'ManagedIdentityConfig',
-    'AzureOpenAIConfig',
+    'AzureOpenAILLMConfig',
     'AzureOpenAIEmbeddingConfig',
+    'AzureOpenAIGroupConfig',
     'AzureBlobStorageConfig',
     'AzureApplicationInsightsConfig',
     'InfraConfig',

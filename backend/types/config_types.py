@@ -23,10 +23,10 @@ class AzureAccountConfig(BaseModel):
     resource_group: str = ""
 
 
-class AzureOpenAIConfig(BaseModel):
-    """Azure OpenAI configuration for text generation."""
+class AzureOpenAILLMConfig(BaseModel):
+    """Azure OpenAI configuration for a single LLM deployment (chat or reasoning)."""
     endpoint: str
-    api_version: str = "2024-12-01-preview"
+    api_version: str = "2025-04-01-preview"
     deployment: str
     temperature: float = 1.0
 
@@ -37,6 +37,13 @@ class AzureOpenAIEmbeddingConfig(BaseModel):
     api_version: str = "2024-12-01-preview"
     deployment: str = "text-embedding-3-large"
     dimensions: int = 3072
+
+
+class AzureOpenAIGroupConfig(BaseModel):
+    """Groups all Azure OpenAI deployments: chat, reasoning, embedding."""
+    chat: AzureOpenAILLMConfig
+    reasoning: AzureOpenAILLMConfig
+    embedding: AzureOpenAIEmbeddingConfig
 
 
 class AzureBlobStorageConfig(BaseModel):
@@ -81,8 +88,7 @@ class InfraConfig(BaseModel):
         default_factory=AzureAccountConfig
     )
     managed_identity: ManagedIdentityConfig
-    azure_openai: AzureOpenAIConfig
-    azure_openai_embedding: AzureOpenAIEmbeddingConfig
+    azure_openai: AzureOpenAIGroupConfig
     azure_blob_storage: AzureBlobStorageConfig
     azure_application_insights: AzureApplicationInsightsConfig
     azure_ai_search: AzureAISearchConfig = Field(

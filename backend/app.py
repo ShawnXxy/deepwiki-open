@@ -63,7 +63,7 @@ app.add_websocket_route("/ws/chat", handle_websocket_chat)
 async def get_model_config_endpoint():
     """Return available model providers from infra.json."""
     try:
-        azure_config = get_azure_openai_config()
+        azure_config = get_azure_openai_config(task='chat')
         deployment = azure_config.get("deployment", "o4-mini")
         return ModelConfig(
             providers=[
@@ -148,10 +148,10 @@ async def health_openai():
     from backend.config import get_azure_ai_client, get_azure_deployment_name
 
     try:
-        azure_config = get_azure_openai_config()
+        azure_config = get_azure_openai_config(task='chat')
         deployment = azure_config.get("deployment", "o4-mini")
-        model = get_azure_ai_client(deployment)
-        deployment_name = get_azure_deployment_name(deployment)
+        model = get_azure_ai_client(task='chat')
+        deployment_name = get_azure_deployment_name(task='chat')
 
         def _sync_ping():
             # Get the underlying OpenAI sync client
