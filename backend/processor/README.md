@@ -10,6 +10,45 @@ Runs as a one-shot CLI command — no server required. Transforms a code reposit
 
 **Pipeline:** Clone repo → Embed documents → Generate wiki → Save cache
 
+<details>
+The pipeline steps differ between local/Docker and cloud modes:
+
+**Local / Docker mode** (FAISS retrieval):
+
+Step 1 — Clone: Git clone to `~/.adalflow/repos/`. 
+
+Step 2 — Embed (document.py + indexer.py):
+- Phase A: Walk filesystem, collect file paths (~300B/file, lightweight)
+- Phase B+C (fused): Read files in batches of FILE_BATCH_SIZE, split into chunks,
+  embed immediately, save to disk, release. Each batch bounded at ~120 MB.
+- Documents returned with vectors for FAISS construction (no disk reload).
+
+Step 3 — Build FAISS & Generate Wiki (retriever.py + wiki_generator.py):
+- Build FAISS in-memory index from returned documents
+- Strip .vector from docs (saves ~12KB/chunk)
+- Build file-path index for O(1) lookup
+  
+  For each page (~20-25): query FAISS for top-40 chunks → LLM generates page
+  File-priority chunks capped at 80, context capped at 120K chars.
+  
+Step 4 — Save cache: Serialize WikiCacheData to JSON on disk/blob (~500KB-5MB)
+
+**Cloud mode** (Azure AI Search retrieval, no FAISS):
+
+Step 1 — Clone: Same as local.
+
+Step 2 — Embed (cloud): Fused pipeline saves vectors to blob.
+- skip_accumulate=True — no document list held in memory (~120 MB peak).
+
+Step 3 — Push to AI Search: Load vectors from blob in batches, push to index, trigger indexer, wait for completion (poll with timeout).
+
+Step 4 — Generate Wiki (cloud): Lightweight RAG with prepare_for_cloud().
+- Query Azure AI Search hybrid (BM25 + vector) for each page. No FAISS.
+
+Step 5 — Save cache: Same as local.
+
+</details>
+
 ## Files
 
 | File | Purpose |
@@ -64,8 +103,9 @@ Runs as a one-shot CLI command — no server required. Transforms a code reposit
 │ Runs on: Inside AML compute (triggered by scheduled pipeline)       │
 │ Config: backend/config/.cloud/  (blob/search/AML enabled)           │
 │ Auth:   UMI from infra.json managed_identity.client_id              │
-│ Steps:  clone(AML temp) → embed(→blob) → AI Search indexer syncs   │
-│         → wiki(AI Search) → save(→blob) → push vectors to search   │
+│ Steps:  clone(AML temp) → embed(→blob, no FAISS)                    │
+│         → push vectors to search → wait for indexer                 │
+│         → wiki(AI Search) → save(→blob)                             │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -94,15 +134,16 @@ Stage 1: Clone Repository
     Extract HEAD commit hash for citation URLs
 
 Stage 2: Embed Documents (RAG Preparation)
-    read_all_documents() → code-aware splitting → Azure OpenAI embeddings
-    Local/Docker: save vectors to local disk, build FAISS index
-    Cloud: save vectors to blob (via storage abstraction)
+    Fused read→split→embed→save pipeline, bounded per batch (~120 MB)
+    Local/Docker: save vectors to local disk, accumulate for FAISS
+    Cloud: save vectors to blob (skip_accumulate=True, no FAISS)
 
 Stage 3: Generate Wiki
     File tree + README → LLM generates XML structure (pages + sections)
     For each page: RAG retrieval → LLM generates Markdown content
-    Local/Docker: retrieval via FAISS
+    Local/Docker: retrieval via FAISS (file-priority capped at 80 chunks)
     Cloud: retrieval via Azure AI Search (hybrid: text + vector)
+    Context capped at 120K chars with clean file-boundary truncation
 
 Stage 4: Save Wiki Cache
     Assemble WikiCacheData → save as JSON
@@ -110,7 +151,9 @@ Stage 4: Save Wiki Cache
     Cloud: blob deepwiki-data/wikicache/
 
 Stage 5: Push to AI Search (cloud only)
-    Load vectors → push to AI Search index → trigger indexer
+    In cloud mode, this runs BEFORE wiki generation:
+    Load vectors → push to AI Search index → trigger indexer →
+    wait for completion (poll with timeout)
 ```
 
 ## Authentication

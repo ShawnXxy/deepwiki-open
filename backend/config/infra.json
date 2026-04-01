@@ -10,7 +10,7 @@
   "azure_openai": {
     "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
     "api_version": "2025-04-01-preview",
-    "deployment": "gpt-5.1",
+    "deployment": "gpt-5.1-chat",
     "temperature": 1.0
   },
   "azure_openai_embedding": {
@@ -42,8 +42,8 @@
     "compute_name": "deepwiki-compute",
     "compute_size": "STANDARD_D11_V2",
     "compute_min_instances": 0,
-    "compute_max_instances": 10,
-    "schedule_interval_hours": 480,
+    "compute_max_instances": 1,
+    "schedule_interval_hours": 700,
     "environment_name": "deepwiki-processor",
     "idle_time_before_scale_down": 180
   }

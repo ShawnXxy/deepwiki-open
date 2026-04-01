@@ -8,7 +8,7 @@ Supports two retrieval backends:
 """
 
 import logging
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import adalflow as adal
 from adalflow.components.retriever.faiss_retriever import FAISSRetriever
@@ -300,6 +300,19 @@ IMPORTANT FORMATTING RULES:
             # frees ~12 KB per chunk (3072 floats × 4 bytes).
             for doc in self.transformed_docs:
                 doc.vector = None
+
+            # Build file-path index for O(1) lookup in
+            # call_with_file_filter() instead of O(N) scan per page.
+            self._file_path_index: Dict[str, List[int]] = {}
+            for i, doc in enumerate(self.transformed_docs):
+                fp = doc.meta_data.get('file_path', '')
+                if fp not in self._file_path_index:
+                    self._file_path_index[fp] = []
+                self._file_path_index[fp].append(i)
+            logger.info(
+                f"Built file-path index: "
+                f"{len(self._file_path_index)} unique files"
+            )
         except Exception as e:
             logger.error(f"Error creating FAISS retriever: {str(e)}")
             # Try to provide more specific error information
@@ -323,6 +336,25 @@ IMPORTANT FORMATTING RULES:
                             sizes.append(f"doc_{i}: error")
                 logger.error(f"Sample embedding sizes: {', '.join(sizes)}")
             raise
+
+    def prepare_for_cloud(self, index_name: str):
+        """Configure RAG for cloud-only retrieval (no FAISS).
+
+        Used by the processor in cloud mode when Azure AI Search is
+        the retrieval backend. Skips document loading and FAISS
+        construction entirely.
+
+        Args:
+            index_name: AI Search index name to query
+        """
+        self.use_cloud_search = True
+        self.cloud_index_name = index_name
+        self.transformed_docs = []
+        self._file_path_index = {}
+        logger.info(
+            f"[RAG] Cloud-only mode: "
+            f"using AI Search index '{index_name}'"
+        )
 
     def call(self, query: str, language: str = "en") -> Tuple[List]:
         """
@@ -421,12 +453,13 @@ IMPORTANT FORMATTING RULES:
         file_paths: List[str],
         top_k: int = None,
         language: str = "en",
+        max_file_chunks: int = 80,
     ) -> Tuple[List]:
         """
         Retrieve chunks with priority for specific files.
 
         Strategy (both local and cloud):
-        1. Collect chunks from declared relevant files
+        1. Collect chunks from declared relevant files (capped)
         2. Run semantic search for supplementary context
         3. Merge: file-filtered chunks first, then semantic (deduplicated)
         """
@@ -438,14 +471,25 @@ IMPORTANT FORMATTING RULES:
 
         # --- Local path: FAISS ---
         try:
-            # Step 1: Get ALL chunks from declared relevant files
-            file_chunks = [
-                doc for doc in self.transformed_docs
-                if doc.meta_data.get('file_path', '') in file_paths
-            ]
+            # Step 1: Get chunks from declared files via index (capped)
+            file_chunks = []
+            file_path_set = (
+                set(file_paths)
+                if not isinstance(file_paths, set)
+                else file_paths
+            )
+            for fp in file_path_set:
+                indices = self._file_path_index.get(fp, [])
+                for idx in indices:
+                    file_chunks.append(self.transformed_docs[idx])
+                    if len(file_chunks) >= max_file_chunks:
+                        break
+                if len(file_chunks) >= max_file_chunks:
+                    break
             logger.info(
                 f"[RAG] File-filtered retrieval: {len(file_chunks)} "
                 f"chunks from {len(file_paths)} declared files"
+                f" (cap={max_file_chunks})"
             )
 
             # Step 2: Semantic search for supplementary context

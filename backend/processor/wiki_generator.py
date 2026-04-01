@@ -8,6 +8,7 @@ Generates a complete wiki for a repository:
 4. Assemble into WikiCacheData
 """
 
+import gc
 import logging
 import os
 import re
@@ -37,14 +38,17 @@ from backend.modules.wiki.xml_repair import close_open_tags
 logger = logging.getLogger(__name__)
 
 
-def build_file_tree(repo_path: str, max_depth: int = 6) -> str:
+def build_file_tree(repo_path: str, max_depth: int = 6,
+                    max_entries: int = 10000) -> str:
     """Build a file tree string from a cloned repo directory.
 
-    Replicates what the frontend fetches from the Git hosting API.
+    For large repos (>max_entries entries), switches to directory-only
+    output mid-walk to avoid building a massive string then discarding it.
     """
     lines = []
     repo_path = repo_path.rstrip(os.sep)
     prefix_len = len(repo_path) + 1
+    entry_count = 0
 
     # Excluded directories (same defaults as repo.json)
     skip_dirs = {
@@ -64,9 +68,18 @@ def build_file_tree(repo_path: str, max_depth: int = 6) -> str:
             continue
         if rel:
             lines.append(rel + '/')
+            entry_count += 1
         for f in sorted(files):
             if not f.startswith('.'):
                 lines.append(os.path.join(rel, f) if rel else f)
+                entry_count += 1
+                if entry_count > max_entries:
+                    # Bail early — convert to dirs-only from what's collected
+                    logger.info(
+                        f"Large repo (>{max_entries} entries), switching "
+                        f"to directory-only tree mid-walk"
+                    )
+                    return _file_tree_dirs_only('\n'.join(lines))
 
     return '\n'.join(lines)
 
@@ -281,17 +294,6 @@ def generate_wiki(
     print(f"  File tree: {file_count} entries")
     print(f"  README: {len(readme)} chars")
 
-    # For large repos, use directory-only tree to stay within model input limits
-    # (e.g., gpt-5.1 max input = 272K tokens ≈ 800K chars)
-    _MAX_FILE_TREE_ENTRIES = 10000
-    if file_count > _MAX_FILE_TREE_ENTRIES:
-        logger.info(
-            f"Large repo ({file_count} files), switching to "
-            f"directory-only tree for structure generation"
-        )
-        file_tree = _file_tree_dirs_only(file_tree)
-        print(f"  → Using directory-only tree ({len(file_tree.splitlines())} dirs)")
-
     # Step 2: Get LLM client
     from backend.config import get_azure_ai_client
     model_client = get_azure_ai_client()
@@ -327,6 +329,9 @@ def generate_wiki(
     title, description, pages_data, sections_data, root_sections = (
         _parse_structure_xml(structure_xml)
     )
+    # Release large strings — no longer needed after parsing
+    del structure_prompt, structure_xml
+    gc.collect()
     print(f"  Title: {title}")
     print(f"  Pages: {len(pages_data)}")
     print(f"  Sections: {len(sections_data)}")
@@ -368,6 +373,23 @@ def generate_wiki(
             commit_hash=commit_hash,
             repo_type=repo_type,
         )
+
+        # Cap context to avoid oversized prompts and memory spikes.
+        # Truncate at a clean file-path boundary so partial files
+        # are not sent to the LLM.
+        _MAX_CONTEXT_CHARS = 120000
+        if len(context_text) > _MAX_CONTEXT_CHARS:
+            truncated = context_text[:_MAX_CONTEXT_CHARS]
+            # Find last complete file section boundary
+            boundary = truncated.rfind('\n## File Path:')
+            if boundary > 0:
+                context_text = truncated[:boundary]
+            else:
+                context_text = truncated
+            logger.info(
+                f"Context truncated to {len(context_text)} chars "
+                f"(was {len(context_text)})"
+            )
 
         # Build page prompt
         wiki_prompt = build_wiki_page_prompt(
