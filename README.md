@@ -64,6 +64,55 @@ The general workflow is:
 | **docker** | `config/.local/` | PAT only | Local disk | FAISS | `python -m backend.processor.code_processor --mode=docker --repo=URL --branch=main` |
 | **cloud** | `config/.cloud/` | UMI | Azure Blob | AI Search | `python -m backend.processor.aml_dispatcher --config=backend/run.json` |
 
+### Authentication Matrix
+
+Authentication varies by environment and service. The system auto-detects the environment via `NODE_ENV` and selects the correct auth method.
+
+#### Azure OpenAI (Chat, Reasoning, Embedding)
+
+| Environment | Auth Method | How It Works |
+|-------------|------------|--------------|
+| **Local Terminal** | Azure CLI identity (`az login`) | `DefaultAzureCredential` → `AzureCliCredential`. API key in `.env` is **ignored** to avoid key-disabled errors. |
+| **Local Docker** | API Key | `AZURE_OPENAI_API_KEY` env var passed to container. Set in `backend/.env` or via `test-local.ps1 -ApiKey`. |
+| **Azure Web App** | Managed Identity (UMI) | `AZURE_CLIENT_ID` set in App Settings → `DefaultAzureCredential` with `managed_identity_client_id`. Requires `Cognitive Services OpenAI User` role. |
+
+
+**Detection logic** ([`azureai_client.py`](backend/clients/azureai_client.py) `_should_use_api_key()`):
+- `NODE_ENV != production` → local terminal → always use identity (ignore API key)
+- `NODE_ENV == production` + `AZURE_CLIENT_ID` set → MSI
+- `NODE_ENV == production` + no MSI → API key fallback (Docker)
+
+#### Azure DevOps Repos (Git Clone)
+
+| Environment | Auth Method | How It Works |
+|-------------|------------|--------------|
+| **Local Terminal** | Git Credential Manager | Uses system git credentials (Windows Credential Manager / `az login` cached). No PAT needed if already authenticated. |
+| **Local Terminal** | PAT (optional) | `REPO_ACCESS_TOKEN` in `backend/.env`. Used when Credential Manager is unavailable. |
+| **Local Docker** | PAT | `REPO_ACCESS_TOKEN` env var passed to container. Required — Docker has no credential manager. |
+| **Azure Web App** | Not used | Repos are pre-cloned by the processor. Web App reads from blob storage. |
+| **AML Compute** | UMI | Git clone uses `https://{UMI_token}@dev.azure.com/...`. Token obtained via Managed Identity with `499b84ac-1321-427f-aa17-267ca6975798` scope. |
+
+
+### Model Routing
+
+Different tasks use different Azure OpenAI deployments configured in `infra.json`:
+
+```json
+"azure_openai": {
+  "chat":      { "deployment": "gpt-5.1-chat" },
+  "reasoning": { "deployment": "gpt-5.1" },
+  "embedding": { "deployment": "text-embedding-3-large" }
+}
+```
+
+| Task | Model Type | Deployment | Why |
+|------|-----------|------------|-----|
+| Chat Q&A | Chat | `gpt-5.1-chat` | Fast, low latency for interactive conversations |
+| Deep Research | Reasoning | `gpt-5.1` | Multi-turn investigation benefits from deeper reasoning |
+| Wiki Structure | Reasoning | `gpt-5.1` | Architectural planning across large codebases |
+| Wiki Pages | Reasoning | `gpt-5.1` | Technical documentation with diagrams and citations |
+| Embedding | Embedding | `text-embedding-3-large` | 3072-dimension vectors for code search |
+
 ### Project Structure
 
 ```
@@ -156,20 +205,29 @@ Edit `backend/config/infra.json` with your Azure endpoints:
     "client_id": "your-msi-client-id"
   },
   "azure_openai": {
-    "endpoint": "https://your-resource.openai.azure.com",
-    "api_version": "2025-04-01-preview",
-    "deployment": "gpt-5.1"
-  },
-  "azure_openai_embedding": {
-    "endpoint": "https://your-resource.openai.azure.com",
-    "api_version": "2024-12-01-preview",
-    "deployment": "text-embedding-3-large",
-    "dimensions": 3072
+    "chat": {
+      "endpoint": "https://your-resource.openai.azure.com",
+      "api_version": "2025-04-01-preview",
+      "deployment": "gpt-5.1-chat",
+      "temperature": 1.0
+    },
+    "reasoning": {
+      "endpoint": "https://your-resource.openai.azure.com",
+      "api_version": "2025-04-01-preview",
+      "deployment": "gpt-5.1",
+      "temperature": 1.0
+    },
+    "embedding": {
+      "endpoint": "https://your-resource.openai.azure.com",
+      "api_version": "2024-12-01-preview",
+      "deployment": "text-embedding-3-large",
+      "dimensions": 3072
+    }
   },
   "azure_blob_storage": {
     "enabled": false,
     "account_name": "your-storage-account",
-    "container_name": "Orcas CodeWiki-data"
+    "container_name": "deepwiki-data"
   },
   "azure_ai_search": {
     "enabled": false,
@@ -417,23 +475,28 @@ All configuration is centralized in `backend/config/infra.json`.
 |-------|-------------|
 | `managed_identity.name` | Name of the User-Assigned Managed Identity |
 | `managed_identity.client_id` | Client ID of the Managed Identity |
-| `azure_openai.endpoint` | Azure OpenAI endpoint URL |
-| `azure_openai.api_version` | API version (e.g., `2024-12-01-preview`) |
-| `azure_openai.deployment` | Deployment name for text generation |
-| `azure_openai_embedding.endpoint` | Azure OpenAI endpoint for embeddings |
-| `azure_openai_embedding.api_version` | API version for embeddings |
-| `azure_openai_embedding.deployment` | Deployment name for embeddings |
+| `azure_openai.chat.endpoint` | Azure OpenAI endpoint for chat models |
+| `azure_openai.chat.api_version` | API version (e.g., `2025-04-01-preview`) |
+| `azure_openai.chat.deployment` | Deployment name for interactive chat (e.g., `gpt-5.1-chat`) |
+| `azure_openai.chat.temperature` | Temperature for chat responses (default `1.0`) |
+| `azure_openai.reasoning.endpoint` | Azure OpenAI endpoint for reasoning models |
+| `azure_openai.reasoning.api_version` | API version for reasoning |
+| `azure_openai.reasoning.deployment` | Deployment name for wiki generation + deep research (e.g., `gpt-5.1`) |
+| `azure_openai.reasoning.temperature` | Temperature for reasoning responses (default `1.0`) |
+| `azure_openai.embedding.endpoint` | Azure OpenAI endpoint for embeddings |
+| `azure_openai.embedding.api_version` | API version for embeddings |
+| `azure_openai.embedding.deployment` | Deployment name for embeddings (e.g., `text-embedding-3-large`) |
+| `azure_openai.embedding.dimensions` | Embedding vector dimensions (default `3072`) |
 | `azure_blob_storage.enabled` | Enable Azure Blob Storage for persistence (`true`/`false`) |
 | `azure_blob_storage.account_name` | Storage account name |
-| `azure_blob_storage.container_name` | Blob container name (e.g., `Orcas CodeWiki-data`) |
+| `azure_blob_storage.container_name` | Blob container name (e.g., `deepwiki-data`) |
 | `azure_application_insights.enabled` | Enable Application Insights for centralized logging (`true`/`false`) |
 | `azure_application_insights.name` | Application Insights resource name |
 | `azure_application_insights.connection_string` | Application Insights connection string |
 
 ### Other Configuration Files
 
-- **`backend/config/generator.json`**: Text generation model parameters (temperature)
-- **`backend/config/embedder.json`**: Embedding model and text processing settings
+- **`backend/config/embedder.json`**: Embedding batch size, chunk size, retriever top_k settings
 
 ## 💾 Storage Architecture
 
@@ -443,7 +506,7 @@ CodeWiki supports two **mutually exclusive** storage modes:
 
 | Mode | When | Use Case |
 |------|------|----------|
-| **Blob Mode** | `azure_blob_storage.enabled: true` | Production deployments (Azure Container Apps, etc.) |
+| **Blob Mode** | `azure_blob_storage.enabled: true` | Azure Cloud env|
 | **Local Mode** | `azure_blob_storage.enabled: false` | Local development and testing |
 
 > **Important**: These modes are mutually exclusive. There is NO syncing between blob and local storage.
