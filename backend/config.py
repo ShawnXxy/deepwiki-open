@@ -194,18 +194,22 @@ def enable_cloud_services() -> None:
     logger.info("Cloud services force-enabled: AI Search, Blob, AML")
 
 
-def get_azure_openai_config() -> Dict[str, str]:
+def get_azure_openai_config(task: str = 'chat') -> Dict[str, str]:
     """
-    Get Azure OpenAI configuration for text generation.
-    
+    Get Azure OpenAI configuration for a specific task.
+
+    Args:
+        task: 'chat' or 'reasoning'
+
     Returns:
         Dict containing endpoint, api_version, deployment
     """
     infra = get_infra_config()
+    section = infra.azure_openai.chat if task == 'chat' else infra.azure_openai.reasoning
     return {
-        "endpoint": infra.azure_openai.endpoint,
-        "api_version": infra.azure_openai.api_version,
-        "deployment": infra.azure_openai.deployment
+        "endpoint": section.endpoint,
+        "api_version": section.api_version,
+        "deployment": section.deployment
     }
 
 
@@ -218,9 +222,9 @@ def get_azure_openai_embedding_config_from_infra() -> Dict[str, str]:
     """
     infra = get_infra_config()
     return {
-        "endpoint": infra.azure_openai_embedding.endpoint,
-        "api_version": infra.azure_openai_embedding.api_version,
-        "deployment": infra.azure_openai_embedding.deployment
+        "endpoint": infra.azure_openai.embedding.endpoint,
+        "api_version": infra.azure_openai.embedding.api_version,
+        "deployment": infra.azure_openai.embedding.deployment
     }
 
 
@@ -236,12 +240,12 @@ def is_azure_openai_configured() -> bool:
         
         # Check for basic Azure OpenAI configuration
         has_basic_config = bool(
-            infra.azure_openai.endpoint and 
-            infra.azure_openai.api_version
+            infra.azure_openai.chat.endpoint and 
+            infra.azure_openai.chat.api_version
         )
         
         # Check for Azure endpoint pattern
-        has_azure_pattern = ".openai.azure.com" in infra.azure_openai.endpoint
+        has_azure_pattern = ".openai.azure.com" in infra.azure_openai.chat.endpoint
         
         # Check for API key in environment (for local dev)
         has_api_key = bool(os.environ.get("AZURE_OPENAI_API_KEY"))
@@ -255,37 +259,41 @@ def is_azure_openai_configured() -> bool:
         return False
 
 
-def get_azure_openai_text_config() -> Dict[str, Any]:
+def get_azure_openai_text_config(task: str = 'chat') -> Dict[str, Any]:
     """
     Get Azure OpenAI configuration for text generation with MSI authentication.
-    
+
+    Args:
+        task: 'chat' or 'reasoning'
+
     Returns:
         Dict containing azure_endpoint, api_version, and managed_identity_client_id
     """
     infra = get_infra_config()
+    section = infra.azure_openai.chat if task == 'chat' else infra.azure_openai.reasoning
     return {
-        "azure_endpoint": infra.azure_openai.endpoint,
-        "api_version": infra.azure_openai.api_version,
+        "azure_endpoint": section.endpoint,
+        "api_version": section.api_version,
         "managed_identity_client_id": infra.managed_identity.client_id
     }
 
 
-def get_azure_deployment_name(model_name: str = None) -> str:
+def get_azure_deployment_name(task: str = 'chat', model_name: str = None) -> str:
     """
-    Get the Azure OpenAI deployment name from infra.json.
-    
-    Always returns the deployment from infra.json, ignoring any passed model_name.
-    
+    Get the Azure OpenAI deployment name for a specific task.
+
     Args:
-        model_name: Ignored - always uses infra.json deployment
+        task: 'chat' or 'reasoning'
+        model_name: Ignored - always uses infra.json deployment for the task
     
     Returns:
-        The deployment name from infra.json
+        The deployment name from infra.json for the specified task
     """
     infra = get_infra_config()
-    deployment = infra.azure_openai.deployment
+    section = infra.azure_openai.chat if task == 'chat' else infra.azure_openai.reasoning
+    deployment = section.deployment
     if model_name and model_name != deployment:
-        logger.info(f"Ignoring requested model '{model_name}', using infra.json deployment: {deployment}")
+        logger.info(f"Using {task} deployment '{deployment}' (ignoring '{model_name}')")
     return deployment
 
 
@@ -298,8 +306,8 @@ def get_azure_openai_embedding_config() -> Dict[str, Any]:
     """
     infra = get_infra_config()
     return {
-        "azure_endpoint": infra.azure_openai_embedding.endpoint,
-        "api_version": infra.azure_openai_embedding.api_version,
+        "azure_endpoint": infra.azure_openai.embedding.endpoint,
+        "api_version": infra.azure_openai.embedding.api_version,
         "managed_identity_client_id": infra.managed_identity.client_id
     }
 
@@ -322,8 +330,8 @@ def get_embedder_config_obj() -> EmbedderConfig:
                 
                 # Inject values from infra.json
                 infra = get_infra_config()
-                _embedder_config.embedder.model_kwargs.model = infra.azure_openai_embedding.deployment
-                _embedder_config.embedder.model_kwargs.dimensions = infra.azure_openai_embedding.dimensions
+                _embedder_config.embedder.model_kwargs.model = infra.azure_openai.embedding.deployment
+                _embedder_config.embedder.model_kwargs.dimensions = infra.azure_openai.embedding.dimensions
                 _embedder_config.embedder.initialize_kwargs = get_azure_openai_embedding_config()
                 
                 logger.info("Successfully loaded and validated embedder.json")
@@ -368,9 +376,9 @@ def get_generator_full_config() -> GeneratorConfig:
         _generator_config = GeneratorConfig(
             client_class="AzureAIClient",
         )
-        _generator_config.model_kwargs.model = infra.azure_openai.deployment
-        _generator_config.model_kwargs.temperature = infra.azure_openai.temperature
-        _generator_config.initialize_kwargs = get_azure_openai_text_config()
+        _generator_config.model_kwargs.model = infra.azure_openai.chat.deployment
+        _generator_config.model_kwargs.temperature = infra.azure_openai.chat.temperature
+        _generator_config.initialize_kwargs = get_azure_openai_text_config('chat')
         logger.info("Generator config built from infra.json")
     return _generator_config
 
@@ -499,12 +507,13 @@ def get_client_classes() -> Dict[str, Any]:
     return _client_classes
 
 
-def get_azure_ai_client(model: Optional[str] = None) -> Any:
+def get_azure_ai_client(task: str = 'chat', model: Optional[str] = None) -> Any:
     """
     Get a shared Azure AI client instance (singleton pattern).
     
     Args:
-        model: Optional model name (used to get initialize_kwargs)
+        task: 'chat' or 'reasoning' (used to get initialize_kwargs)
+        model: Optional model name (ignored)
         
     Returns:
         Cached AzureAIClient instance
@@ -512,35 +521,36 @@ def get_azure_ai_client(model: Optional[str] = None) -> Any:
     global _azure_ai_client
     if _azure_ai_client is None:
         from backend.clients.azureai_client import AzureAIClient
-        deployment_name = get_azure_deployment_name(model)
-        initialize_kwargs = get_azure_openai_text_config()
+        initialize_kwargs = get_azure_openai_text_config(task)
         _azure_ai_client = AzureAIClient(**initialize_kwargs)
         logger.info("[Config] Created shared AzureAIClient instance")
     return _azure_ai_client
 
 
-def get_model_config(provider: str = None, model: str = None) -> Dict[str, Any]:
+def get_model_config(provider: str = None, model: str = None, task: str = 'chat') -> Dict[str, Any]:
     """
     Get configuration for Azure OpenAI model.
 
     Parameters:
         provider: Model provider (ignored, always uses 'azure')
         model: Model name (ignored, always uses deployment from infra.json)
+        task: 'chat' or 'reasoning'
 
     Returns:
         dict: Configuration containing model_client, model and other parameters
     """
     infra = get_infra_config()
-    deployment = infra.azure_openai.deployment
-    temperature = infra.azure_openai.temperature
+    section = infra.azure_openai.chat if task == 'chat' else infra.azure_openai.reasoning
+    deployment = section.deployment
+    temperature = section.temperature
 
-    logger.info(f"Using Azure OpenAI deployment from infra.json: {deployment}")
+    logger.info(f"Using Azure OpenAI {task} deployment: {deployment}")
 
     client_classes = get_client_classes()
 
     return {
         "model_client": client_classes.get("AzureAIClient"),
-        "initialize_kwargs": get_azure_openai_text_config(),
+        "initialize_kwargs": get_azure_openai_text_config(task),
         "model_kwargs": {
             "model": deployment,
             "temperature": temperature

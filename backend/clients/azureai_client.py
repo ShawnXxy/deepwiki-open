@@ -445,45 +445,94 @@ class AzureAIClient(ModelClient):
     def _get_credential(self) -> DefaultAzureCredential:
         """
         Get Azure credential with fallback chain.
-        
+
         Fallback order:
         1. MSI with explicit client_id (Azure Container Apps)
-        2. DefaultAzureCredential (includes MSI, Azure CLI, VS Code, etc.)
+        2. AzureCliCredential (local dev — requires `az login`)
+        3. Full DefaultAzureCredential chain
+
+        On Windows, az.cmd may not be in Python's PATH even if it
+        works in the user's shell. We patch PATH to include common
+        Azure CLI install locations before trying.
         """
         client_id = self._managed_identity_client_id
         if client_id:
             log.info(f"🔐 [Auth] Using Managed Identity with "
                      f"client_id: {client_id[:8]}...")
             return DefaultAzureCredential(managed_identity_client_id=client_id)
-        else:
-            log.info("🔐 [Auth] Using DefaultAzureCredential "
-                     "(MSI → Azure CLI → VS Code → Environment)")
-            return DefaultAzureCredential()
+
+        # For local dev, ensure Azure CLI is findable on Windows
+        import shutil
+        if not shutil.which("az"):
+            # Common Windows Azure CLI paths
+            import platform
+            if platform.system() == "Windows":
+                az_paths = [
+                    os.path.join(os.environ.get("ProgramFiles", ""), "Microsoft SDKs", "Azure", "CLI2", "wbin"),
+                    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Azure CLI"),
+                    os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Microsoft SDKs", "Azure", "CLI2", "wbin"),
+                ]
+                for p in az_paths:
+                    if os.path.isdir(p):
+                        log.info(f"🔧 [Auth] Adding Azure CLI to PATH: {p}")
+                        os.environ["PATH"] = p + os.pathsep + os.environ.get("PATH", "")
+                        break
+
+        log.info("🔐 [Auth] Using DefaultAzureCredential "
+                 "(MSI → Azure CLI → VS Code → Environment)")
+        return DefaultAzureCredential()
+
+    def _should_use_api_key(self) -> bool:
+        """Determine if API key auth should be used.
+
+        Per design, API key is only for Docker/container environments.
+        Local terminal development uses Azure CLI identity.
+
+        Detection: NODE_ENV=production indicates Docker or Azure.
+        In production without MSI, fall back to API key.
+        In development (local terminal), always use identity auth.
+        """
+        is_production = os.getenv("NODE_ENV") == "production"
+        has_msi = bool(self._managed_identity_client_id)
+        has_key = bool((os.getenv("AZURE_OPENAI_API_KEY") or "").strip())
+
+        if not is_production:
+            # Local terminal: always use identity (Azure CLI)
+            if has_key:
+                log.info("🔐 [Auth] Local dev: ignoring API key, "
+                         "using Azure CLI identity")
+            return False
+
+        if has_msi:
+            # Azure Container App / App Service with MSI
+            return False
+
+        # Docker with API key
+        return has_key
 
     def init_sync_client(self):
         """
         Initialize sync Azure OpenAI client.
-        
-        Authentication fallback chain:
-        1. API Key from environment (AZURE_OPENAI_API_KEY) - Local Docker
-        2. MSI with client_id (Azure Container Apps)
-        3. DefaultAzureCredential (Local terminal with Azure CLI)
+
+        Authentication per environment:
+        - Local terminal: DefaultAzureCredential (Azure CLI identity)
+        - Docker: API Key from AZURE_OPENAI_API_KEY env var
+        - Azure Container App/App Service: MSI via DefaultAzureCredential
         """
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
-        api_key = (os.getenv("AZURE_OPENAI_API_KEY") or "").strip() or None
-        
+
         log.info("🔧 [AzureOpenAI] Initializing sync client...")
         log.info(f"   Endpoint: {azure_endpoint}")
         log.info(f"   API Version: {api_version}")
-        
+
         if not azure_endpoint:
             raise ValueError("AZURE_OPENAI_ENDPOINT must be set")
         if not api_version:
             raise ValueError("AZURE_OPENAI_VERSION must be set")
 
-        # Authentication chain: API Key → MSI/DefaultAzureCredential
-        if api_key:
+        if self._should_use_api_key():
+            api_key = os.getenv("AZURE_OPENAI_API_KEY", "").strip()
             masked = api_key[:6] + '***' if len(api_key) > 6 else '***'
             log.info(f"🔑 [AzureOpenAI] Auth method: API Key ({masked})")
             return AzureOpenAI(
@@ -507,25 +556,24 @@ class AzureAIClient(ModelClient):
     def init_async_client(self):
         """
         Initialize async Azure OpenAI client.
-        
-        Authentication fallback chain:
-        1. API Key from environment (AZURE_OPENAI_API_KEY) - Local Docker
-        2. MSI with client_id (Azure Container Apps)
-        3. DefaultAzureCredential (Local terminal with Azure CLI)
+
+        Authentication per environment:
+        - Local terminal: DefaultAzureCredential (Azure CLI identity)
+        - Docker: API Key from AZURE_OPENAI_API_KEY env var
+        - Azure Container App/App Service: MSI via DefaultAzureCredential
         """
         azure_endpoint = self._azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT")
         api_version = self._apiversion or os.getenv("AZURE_OPENAI_VERSION")
-        api_key = (os.getenv("AZURE_OPENAI_API_KEY") or "").strip() or None
-        
+
         log.info("🔧 [AzureOpenAI] Initializing async client...")
-        
+
         if not azure_endpoint:
             raise ValueError("AZURE_OPENAI_ENDPOINT must be set")
         if not api_version:
             raise ValueError("AZURE_OPENAI_VERSION must be set")
 
-        # Authentication chain: API Key → MSI/DefaultAzureCredential
-        if api_key:
+        if self._should_use_api_key():
+            api_key = os.getenv("AZURE_OPENAI_API_KEY", "").strip()
             masked = api_key[:6] + '***' if len(api_key) > 6 else '***'
             log.info(f"🔑 [AzureOpenAI Async] Auth method: API Key ({masked})")
             return AsyncAzureOpenAI(

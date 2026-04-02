@@ -296,8 +296,8 @@ def generate_wiki(
 
     # Step 2: Get LLM client
     from backend.config import get_azure_ai_client
-    model_client = get_azure_ai_client()
-    deployment = get_azure_deployment_name()
+    model_client = get_azure_ai_client(task='reasoning')
+    deployment = get_azure_deployment_name(task='reasoning')
 
     # Step 3: Generate wiki structure via LLM
     print("\n--- Generating wiki structure ---")

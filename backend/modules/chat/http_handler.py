@@ -254,15 +254,16 @@ async def chat_completions_stream(request: ChatCompletionRequest):
 
         prompt += f"<query>\n{query}\n</query>\n\nAssistant: "
 
-        # Get Azure model configuration from infra.json
-        logger.info(f"Using Azure OpenAI with model: {request.model}")
+        # Select model based on task: reasoning for deep research, chat for Q&A
+        task = 'reasoning' if is_deep_research else 'chat'
+        logger.info(f"Using Azure OpenAI task={task} (deep_research={is_deep_research})")
 
         # Use shared Azure AI client instance (singleton)
-        model = get_azure_ai_client(request.model)
-        deployment_name = get_azure_deployment_name(request.model)
+        model = get_azure_ai_client(task=task)
+        deployment_name = get_azure_deployment_name(task=task)
         logger.info(f"Using Azure deployment: {deployment_name}")
 
-        deployment_config = get_model_config("azure", deployment_name)["model_kwargs"]
+        deployment_config = get_model_config("azure", deployment_name, task=task)["model_kwargs"]
         temperature = deployment_config.get("temperature", 1.0)
 
         model_kwargs = {

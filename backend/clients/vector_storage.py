@@ -39,6 +39,13 @@ import logging
 import re
 from typing import List, Optional, Dict, Any, Tuple
 
+try:
+    import orjson as _json_fast
+    _USE_ORJSON = True
+except ImportError:
+    _json_fast = None  # type: ignore
+    _USE_ORJSON = False
+
 from adalflow.core.types import Document
 from backend.paths import get_adalflow_root_path
 
@@ -366,49 +373,65 @@ class VectorStorage:
             logger.error(f"[Vec] Error loading vectors: {e}")
             return []
     
+    @staticmethod
+    def _read_json_file(json_path: str) -> Optional[Dict[str, Any]]:
+        """Read and parse a single JSON chunk file. Returns None on error."""
+        try:
+            if _USE_ORJSON:
+                with open(json_path, 'rb') as f:
+                    return _json_fast.loads(f.read())
+            else:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.error(f"[Vec] Failed to load {json_path}: {e}")
+            return None
+
     def _load_from_local(
         self,
         vectors_path: str,
         progress_callback: Optional[callable]
     ) -> List[Document]:
-        """Load documents from local filesystem."""
+        """Load documents from local filesystem using parallel I/O."""
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
         local_base = os.path.join(self._root_path, vectors_path)
-        
+
         if not os.path.exists(local_base):
             logger.info(f"[Vec] Vectors directory does not exist: {local_base}")
             return []
-        
+
         # Find all JSON files
         json_files = []
         for root, _, files in os.walk(local_base):
             for f in files:
                 if f.endswith('.json'):
                     json_files.append(os.path.join(root, f))
-        
+
         if not json_files:
             logger.info("[Vec] No JSON files found")
             return []
-        
-        logger.info(f"[Vec] Found {len(json_files)} chunk files")
-        
+
+        total = len(json_files)
+        logger.info(f"[Vec] Found {total} chunk files, loading with parallel I/O...")
+        load_start = time.time()
+
+        # Parallel read: I/O-bound, so many workers help
+        workers = min(32, max(8, total // 200))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            raw_results = list(pool.map(self._read_json_file, json_files))
+
         documents = []
-        for i, json_path in enumerate(json_files):
-            try:
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    chunk_data = json.load(f)
-                
-                # New format: each file is one chunk
-                doc = self._dict_to_document(chunk_data)
-                documents.append(doc)
-                
-                if progress_callback:
-                    progress_callback(i + 1, len(json_files))
-                    
-            except Exception as e:
-                logger.error(f"[Vec] Failed to load {json_path}: {e}")
-                continue
-        
-        logger.info(f"[Vec] Loaded {len(documents)} chunks from local storage")
+        for chunk_data in raw_results:
+            if chunk_data is not None:
+                documents.append(self._dict_to_document(chunk_data))
+
+        elapsed = time.time() - load_start
+        logger.info(
+            f"[Vec] Loaded {len(documents)}/{total} chunks from local storage "
+            f"in {elapsed:.1f}s ({workers} workers)"
+        )
         return documents
     
     def _load_from_blob(
@@ -416,12 +439,15 @@ class VectorStorage:
         vectors_path: str,
         progress_callback: Optional[callable]
     ) -> List[Document]:
-        """Load documents from Azure Blob Storage."""
+        """Load documents from Azure Blob Storage using parallel downloads."""
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
         blob_client = get_blob_storage_client()
         if not blob_client:
             logger.error("[Vec] Blob client not available")
             return []
-        
+
         # List all blobs in the vectors path
         try:
             blobs = blob_client.list_blobs(vectors_path + "/")
@@ -429,32 +455,41 @@ class VectorStorage:
         except Exception as e:
             logger.error(f"[Vec] Failed to list blobs: {e}")
             return []
-        
+
         if not json_blobs:
             logger.info("[Vec] No JSON blobs found")
             return []
-        
-        logger.info(f"[Vec] Found {len(json_blobs)} chunk files")
-        
-        documents = []
-        for i, blob_name in enumerate(json_blobs):
+
+        total = len(json_blobs)
+        logger.info(f"[Vec] Found {total} chunk files in blob, loading in parallel...")
+        load_start = time.time()
+
+        def _download_one(blob_name: str) -> Optional[Dict[str, Any]]:
             try:
                 content = blob_client.download_text(blob_name)
                 if content:
-                    chunk_data = json.loads(content)
-                    
-                    # New format: each file is one chunk
-                    doc = self._dict_to_document(chunk_data)
-                    documents.append(doc)
-                
-                if progress_callback:
-                    progress_callback(i + 1, len(json_blobs))
-                    
+                    if _USE_ORJSON:
+                        return _json_fast.loads(content.encode('utf-8') if isinstance(content, str) else content)
+                    return json.loads(content)
             except Exception as e:
                 logger.error(f"[Vec] Failed to load blob {blob_name}: {e}")
-                continue
-        
-        logger.info(f"[Vec] Loaded {len(documents)} chunks from blob storage")
+            return None
+
+        # Parallel download: network-bound, more workers help
+        workers = min(64, max(8, total // 100))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            raw_results = list(pool.map(_download_one, json_blobs))
+
+        documents = []
+        for chunk_data in raw_results:
+            if chunk_data is not None:
+                documents.append(self._dict_to_document(chunk_data))
+
+        elapsed = time.time() - load_start
+        logger.info(
+            f"[Vec] Loaded {len(documents)}/{total} chunks from blob storage "
+            f"in {elapsed:.1f}s ({workers} workers)"
+        )
         return documents
     
     def list_files(self, repo_name: str, branch: str) -> set:

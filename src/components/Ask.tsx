@@ -65,6 +65,7 @@ interface AskProps {
   isCustomModel?: boolean;
   customModel?: string;
   language?: string;
+  isVisible?: boolean;
   onRef?: (ref: { clearConversation: () => void }) => void;
 }
 
@@ -75,6 +76,7 @@ const Ask: React.FC<AskProps> = ({
   isCustomModel = false,
   customModel = '',
   language = 'en',
+  isVisible = true,
   onRef
 }) => {
   const [question, setQuestion] = useState('');
@@ -111,6 +113,41 @@ const Ask: React.FC<AskProps> = ({
   const currentAssistantMessageIdRef = useRef<string | null>(null);
   // Accumulate all iteration content across continueResearch calls
   const allIterationsContentRef = useRef<string[]>([]);
+
+  // OpenAI connection status
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'checking' | 'connected' | 'error'>('idle');
+  const [connectionError, setConnectionError] = useState('');
+  const [connectionModel, setConnectionModel] = useState('');
+
+  // Check OpenAI connectivity when chat panel becomes visible
+  useEffect(() => {
+    if (!isVisible) return;
+    let cancelled = false;
+
+    const checkConnection = async () => {
+      setConnectionStatus('checking');
+      setConnectionError('');
+      try {
+        const res = await fetch('/api/health/openai', { signal: AbortSignal.timeout(15000) });
+        if (cancelled) return;
+        const data = await res.json();
+        if (data.status === 'connected') {
+          setConnectionStatus('connected');
+          setConnectionModel(data.model || '');
+        } else {
+          setConnectionStatus('error');
+          setConnectionError(data.message || 'Connection failed');
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setConnectionStatus('error');
+        setConnectionError(err instanceof Error ? err.message : 'Backend unreachable');
+      }
+    };
+
+    checkConnection();
+    return () => { cancelled = true; };
+  }, [isVisible]);
 
   // Focus input on component mount
   useEffect(() => {
@@ -1232,9 +1269,39 @@ const Ask: React.FC<AskProps> = ({
             </svg>
             <p className="text-base font-medium">Ask a question about this codebase</p>
             <p className="text-sm opacity-70 mt-1">Your conversation will appear here</p>
+            {/* Connection status in empty state */}
+            {connectionStatus === 'error' && (
+              <div className="mt-4 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 max-w-xs">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+                  <span className="text-xs font-medium text-red-700 dark:text-red-400">Chatbot unavailable</span>
+                </div>
+                <p className="text-xs text-red-600 dark:text-red-400 mt-1 break-words">{connectionError}</p>
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {/* Connection status bar */}
+      {connectionStatus !== 'idle' && (
+        <div className="flex-shrink-0 px-4 py-1.5 border-t border-[var(--border-color)] flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+            connectionStatus === 'checking' ? 'bg-yellow-400 animate-pulse' :
+            connectionStatus === 'connected' ? 'bg-green-500' :
+            'bg-red-500'
+          }`} />
+          <span className={`text-xs truncate ${
+            connectionStatus === 'checking' ? 'text-yellow-600 dark:text-yellow-400' :
+            connectionStatus === 'connected' ? 'text-green-600 dark:text-green-400' :
+            'text-red-600 dark:text-red-400'
+          }`}>
+            {connectionStatus === 'checking' ? 'Connecting to chatbot...' :
+             connectionStatus === 'connected' ? 'Connected' :
+             connectionError || 'Connection failed'}
+          </span>
+        </div>
+      )}
 
       {/* Question input - fixed at bottom */}
       <div className="flex-shrink-0 p-4 border-t border-[var(--border-color)] bg-[var(--card-bg)]">

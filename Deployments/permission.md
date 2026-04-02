@@ -14,7 +14,6 @@
 - Access to storage account: this managed identity has below roles assigned:
     - Storage File Data Privileged Contributor
     - Storage Blob Data Contributor
-    - Storage Blob Data Reader
     - Azure AI Administrator
     - Azure AI Enterprise Network Connection Approver (used to setup managed VNet for AML)
 

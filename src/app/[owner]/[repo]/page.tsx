@@ -596,6 +596,7 @@ export default function RepoWikiPage() {
                     provider={cachedProvider}
                     model={cachedModel}
                     language={language}
+                    isVisible={!isChatPanelCollapsed}
                     onRef={(ref) => (askComponentRef.current = ref)}
                   />
                 </div>

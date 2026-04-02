@@ -543,18 +543,20 @@ async def handle_websocket_chat(websocket: WebSocket):
                 f"<query>\n{query}\n</query>\n\nAssistant: "
             )
 
-        logger.info(f"Using Azure OpenAI with model: {request.model}")
+        # Select model based on task: reasoning for deep research, chat for Q&A
+        task = 'reasoning' if is_deep_research else 'chat'
+        logger.info(f"Using Azure OpenAI task={task} (deep_research={is_deep_research})")
 
-        # Get deployment name for Azure
-        deployment_name = get_azure_deployment_name(request.model)
+        # Get deployment name for the task
+        deployment_name = get_azure_deployment_name(task=task)
 
         # Get config for the deployment name (includes initialize_kwargs)
-        model_config = get_model_config("azure", deployment_name)
+        model_config = get_model_config("azure", deployment_name, task=task)
         deployment_config = model_config["model_kwargs"]
         logger.info(f"Azure deployment_config: {deployment_config}")
 
         # Use shared Azure AI client instance (singleton)
-        model = get_azure_ai_client(request.model)
+        model = get_azure_ai_client(task=task)
 
         # Check if this is an o-series reasoning model (o1, o3, o4, etc.)
         is_reasoning_model = deployment_name.startswith("o") and len(deployment_name) > 1 and deployment_name[1].isdigit()
