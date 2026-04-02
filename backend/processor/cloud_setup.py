@@ -346,6 +346,17 @@ def _create_or_update_pipeline(
     # .amlignore filters out frontend/node_modules/etc.
     project_root = str(Path(__file__).resolve().parents[2])
 
+    # Pass REPO_ACCESS_TOKEN to the AML job if available.
+    # In cloud mode, resolve_auth() tries PAT first before MSI.
+    # Without this, the PAT from local .env never reaches AML.
+    import os
+    env_vars = {}
+    pat = (os.environ.get('REPO_ACCESS_TOKEN', ''))
+    if pat:
+        env_vars['REPO_ACCESS_TOKEN'] = pat
+        masked = pat[:6] + '***' if len(pat) > 6 else '***'
+        logger.info(f"Passing REPO_ACCESS_TOKEN to AML job ({masked})")
+
     # Define the command component with code upload
     processor_command = command(
         name=f"{name}-step",
@@ -354,6 +365,7 @@ def _create_or_update_pipeline(
         compute=config['compute_name'],
         environment=f"{config['environment_name']}@latest",
         code=project_root,
+        environment_variables=env_vars if env_vars else None,
     )
 
     # Wrap in a pipeline (schedules require PipelineJob, not CommandJob)

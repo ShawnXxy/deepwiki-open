@@ -84,7 +84,8 @@ def download_repo(
     access_token: str = None,
     branch: str = None,
     git_source=None,
-    force_update: bool = False
+    force_update: bool = False,
+    token_type: str = 'pat'
 ) -> str:
     """
     Downloads a Git repository (GitHub, GitLab, Bitbucket, or Azure DevOps) to a specified
@@ -100,6 +101,7 @@ def download_repo(
         branch (str, optional): Specific branch to clone. If None, uses default branch.
         git_source (GitSource, optional): GitSource object containing all git parameters.
         force_update (bool): If True and repo exists, pull latest changes instead of skipping.
+        token_type (str): 'pat' for Personal Access Tokens, 'bearer' for JWT/MSI tokens.
 
     Returns:
         str: The output message from the git command.
@@ -146,7 +148,7 @@ def download_repo(
             if force_update:
                 # Pull latest changes instead of skipping
                 logger.info(f"Repository exists at {local_path}, pulling latest changes...")
-                return _pull_repo_internal(local_path, access_token, repo_url, type)
+                return _pull_repo_internal(local_path, access_token, repo_url, type, token_type=token_type)
             else:
                 logger.warning(f"Repository already exists at {local_path}. Using existing.")
                 return f"Using existing repository at {local_path}"
@@ -156,40 +158,32 @@ def download_repo(
 
         # Prepare the clone URL with access token if provided
         clone_url = repo_url
+        extra_git_config = []  # Extra -c flags for git (e.g., Bearer auth header)
         token_status = '[PROVIDED]' if access_token else '[NONE]'
         logger.debug(
             f"download_repo called with type={type}, "
             f"access_token={token_status}"
         )
         if access_token:
+            # Token type is passed explicitly by the caller.
+            # 'bearer' = JWT from MSI/AAD (must use Authorization header)
+            # 'pat' = Personal Access Token (embeds in URL)
+            is_bearer_token = (token_type == 'bearer')
+
             parsed = urlparse(repo_url)
-            # URL-encode the token to handle special characters
             encoded_token = quote(access_token, safe='')
-            logger.debug(f"Token encoded, length: {len(encoded_token)}")
-            # Determine the repository type and format the URL accordingly
-            if type == "github":
-                # Format: https://{token}@{domain}/owner/repo.git
-                netloc = f"{encoded_token}@{parsed.netloc}"
-                clone_url = urlunparse((
-                    parsed.scheme, netloc,
-                    parsed.path, '', '', ''
-                ))
-            elif type == "gitlab":
-                # Format: https://oauth2:{token}@gitlab.com/owner/repo.git
-                netloc = f"oauth2:{encoded_token}@{parsed.netloc}"
-                clone_url = urlunparse((
-                    parsed.scheme, netloc,
-                    parsed.path, '', '', ''
-                ))
-            elif type == "bitbucket":
-                # Format: https://x-token-auth:{token}@bitbucket.org/owner/repo.git
-                netloc = f"x-token-auth:{encoded_token}@{parsed.netloc}"
-                clone_url = urlunparse((
-                    parsed.scheme, netloc,
-                    parsed.path, '', '', ''
-                ))
+            logger.debug(f"Token type: {token_type}, length: {len(access_token)}")
+
+            if type == "azuredevops" and is_bearer_token:
+                # Bearer tokens (from MSI) must use the Authorization header.
+                # Embedding a ~1200-char JWT in the URL fails because git
+                # treats it as a username and prompts for a password.
+                extra_git_config = [
+                    "-c", f"http.extraHeader=Authorization: Bearer {access_token}"
+                ]
+                logger.info("Using Bearer token via http.extraHeader for ADO clone")
             elif type == "azuredevops":
-                # Format: https://{token}@{domain}/owner/repo.git
+                # PAT for ADO: embed in URL
                 clone_url = urlunparse((
                     parsed.scheme,
                     f"{encoded_token}@{parsed.netloc}",
@@ -206,7 +200,7 @@ def download_repo(
         logger.info(f"Cloning repository from {repo_url} to {local_path}")
 
         # Build git clone command with branch parameter if specified
-        clone_cmd = ["git", "clone", "--depth=1", "--single-branch"]
+        clone_cmd = ["git"] + extra_git_config + ["clone", "--depth=1", "--single-branch"]
 
         # Add branch parameter if specified, with fallback logic
         if branch and branch.strip():
@@ -342,11 +336,15 @@ def _pull_repo_internal(
     local_path: str,
     access_token: str = None,
     repo_url: str = None,
-    repo_type: str = "github"
+    repo_type: str = "github",
+    token_type: str = 'pat'
 ) -> str:
     """
     Internal helper: Pull the latest changes from a Git repository.
     Called by download_repo when force_update=True and repo exists.
+
+    Args:
+        token_type: 'pat' for Personal Access Tokens, 'bearer' for JWT/MSI tokens.
     """
     git_dir = os.path.join(local_path, ".git")
     if not os.path.exists(git_dir):
@@ -356,42 +354,34 @@ def _pull_repo_internal(
 
     try:
         # If we have an access token and repo URL, update the remote URL for auth
+        # For bearer tokens (JWT from MSI), use http.extraHeader instead of URL
+        use_bearer_header = False
         if access_token and repo_url:
-            parsed = urlparse(repo_url)
-            encoded_token = quote(access_token, safe='')
+            is_bearer_token = (token_type == 'bearer')
 
-            if repo_type == "github":
-                auth_url = urlunparse((
-                    parsed.scheme, f"{encoded_token}@{parsed.netloc}",
-                    parsed.path, '', '', ''
-                ))
-            elif repo_type == "gitlab":
-                auth_url = urlunparse((
-                    parsed.scheme, f"oauth2:{encoded_token}@{parsed.netloc}",
-                    parsed.path, '', '', ''
-                ))
-            elif repo_type == "bitbucket":
-                auth_url = urlunparse((
-                    parsed.scheme, f"x-token-auth:{encoded_token}@{parsed.netloc}",
-                    parsed.path, '', '', ''
-                ))
+            if repo_type == "azuredevops" and is_bearer_token:
+                # Bearer tokens: use git -c http.extraHeader for all git commands
+                use_bearer_header = True
+                logger.info("Using Bearer token via http.extraHeader for ADO pull")
             elif repo_type == "azuredevops":
+                parsed = urlparse(repo_url)
+                encoded_token = quote(access_token, safe='')
                 auth_url = urlunparse((
                     parsed.scheme, f"{encoded_token}@{parsed.netloc}",
                     parsed.path, '', '', ''
                 ))
-            else:
-                auth_url = repo_url
 
-            # Temporarily set the remote URL with auth
-            subprocess.run(
-                ["git", "remote", "set-url", "origin", auth_url],
-                cwd=local_path,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            logger.info("Updated remote URL with authentication token")
+                # Temporarily set the remote URL with auth
+                subprocess.run(
+                    ["git", "remote", "set-url", "origin", auth_url],
+                    cwd=local_path,
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                logger.info("Updated remote URL with authentication token")
+            else:
+                logger.warning(f"Unknown repo type: {repo_type}, skipping auth")
 
         # Get current branch name
         result = subprocess.run(
@@ -406,6 +396,11 @@ def _pull_repo_internal(
             current_branch = "HEAD"
         logger.info(f"Current branch: {current_branch}")
 
+        # Build git command prefix with bearer auth if needed
+        git_cmd = ["git"]
+        if use_bearer_header:
+            git_cmd += ["-c", f"http.extraHeader=Authorization: Bearer {access_token}"]
+
         # Check if this is a shallow clone
         shallow_file = os.path.join(git_dir, "shallow")
         is_shallow = os.path.exists(shallow_file)
@@ -413,7 +408,7 @@ def _pull_repo_internal(
         if is_shallow:
             logger.info("Repository is a shallow clone, fetching with unshallow...")
             subprocess.run(
-                ["git", "fetch", "--unshallow", "origin"],
+                git_cmd + ["fetch", "--unshallow", "origin"],
                 cwd=local_path,
                 check=True,
                 stdout=subprocess.PIPE,
@@ -424,7 +419,7 @@ def _pull_repo_internal(
         # Try to pull
         try:
             result = subprocess.run(
-                ["git", "pull", "--ff-only"],
+                git_cmd + ["pull", "--ff-only"],
                 cwd=local_path,
                 check=True,
                 stdout=subprocess.PIPE,
@@ -437,7 +432,7 @@ def _pull_repo_internal(
             # If fast-forward fails, reset to remote
             logger.warning("Fast-forward pull failed, resetting to remote branch")
             subprocess.run(
-                ["git", "fetch", "origin"],
+                git_cmd + ["fetch", "origin"],
                 cwd=local_path,
                 check=True,
                 stdout=subprocess.PIPE,
@@ -463,7 +458,8 @@ def _pull_repo_internal(
         raise ValueError(f"Git pull failed: {error_msg}")
     finally:
         # Reset remote URL to original (without token) for security
-        if access_token and repo_url:
+        # Skip if using bearer header — remote URL was never modified
+        if access_token and repo_url and not use_bearer_header:
             try:
                 subprocess.run(
                     ["git", "remote", "set-url", "origin", repo_url],

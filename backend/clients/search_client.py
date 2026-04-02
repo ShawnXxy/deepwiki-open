@@ -36,13 +36,31 @@ def get_index_name(owner: str, repo: str, branch: str) -> str:
     return _sanitize_index_name(f"deepwiki-{owner}-{repo}-{branch}")
 
 
+def _get_search_credential():
+    """Get Azure credential for AI Search.
+
+    If managed_identity.client_id is configured, use MSI.
+    Otherwise fall back to Azure CLI (local dev), skipping MSI
+    to avoid noisy timeouts on machines without managed identity.
+    """
+    from azure.identity import DefaultAzureCredential
+    from backend.config import get_infra_config
+
+    infra = get_infra_config()
+    client_id = infra.managed_identity.client_id
+
+    if client_id:
+        return DefaultAzureCredential(managed_identity_client_id=client_id)
+
+    return DefaultAzureCredential(exclude_managed_identity_credential=True)
+
+
 def _get_search_client():
     """Create an authenticated SearchIndexClient."""
     from azure.search.documents.indexes import SearchIndexClient
-    from azure.identity import DefaultAzureCredential
 
     config = get_search_config()
-    credential = DefaultAzureCredential()
+    credential = _get_search_credential()
     return SearchIndexClient(
         endpoint=config.endpoint,
         credential=credential,
@@ -52,10 +70,9 @@ def _get_search_client():
 def _get_search_documents_client(index_name: str):
     """Create an authenticated SearchClient for a specific index."""
     from azure.search.documents import SearchClient
-    from azure.identity import DefaultAzureCredential
 
     config = get_search_config()
-    credential = DefaultAzureCredential()
+    credential = _get_search_credential()
     return SearchClient(
         endpoint=config.endpoint,
         index_name=index_name,
@@ -66,10 +83,9 @@ def _get_search_documents_client(index_name: str):
 def _get_indexer_client():
     """Create an authenticated SearchIndexerClient."""
     from azure.search.documents.indexes import SearchIndexerClient
-    from azure.identity import DefaultAzureCredential
 
     config = get_search_config()
-    credential = DefaultAzureCredential()
+    credential = _get_search_credential()
     return SearchIndexerClient(
         endpoint=config.endpoint,
         credential=credential,
@@ -579,10 +595,17 @@ def delete_index(index_name: str) -> None:
 
 
 def index_exists(index_name: str) -> bool:
-    """Check if an AI Search index exists."""
+    """Check if an AI Search index exists.
+
+    Only returns False for actual 404 (not found). Auth errors and
+    other failures are raised so they aren't silently masked as
+    'index not found'.
+    """
+    from azure.core.exceptions import ResourceNotFoundError
+
     client = _get_search_client()
     try:
         client.get_index(index_name)
         return True
-    except Exception:
+    except ResourceNotFoundError:
         return False

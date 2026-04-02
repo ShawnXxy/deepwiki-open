@@ -133,13 +133,16 @@ def _extract_owner_repo(repo_url: str) -> tuple:
 # Step functions - each is a discrete, reusable pipeline step
 # ============================================================================
 
-def resolve_auth(mode: str) -> str:
+def resolve_auth(mode: str) -> tuple:
     """Resolve an access token for the repository.
 
     Auth strategy per mode:
-        local  - PAT from env -> Azure CLI identity (exclude MSI)
-        docker - PAT from env only -> error if missing
-        cloud  - UMI from infra.json managed_identity.client_id
+        local  - PAT from env → Azure CLI identity (exclude MSI)
+        docker - PAT from env only → error if missing
+        cloud  - PAT from env → UMI from infra.json managed_identity.client_id
+
+    Returns:
+        Tuple of (token, token_type) where token_type is 'pat' or 'bearer'
     """
     pat = (os.environ.get('REPO_ACCESS_TOKEN', '')
            or os.environ.get('ADO_PAT', '')
@@ -148,7 +151,7 @@ def resolve_auth(mode: str) -> str:
     if pat:
         masked = pat[:6] + '***' if len(pat) > 6 else '***'
         print(f"  Auth: PAT from environment ({masked})")
-        return pat
+        return pat, 'pat'
 
     if mode == 'docker':
         print("  ERROR: Docker mode requires REPO_ACCESS_TOKEN in .env")
@@ -176,7 +179,7 @@ def resolve_auth(mode: str) -> str:
         )
         method = 'managed identity' if mode == 'cloud' else 'Azure CLI'
         print(f"  Auth: token acquired via {method}")
-        return token.token
+        return token.token, 'bearer'
     except Exception as e:
         logger.warning(f"Could not acquire Azure identity token: {e}")
         print("  ERROR: No authentication available for private repo.")
@@ -188,7 +191,7 @@ def resolve_auth(mode: str) -> str:
         sys.exit(1)
 
 
-def step_clone(repo_url, token, branch, repo_name):
+def step_clone(repo_url, token, branch, repo_name, token_type='pat'):
     """Clone repository to local disk. Returns (repo_dir, commit_hash)."""
     from backend.modules.repository.git_ops import (
         download_repo, get_head_commit_hash,
@@ -204,6 +207,7 @@ def step_clone(repo_url, token, branch, repo_name):
         access_token=token,
         branch=branch,
         force_update=True,
+        token_type=token_type,
     )
     commit = get_head_commit_hash(save_dir)
     print(f"  Cloned to: {save_dir}")
@@ -491,11 +495,11 @@ def _process(mode, repo_url, branch, language, comprehensive):
     print(f"  Owner:    {owner}")
     print(f"  Repo:     {repo}")
 
-    token = resolve_auth(mode)
+    token, token_type = resolve_auth(mode)
 
     # Clone to local temp disk (all modes — even cloud clones locally
     # on AML compute; vectors and wiki go to blob via storage abstraction)
-    repo_dir, commit_hash = step_clone(repo_url, token, branch, repo_name)
+    repo_dir, commit_hash = step_clone(repo_url, token, branch, repo_name, token_type)
 
     if mode == 'cloud':
         # ============================================================
