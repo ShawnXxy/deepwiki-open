@@ -139,6 +139,8 @@ For detailed module documentation, see:
 - [backend/modules/embedder/README.md](backend/modules/embedder/README.md) — Code splitting, embedding, FAISS retrieval
 - [backend/modules/repository/README.md](backend/modules/repository/README.md) — Git operations
 - [backend/modules/wiki/README.md](backend/modules/wiki/README.md) — Wiki cache, data models, export
+- [backend/modules/codemap/README.md](backend/modules/codemap/README.md) — Static symbol graph (tree-sitter AST, interactive visualization)
+- [backend/modules/codetrace/README.md](backend/modules/codetrace/README.md) — AI code flow tracing (RAG + LLM, 3-panel page)
 - [src/components/DESIGN.md](src/components/DESIGN.md) — Frontend architecture, component reference, Mermaid rendering pipeline
 
 > **Architecture Note**: The backend uses a modular architecture with clear separation of concerns:
@@ -555,7 +557,29 @@ Multi-turn research for complex topics:
 - **Structured Process**: Clear research plan with updates
 - **Comprehensive Conclusion**: Final answer based on all iterations
 
-Toggle "Deep Research" in the Ask interface for thorough analysis.
+## 🗺️ Code Visualization Features
+
+### CodeMap — Static Symbol Graph
+
+Interactive code relationship visualization using tree-sitter AST parsing.
+Shows file dependencies, function call graphs, and class hierarchies — no LLM
+calls, zero token cost. Available as the "Code Map" tab on the wiki viewer page.
+
+- **Languages**: Python, JavaScript, TypeScript, Java, Go, C#, C, C++
+- **Features**: Expand nodes to see children, click to highlight connections, detail panel, search/filter
+- **Storage**: `~/.adalflow/codemap/` (separate from wiki cache)
+- **Details**: [backend/modules/codemap/README.md](backend/modules/codemap/README.md)
+
+### CodeTrace — AI Code Flow Tracing
+
+Query-driven code trace powered by RAG + LLM. Ask a question about the
+codebase and get a structured trace showing how different code locations
+connect — with source file viewer and line highlighting.
+
+- **Route**: `/[owner]/[repo]/codetrace?q=<question>`
+- **Trigger**: Select "🔍 Code Trace" in the Ask panel mode dropdown
+- **Layout**: 3-panel page — trace sections (left), source files (right), chat bar (bottom)
+- **Details**: [backend/modules/codetrace/README.md](backend/modules/codetrace/README.md)
 
 ## 📱 Screenshots
 
@@ -569,4 +593,4 @@ Toggle "Deep Research" in the Ask interface for thorough analysis.
 *DeepResearch conducts multi-turn investigations*
 
 ## Limitation (Working in progress)
-- CodeMap: allows to show function callstack
+- See [CodeMap Roadmap](backend/modules/codemap/README.md) and [CodeTrace Roadmap](backend/modules/codetrace/README.md) for planned enhancements

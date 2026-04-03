@@ -50,7 +50,7 @@
     "compute_name": "deepwiki-compute",
     "compute_size": "STANDARD_D11_V2",
     "compute_min_instances": 0,
-    "compute_max_instances": 1,
+    "compute_max_instances": 10,
     "schedule_interval_hours": 700,
     "environment_name": "deepwiki-processor",
     "idle_time_before_scale_down": 180
