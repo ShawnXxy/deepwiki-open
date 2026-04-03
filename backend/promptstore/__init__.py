@@ -3,6 +3,7 @@ Prompt Store — LLM prompt templates and builders for DeepWiki.
 
 Files:
     chat_system.py      — System prompt builder (selects template by chat mode)
+    code_trace.py       — Code trace templates (system + user prompts)
     deep_research.py    — Multi-turn research templates (first/intermediate/final)
     simple_chat.py      — Single-turn Q&A system prompt template
     rag.py              — RAG system prompt + Jinja2 context template
@@ -47,6 +48,12 @@ from backend.promptstore.wiki_page import format_page_catalog
 # Chat system prompt builder
 from backend.promptstore.chat_system import build_chat_system_prompt
 
+# Code trace prompts
+from backend.promptstore.code_trace import (
+    CODE_TRACE_SYSTEM_PROMPT,
+    CODE_TRACE_USER_PROMPT,
+)
+
 __all__ = [
     # RAG
     "RAG_SYSTEM_PROMPT",
@@ -63,4 +70,7 @@ __all__ = [
     "WIKI_PAGE_CONTENT_PROMPT",
     # Chat system prompt builder
     "build_chat_system_prompt",
+    # Code trace
+    "CODE_TRACE_SYSTEM_PROMPT",
+    "CODE_TRACE_USER_PROMPT",
 ]
