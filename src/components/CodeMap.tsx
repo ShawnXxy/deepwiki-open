@@ -123,20 +123,60 @@ function edgeColor(kind: string, highlighted: boolean): { stroke: string; dash?:
 
 function computeLayout(flowNodes: Node[], flowEdges: Edge[], direction: 'TB' | 'LR'): Node[] {
   if (flowNodes.length === 0) return [];
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: direction, nodesep: 80, ranksep: 100, marginx: 30, marginy: 30 });
-  g.setDefaultEdgeLabel(() => ({}));
-  flowNodes.forEach(node => {
-    const h = node.type === 'functionNode' ? 42 : 55;
-    const w = node.type === 'functionNode' ? 170 : 230;
-    g.setNode(node.id, { width: w, height: h });
+
+  // Separate connected and disconnected nodes
+  const connectedNodeIds = new Set<string>();
+  flowEdges.forEach(e => {
+    connectedNodeIds.add(e.source);
+    connectedNodeIds.add(e.target);
   });
-  flowEdges.forEach(e => { if (g.hasNode(e.source) && g.hasNode(e.target)) g.setEdge(e.source, e.target); });
-  dagre.layout(g);
-  return flowNodes.map(node => {
-    const p = g.node(node.id);
-    return p ? { ...node, position: { x: p.x - (p.width || 0) / 2, y: p.y - (p.height || 0) / 2 } } : node;
-  });
+
+  const connectedNodes = flowNodes.filter(n => connectedNodeIds.has(n.id));
+  const disconnectedNodes = flowNodes.filter(n => !connectedNodeIds.has(n.id));
+
+  // Layout connected nodes with dagre
+  const positioned: Node[] = [];
+  if (connectedNodes.length > 0) {
+    const g = new dagre.graphlib.Graph();
+    g.setGraph({ rankdir: direction, nodesep: 80, ranksep: 100, marginx: 30, marginy: 30 });
+    g.setDefaultEdgeLabel(() => ({}));
+    connectedNodes.forEach(node => {
+      const h = node.type === 'functionNode' ? 42 : 55;
+      const w = node.type === 'functionNode' ? 170 : 230;
+      g.setNode(node.id, { width: w, height: h });
+    });
+    flowEdges.forEach(e => { if (g.hasNode(e.source) && g.hasNode(e.target)) g.setEdge(e.source, e.target); });
+    dagre.layout(g);
+    connectedNodes.forEach(node => {
+      const p = g.node(node.id);
+      positioned.push(p
+        ? { ...node, position: { x: p.x - (p.width || 0) / 2, y: p.y - (p.height || 0) / 2 } }
+        : node
+      );
+    });
+  }
+
+  // Layout disconnected nodes in a grid below the dagre layout
+  if (disconnectedNodes.length > 0) {
+    const cols = Math.ceil(Math.sqrt(disconnectedNodes.length));
+    const cellW = 250;
+    const cellH = 75;
+    // Find the bottom of the dagre layout
+    let offsetY = 0;
+    positioned.forEach(n => { offsetY = Math.max(offsetY, n.position.y + 80); });
+    if (positioned.length > 0) offsetY += 60; // gap
+
+    disconnectedNodes.forEach((node, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      positioned.push({
+        ...node,
+        position: { x: col * cellW, y: offsetY + row * cellH },
+      });
+    });
+  }
+
+  return positioned;
 }
 
 // ============================================================================
@@ -469,7 +509,7 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
         onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick} onPaneClick={onPaneClick}
         nodeTypes={nodeTypes}
-        fitView fitViewOptions={{ padding: 0.15 }}
+        fitView fitViewOptions={{ padding: 0.1, maxZoom: 1 }}
         minZoom={0.02} maxZoom={2.5}
         attributionPosition="bottom-left"
       >

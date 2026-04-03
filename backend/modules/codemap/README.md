@@ -1,6 +1,11 @@
 # CodeMap Module
 
-Interactive code relationship visualization for DeepWiki. Extracts **file dependencies**, **function call graphs**, and **class hierarchies** from source code using AST parsing — no LLM calls, no embeddings, zero token cost.
+Static, interactive code relationship visualization for DeepWiki. Extracts **file dependencies**, **function call graphs**, and **class hierarchies** from source code using tree-sitter AST parsing — no LLM calls, no embeddings, zero token cost.
+
+> **See also:** [CodeTrace](../codetrace/PLAN.md) — a separate, LLM-powered
+> query-driven code trace feature that generates structured explanations of
+> code execution flows. CodeMap is for static structure; CodeTrace is for
+> answering "how does X work?" questions.
 
 ## How It Works
 
