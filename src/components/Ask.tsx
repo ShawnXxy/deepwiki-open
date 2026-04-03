@@ -82,7 +82,8 @@ const Ask: React.FC<AskProps> = ({
   const [question, setQuestion] = useState('');
   const [response, setResponse] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [deepResearch, setDeepResearch] = useState(false);
+  const [chatMode, setChatMode] = useState<'chat' | 'deepresearch' | 'codetrace'>('chat');
+  const deepResearch = chatMode === 'deepresearch';
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [currentIterationIndex, setCurrentIterationIndex] = useState<Record<string, number>>({});
@@ -823,6 +824,18 @@ const Ask: React.FC<AskProps> = ({
 
     if (!question.trim() || isLoading) return;
 
+    // Code Trace mode: navigate to codetrace page
+    if (chatMode === 'codetrace') {
+      const params = new URLSearchParams({
+        q: question.trim(),
+        repo_type: repoInfo.type || 'azuredevops',
+      });
+      if (repoInfo.repoUrl) params.set('repo_url', repoInfo.repoUrl);
+      if (repoInfo.branch) params.set('branch', repoInfo.branch);
+      window.location.href = `/${repoInfo.owner}/${repoInfo.repo}/codetrace?${params.toString()}`;
+      return;
+    }
+
     handleConfirmAsk();
   };
 
@@ -1340,42 +1353,49 @@ const Ask: React.FC<AskProps> = ({
             </button>
           </div>
 
-          {/* Deep Research toggle */}
+          {/* Chat Mode Selector */}
           <div className="flex items-center mt-2 justify-between">
-            <div className="group relative">
-              <label className="flex items-center cursor-pointer">
-                <span className="text-xs text-gray-600 dark:text-gray-400 mr-2">Deep Research</span>
-                <div className="relative">
-                  <input
-                    type="checkbox"
-                    checked={deepResearch}
-                    onChange={() => setDeepResearch(!deepResearch)}
-                    className="sr-only"
-                  />
-                  <div className={`w-10 h-5 rounded-full transition-colors ${deepResearch ? 'bg-purple-600' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
-                  <div className={`absolute left-0.5 top-0.5 w-4 h-4 rounded-full bg-white transition-transform transform ${deepResearch ? 'translate-x-5' : ''}`}></div>
-                </div>
-              </label>
+            <div className="group relative flex items-center gap-2">
+              <span className="text-xs text-gray-600 dark:text-gray-400">Mode:</span>
+              <select
+                value={chatMode}
+                onChange={(e) => setChatMode(e.target.value as 'chat' | 'deepresearch' | 'codetrace')}
+                className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 text-gray-700 dark:text-gray-300 outline-none focus:border-blue-400 cursor-pointer"
+              >
+                <option value="chat">💬 Chat</option>
+                <option value="deepresearch">🔬 Deep Research</option>
+                <option value="codetrace">🔍 Code Trace</option>
+              </select>
               <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded p-2 w-72 z-10">
                 <div className="relative">
                   <div className="absolute -bottom-2 left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800"></div>
-                  <p className="mb-1">Deep Research conducts a multi-turn investigation process:</p>
-                  <ul className="list-disc pl-4 text-xs">
-                    <li><strong>Initial Research:</strong> Creates a research plan and initial findings</li>
-                    <li><strong>Iteration 1:</strong> Explores specific aspects in depth</li>
-                    <li><strong>Iteration 2:</strong> Investigates remaining questions</li>
-                    <li><strong>Iterations 3-4:</strong> Dives deeper into complex areas</li>
-                    <li><strong>Final Conclusion:</strong> Comprehensive answer based on all iterations</li>
-                  </ul>
-                  <p className="mt-1 text-xs italic">The AI automatically continues research until complete (up to 5 iterations)</p>
+                  {chatMode === 'chat' && <p>Direct Q&A about the codebase. Fast, concise answers.</p>}
+                  {chatMode === 'deepresearch' && (
+                    <>
+                      <p className="mb-1">Multi-turn investigation process:</p>
+                      <ul className="list-disc pl-4 text-xs">
+                        <li><strong>Initial Research:</strong> Creates a research plan</li>
+                        <li><strong>Iterations 1-4:</strong> Explores in depth</li>
+                        <li><strong>Final:</strong> Comprehensive answer</li>
+                      </ul>
+                    </>
+                  )}
+                  {chatMode === 'codetrace' && (
+                    <p>AI-powered code flow trace. Opens a dedicated page showing connected code sections with source file references.</p>
+                  )}
                 </div>
               </div>
             </div>
-            {deepResearch && (
+            {chatMode === 'deepresearch' && (
               <div className="text-xs text-purple-600 dark:text-purple-400">
-                Multi-turn research process enabled
+                Multi-turn research enabled
                 {researchIteration > 0 && !researchComplete && ` (iteration ${researchIteration})`}
                 {researchComplete && ` (complete)`}
+              </div>
+            )}
+            {chatMode === 'codetrace' && (
+              <div className="text-xs text-blue-600 dark:text-blue-400">
+                Opens trace page on submit
               </div>
             )}
           </div>

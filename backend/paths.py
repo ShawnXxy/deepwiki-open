@@ -67,6 +67,14 @@ def get_vectors_path() -> str:
     return path
 
 
+def get_codemap_path() -> str:
+    """Get the path for codemap graph storage."""
+    path = os.path.join(get_adalflow_root_path(), "codemap")
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+    return path
+
+
 def get_embedding_cache_path() -> str:
     """Get the path for embedding cache."""
     path = os.path.join(get_adalflow_root_path(), "embedding_cache")

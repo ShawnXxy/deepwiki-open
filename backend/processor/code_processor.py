@@ -62,6 +62,8 @@ Examples:
                         help=argparse.SUPPRESS)
     parser.add_argument('--language', type=str, default=None,
                         help=argparse.SUPPRESS)
+    parser.add_argument('--skip-codemap', action='store_true',
+                        help='Skip codemap graph generation')
 
     args = parser.parse_args()
 
@@ -79,6 +81,7 @@ Examples:
         'mode': args.mode or config.get('mode'),
         'comprehensive': True,
         'language': args.language or config.get('language', 'en'),
+        'skip_codemap': args.skip_codemap or config.get('skip_codemap', False),
     }
 
     if args.comprehensive is not None:
@@ -191,6 +194,36 @@ def resolve_auth(mode: str) -> tuple:
         sys.exit(1)
 
 
+def _resolve_umi_auth() -> tuple:
+    """Acquire a bearer token via User-assigned Managed Identity (UMI).
+
+    Used as a fallback when a PAT from the environment fails in cloud mode.
+
+    Returns:
+        Tuple of (token, 'bearer')
+
+    Raises:
+        RuntimeError: If UMI token acquisition fails.
+    """
+    from azure.identity import DefaultAzureCredential
+    from backend.config import get_managed_identity_client_id
+
+    msi_client_id = get_managed_identity_client_id()
+    if not msi_client_id:
+        raise RuntimeError(
+            "managed_identity.client_id not set in infra.json"
+        )
+    print(f"  Auth: falling back to managed identity ({msi_client_id[:8]}...)")
+    credential = DefaultAzureCredential(
+        managed_identity_client_id=msi_client_id,
+    )
+    token = credential.get_token(
+        "499b84ac-1321-427f-aa17-267ca6975798/.default"
+    )
+    print("  Auth: token acquired via managed identity (fallback)")
+    return token.token, 'bearer'
+
+
 def step_clone(repo_url, token, branch, repo_name, token_type='pat'):
     """Clone repository to local disk. Returns (repo_dir, commit_hash)."""
     from backend.modules.repository.git_ops import (
@@ -213,6 +246,27 @@ def step_clone(repo_url, token, branch, repo_name, token_type='pat'):
     print(f"  Cloned to: {save_dir}")
     print(f"  Commit: {commit[:7] if commit else 'unknown'}")
     return save_dir, commit
+
+
+def step_build_codemap(repo_path, owner, repo, repo_type, branch):
+    """Build codemap graph from cloned repository."""
+    from backend.modules.codemap.graph_builder import build_codemap
+    from backend.modules.codemap.cache import save_codemap_cache
+
+    print("\n--- Step: Building codemap graph ---")
+    codemap = build_codemap(repo_path)
+    codemap.metadata.owner = owner
+    codemap.metadata.repo = repo
+    codemap.metadata.repo_type = repo_type
+    codemap.metadata.branch = branch
+
+    save_codemap_cache(codemap, owner, repo, repo_type, branch)
+    print(
+        f"  CodeMap: {codemap.metadata.total_files} files, "
+        f"{codemap.metadata.total_symbols} symbols, "
+        f"{codemap.metadata.total_edges} edges"
+    )
+    return codemap
 
 
 def step_embed(repo_url, token, branch):
@@ -469,7 +523,8 @@ def step_generate_wiki_cloud(
     )
 
 
-def _process(mode, repo_url, branch, language, comprehensive):
+def _process(mode, repo_url, branch, language, comprehensive,
+             skip_codemap=False):
     """Run the processing pipeline using step functions.
 
     The mode determines auth; config (already set before this call)
@@ -499,7 +554,33 @@ def _process(mode, repo_url, branch, language, comprehensive):
 
     # Clone to local temp disk (all modes — even cloud clones locally
     # on AML compute; vectors and wiki go to blob via storage abstraction)
-    repo_dir, commit_hash = step_clone(repo_url, token, branch, repo_name, token_type)
+    try:
+        repo_dir, commit_hash = step_clone(
+            repo_url, token, branch, repo_name, token_type,
+        )
+    except ValueError:
+        if mode == 'cloud' and token_type == 'pat':
+            logger.warning(
+                "PAT clone failed in cloud mode, "
+                "falling back to managed identity"
+            )
+            print("  WARN: PAT clone failed, retrying with managed identity...")
+            token, token_type = _resolve_umi_auth()
+            repo_dir, commit_hash = step_clone(
+                repo_url, token, branch, repo_name, token_type,
+            )
+        else:
+            raise
+
+    # Build codemap graph (all modes, unless skipped)
+    if not skip_codemap:
+        try:
+            step_build_codemap(
+                repo_dir, owner, repo, 'azuredevops', branch,
+            )
+        except Exception as e:
+            logger.warning(f"Codemap generation failed (non-fatal): {e}")
+            print(f"  WARNING: Codemap generation failed: {e}")
 
     if mode == 'cloud':
         # ============================================================
@@ -662,6 +743,7 @@ def main():
         branch=args.branch,
         language=args.language,
         comprehensive=args.comprehensive,
+        skip_codemap=args.skip_codemap,
     )
 
 
