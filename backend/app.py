@@ -28,6 +28,8 @@ from backend.modules.chat.ws_handler import handle_websocket_chat
 from backend.modules.wiki.models import (
     Model, Provider, ModelConfig,
 )
+from backend.modules.codemap.routes import router as codemap_router
+from backend.modules.codetrace.routes import router as codetrace_router
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -55,6 +57,12 @@ app.add_api_route(
     methods=["POST"],
 )
 app.add_websocket_route("/ws/chat", handle_websocket_chat)
+
+# --- CodeMap Endpoints ---
+app.include_router(codemap_router)
+
+# --- CodeTrace Endpoints ---
+app.include_router(codetrace_router)
 
 
 # --- Configuration Endpoints (used by Ask UI) ---

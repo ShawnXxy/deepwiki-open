@@ -11,12 +11,15 @@ import { detectCurrentBranch } from '@/utils/branchDetection';
 import getRepoUrl from '@/utils/getRepoUrl';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import {
   FaBookOpen, FaComments, FaDownload, FaExclamationTriangle,
-  FaFileExport, FaFolder, FaHome, FaLink, FaSearch, FaTimes,
+  FaFileExport, FaFolder, FaHome, FaLink, FaProjectDiagram, FaSearch, FaTimes,
 } from 'react-icons/fa';
 import { AzureDevOpsIcon } from '@/components/AzureIcon';
+import { useCodeMap } from '@/hooks/useCodeMap';
+
+const CodeMap = lazy(() => import('@/components/CodeMap'));
 
 // ─── Types ────────────────────────────────────────────────────
 interface WikiSection {
@@ -115,6 +118,12 @@ export default function RepoWikiPage() {
 
   // Share feedback
   const [shareCopied, setShareCopied] = useState(false);
+
+  // CodeMap tab
+  const [activeView, setActiveView] = useState<'wiki' | 'codemap'>('wiki');
+  const { data: codeMapData, loading: codeMapLoading, error: codeMapError } = useCodeMap(
+    owner, repo, repoType, branch,
+  );
 
   // Scroll to top on page change
   useEffect(() => {
@@ -325,7 +334,7 @@ export default function RepoWikiPage() {
       </header>
 
       {/* Main */}
-      <main className={`flex-1 mx-auto overflow-hidden ${wikiStructure && !isChatPanelCollapsed ? 'w-full px-4' : 'max-w-[90%] xl:max-w-[1400px]'}`}>
+      <main className={`flex-1 mx-auto overflow-hidden ${activeView === 'codemap' ? 'w-full px-4' : wikiStructure && !isChatPanelCollapsed ? 'w-full px-4' : 'max-w-[90%] xl:max-w-[1400px]'}`}>
         {isLoading ? (
           /* Loading state */
           <div className="flex flex-col items-center justify-center p-8 bg-[var(--card-bg)] rounded shadow-custom card-azure max-w-2xl mx-auto">
@@ -356,7 +365,81 @@ export default function RepoWikiPage() {
           </div>
         ) : wikiStructure ? (
           /* Wiki viewer */
-          <div className="h-full flex flex-col lg:flex-row gap-4 w-full overflow-hidden">
+          <div className="h-full flex flex-col w-full overflow-hidden">
+            {/* Tab switcher */}
+            <div className="flex items-center gap-1 mb-3 border-b border-[var(--border-color)] pb-2">
+              <button
+                onClick={() => setActiveView('wiki')}
+                className={`px-4 py-1.5 text-sm font-medium rounded-t transition-colors flex items-center gap-1.5 ${
+                  activeView === 'wiki'
+                    ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] border-b-2 border-[var(--accent-primary)]'
+                    : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                }`}
+              >
+                <FaBookOpen className="text-xs" />
+                Wiki
+              </button>
+              <button
+                onClick={() => setActiveView('codemap')}
+                className={`px-4 py-1.5 text-sm font-medium rounded-t transition-colors flex items-center gap-1.5 ${
+                  activeView === 'codemap'
+                    ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] border-b-2 border-[var(--accent-primary)]'
+                    : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                }`}
+              >
+                <FaProjectDiagram className="text-xs" />
+                Code Map
+                {codeMapData && (
+                  <span className="text-[10px] px-1 py-0.5 rounded-full bg-[var(--accent-primary)]/20">
+                    {codeMapData.metadata.totalFiles}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {activeView === 'codemap' ? (
+              /* Code Map view */
+              <div className="w-full bg-[var(--card-bg)] rounded shadow-custom card-azure" style={{ height: 'calc(100vh - 180px)' }}>
+                {codeMapLoading ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="flex items-center gap-2 text-[var(--muted)]">
+                      <div className="w-3 h-3 bg-[var(--accent-primary)]/70 rounded-full animate-pulse"></div>
+                      <p>Loading code map...</p>
+                    </div>
+                  </div>
+                ) : codeMapError ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center text-[var(--muted)] p-8">
+                      <FaProjectDiagram className="text-4xl mx-auto mb-3 opacity-30" />
+                      <p className="text-sm">{codeMapError}</p>
+                    </div>
+                  </div>
+                ) : codeMapData ? (
+                  <Suspense fallback={
+                    <div className="flex items-center justify-center h-full">
+                      <p className="text-[var(--muted)]">Loading visualization...</p>
+                    </div>
+                  }>
+                    <CodeMap
+                      data={codeMapData}
+                      onNavigateToFile={(filePath) => {
+                        // Find a wiki page that references this file
+                        const matchingPage = wikiStructure.pages.find(
+                          p => generatedPages[p.id]?.filePaths?.some(
+                            fp => fp === filePath || filePath.endsWith(fp) || fp.endsWith(filePath)
+                          )
+                        );
+                        if (matchingPage) {
+                          setCurrentPageId(matchingPage.id);
+                          setActiveView('wiki');
+                        }
+                      }}
+                    />
+                  </Suspense>
+                ) : null}
+              </div>
+            ) : (
+            <div className="flex-1 flex flex-col lg:flex-row gap-4 overflow-hidden">
             {/* Wiki Section (left 2/3) */}
             <div className={`h-full flex flex-col lg:flex-row gap-4 overflow-hidden bg-[var(--card-bg)] rounded shadow-custom card-azure transition-all duration-300 ${isChatPanelCollapsed ? 'w-full' : 'w-full lg:w-2/3'}`}>
               {/* Sidebar navigation */}
@@ -612,6 +695,8 @@ export default function RepoWikiPage() {
               >
                 <FaComments className="text-xl" />
               </button>
+            )}
+            </div>
             )}
           </div>
         ) : null}
