@@ -194,6 +194,36 @@ def resolve_auth(mode: str) -> tuple:
         sys.exit(1)
 
 
+def _resolve_umi_auth() -> tuple:
+    """Acquire a bearer token via User-assigned Managed Identity (UMI).
+
+    Used as a fallback when a PAT from the environment fails in cloud mode.
+
+    Returns:
+        Tuple of (token, 'bearer')
+
+    Raises:
+        RuntimeError: If UMI token acquisition fails.
+    """
+    from azure.identity import DefaultAzureCredential
+    from backend.config import get_managed_identity_client_id
+
+    msi_client_id = get_managed_identity_client_id()
+    if not msi_client_id:
+        raise RuntimeError(
+            "managed_identity.client_id not set in infra.json"
+        )
+    print(f"  Auth: falling back to managed identity ({msi_client_id[:8]}...)")
+    credential = DefaultAzureCredential(
+        managed_identity_client_id=msi_client_id,
+    )
+    token = credential.get_token(
+        "499b84ac-1321-427f-aa17-267ca6975798/.default"
+    )
+    print("  Auth: token acquired via managed identity (fallback)")
+    return token.token, 'bearer'
+
+
 def step_clone(repo_url, token, branch, repo_name, token_type='pat'):
     """Clone repository to local disk. Returns (repo_dir, commit_hash)."""
     from backend.modules.repository.git_ops import (
@@ -524,7 +554,23 @@ def _process(mode, repo_url, branch, language, comprehensive,
 
     # Clone to local temp disk (all modes — even cloud clones locally
     # on AML compute; vectors and wiki go to blob via storage abstraction)
-    repo_dir, commit_hash = step_clone(repo_url, token, branch, repo_name, token_type)
+    try:
+        repo_dir, commit_hash = step_clone(
+            repo_url, token, branch, repo_name, token_type,
+        )
+    except ValueError:
+        if mode == 'cloud' and token_type == 'pat':
+            logger.warning(
+                "PAT clone failed in cloud mode, "
+                "falling back to managed identity"
+            )
+            print("  WARN: PAT clone failed, retrying with managed identity...")
+            token, token_type = _resolve_umi_auth()
+            repo_dir, commit_hash = step_clone(
+                repo_url, token, branch, repo_name, token_type,
+            )
+        else:
+            raise
 
     # Build codemap graph (all modes, unless skipped)
     if not skip_codemap:
