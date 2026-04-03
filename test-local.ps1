@@ -126,7 +126,7 @@ $infra.azure_application_insights.enabled = $false
 $infra | ConvertTo-Json -Depth 10 | Set-Content $localInfraPath
 
 # Copy other config files to .local
-$configFiles = @("repo.json", "lang.json", "embedder.json")
+$configFiles = @("excluded.json", "included.json", "lang.json", "embedder.json")
 foreach ($configFile in $configFiles) {
     $sourcePath = Join-Path $PSScriptRoot "backend/config/$configFile"
     if (Test-Path $sourcePath) {

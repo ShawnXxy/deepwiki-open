@@ -50,16 +50,14 @@ def build_file_tree(repo_path: str, max_depth: int = 6,
     prefix_len = len(repo_path) + 1
     entry_count = 0
 
-    # Excluded directories (same defaults as repo.json)
-    skip_dirs = {
-        '.git', 'node_modules', '__pycache__', '.venv', 'venv',
-        'dist', 'build', '.next', '.nuxt', 'coverage', '.tox',
-        'egg-info', '.eggs',
-    }
+    # Load excluded directories from excluded.json (single source of truth)
+    from backend.config import get_file_filters_config
+    file_filters = get_file_filters_config()
+    excluded_dirs_set = set(file_filters["excluded_dirs"])
 
     for root, dirs, files in os.walk(repo_path):
         # Filter out excluded directories
-        dirs[:] = [d for d in dirs if d not in skip_dirs
+        dirs[:] = [d for d in dirs if d not in excluded_dirs_set
                    and not d.startswith('.')]
         rel = root[prefix_len:]
         depth = rel.count(os.sep) if rel else 0

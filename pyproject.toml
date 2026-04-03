@@ -33,6 +33,7 @@ azureml-core = ">=1.55.0"
 azure-search-documents = ">=11.4.0"
 azure-mgmt-search = ">=9.0.0"
 orjson = ">=3.9.0"
+pathspec = ">=0.11.0"
 
 
 [build-system]

@@ -93,7 +93,7 @@ async def get_model_config_endpoint():
 
 @app.get("/filters/config")
 async def get_filters_config():
-    """Return default file filters from repo.json."""
+    """Return default file filters from excluded.json."""
     return get_file_filters_config()
 
 

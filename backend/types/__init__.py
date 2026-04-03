@@ -25,7 +25,7 @@ from .config_types import (
     
     # Repository config types
     FileFiltersConfig,
-    RepositoryConfig,
+    IncludedConfig,
     
     # Language config types
     LanguageConfig,
@@ -82,7 +82,7 @@ __all__ = [
     
     # Repository config
     'FileFiltersConfig',
-    'RepositoryConfig',
+    'IncludedConfig',
     
     # Language config
     'LanguageConfig',

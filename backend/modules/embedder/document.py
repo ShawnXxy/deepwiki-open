@@ -15,7 +15,7 @@ from adalflow.components.data_process import TextSplitter, ToEmbeddings
 from adalflow.core.db import LocalDB
 
 from backend.config import (
-    configs, get_file_filters_config,
+    configs, get_file_filters_config, get_included_config,
 )
 from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
 from backend.clients.vector_storage import get_vector_storage
@@ -23,6 +23,7 @@ from backend.types import FileFilter
 from backend.clients.embedding_client import get_embedder
 from backend.modules.embedder.tokenizer import safe_read_file, count_tokens, MAX_EMBEDDING_TOKENS
 from backend.modules.embedder.code_splitter import split_and_enrich_documents
+from backend.utils.filter import load_gitignore, is_gitignored
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +63,12 @@ def read_all_documents(
         list: A list of Document objects with metadata.
     """
     documents = []
-    # File extensions to look for, prioritizing code files
-    code_extensions = [".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp", ".go", ".rs",
-                       ".jsx", ".tsx", ".html", ".css", ".php", ".swift", ".cs"]
-    doc_extensions = [".md", ".txt", ".rst", ".json", ".yaml", ".yml"]
+
+    # Load supported extensions from included.json (single source of truth)
+    included = get_included_config()
+    code_ext_set = set(included["code"])
+    doc_ext_set = set(included["doc"])
+    all_ext_set = code_ext_set | doc_ext_set
 
     # Initialize FileFilter with inclusion/exclusion rules
     has_dirs = included_dirs is not None and len(included_dirs) > 0
@@ -75,13 +78,12 @@ def read_all_documents(
         file_filter = FileFilter(
             included_dirs=set(included_dirs) if included_dirs else set(),
             included_patterns=set(included_files) if included_files else set(),
-            max_file_size_mb=10
         )
         logger.info("Using inclusion mode")
         logger.info(f"Included directories: {list(file_filter.included_dirs)}")
         logger.info(f"Included patterns: {list(file_filter.included_patterns)}")
     else:
-        # Exclusion mode: load filters from repo.json (single source of truth)
+        # Exclusion mode: load filters from excluded.json (single source of truth)
         file_filters = get_file_filters_config()
         final_excluded_dirs = set(file_filters["excluded_dirs"])
         final_excluded_patterns = set(file_filters["excluded_files"])
@@ -95,7 +97,6 @@ def read_all_documents(
         file_filter = FileFilter(
             excluded_dirs=final_excluded_dirs,
             excluded_patterns=final_excluded_patterns,
-            max_file_size_mb=10
         )
         logger.info("Using exclusion mode")
         logger.info(f"Excluded directories: {list(file_filter.excluded_dirs)}")
@@ -103,10 +104,12 @@ def read_all_documents(
 
     logger.info(f"Reading documents from {path}")
 
-    # Build extension sets for O(1) lookup
-    code_ext_set = set(code_extensions)
-    doc_ext_set = set(doc_extensions)
-    all_ext_set = code_ext_set | doc_ext_set
+    # Load .gitignore from the repo for dynamic filtering
+    gitignore_spec = load_gitignore(path)
+
+    # Load excluded_dirs for os.walk() pruning (single source of truth from excluded.json)
+    file_filters_cfg = get_file_filters_config()
+    walk_excluded_dirs = set(file_filters_cfg["excluded_dirs"])
 
     def _compute_file_url(relative_path: str) -> str:
         """Helper to compute the file URL based on repo settings."""
@@ -140,24 +143,41 @@ def read_all_documents(
 
         return relative_path
 
-    # Single os.walk() pass — replaces 22 separate glob traversals
-    # Collect code files and doc files in one traversal
-    skip_dirs = {
-        '.git', 'node_modules', '__pycache__', '.venv', 'venv',
-        'dist', 'build', '.next', '.nuxt', 'coverage', '.tox',
-        'egg-info', '.eggs',
-    }
+    # Single os.walk() pass with two-layer filtering
+    # Layer 1: Exclusion (.gitignore + excluded.json)
+    # Layer 2: Inclusion (included.json supported extensions)
     code_files = []
     doc_files = []
+    skipped_gitignore = 0
+    skipped_excluded = 0
+    skipped_ext = 0
 
     for root, dirs, files in os.walk(path):
-        # Prune excluded directories in-place
-        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        # Prune excluded directories in-place (from excluded.json)
+        dirs[:] = [d for d in dirs if d not in walk_excluded_dirs]
         for fname in files:
+            full_path = os.path.join(root, fname)
+            relative_path = os.path.relpath(full_path, path)
+
+            # Layer 1a: Check .gitignore
+            if is_gitignored(gitignore_spec, relative_path):
+                skipped_gitignore += 1
+                logger.debug(f"Skipped (gitignored): {relative_path}")
+                continue
+
+            # Layer 1b: Check excluded file patterns
+            if not file_filter.should_process_file(relative_path):
+                skipped_excluded += 1
+                logger.debug(f"Skipped (excluded): {relative_path}")
+                continue
+
+            # Layer 2: Check included extensions
             ext = os.path.splitext(fname)[1].lower()
             if ext not in all_ext_set:
+                skipped_ext += 1
+                logger.debug(f"Skipped (unsupported ext '{ext}'): {relative_path}")
                 continue
-            full_path = os.path.join(root, fname)
+
             if ext in code_ext_set:
                 code_files.append((full_path, ext))
             else:
@@ -166,12 +186,6 @@ def read_all_documents(
     # Process code files first (higher priority for embedding)
     for file_path, ext in code_files:
         relative_path = os.path.relpath(file_path, path)
-        try:
-            file_size = os.path.getsize(file_path)
-        except OSError:
-            continue
-        if not file_filter.should_process_file(relative_path, file_size):
-            continue
 
         try:
             content = safe_read_file(file_path)
@@ -208,20 +222,17 @@ def read_all_documents(
     # Then process documentation files
     for file_path, ext in doc_files:
         relative_path = os.path.relpath(file_path, path)
-        try:
-            file_size = os.path.getsize(file_path)
-        except OSError:
-            continue
-        if not file_filter.should_process_file(relative_path, file_size):
-            continue
 
         try:
             content = safe_read_file(file_path)
 
             token_count = count_tokens(content, embedder_type)
             if token_count > MAX_EMBEDDING_TOKENS * 10:
-                logger.warning(f"Skipping large file {relative_path}: Token count ({token_count}) exceeds limit")
-                continue
+                logger.info(
+                    f"Large doc file {relative_path}: "
+                    f"{token_count} tokens "
+                    f"(will be split into ~{token_count // 2000} chunks)"
+                )
 
             doc = Document(
                 text=content,
@@ -238,7 +249,12 @@ def read_all_documents(
         except Exception as e:
             logger.error(f"[BE] Error reading {file_path}: {e}")
 
-    logger.info(f"Found {len(documents)} documents")
+    logger.info(
+        f"Found {len(documents)} documents. "
+        f"Skipped: {skipped_gitignore} gitignored, "
+        f"{skipped_excluded} excluded, "
+        f"{skipped_ext} unsupported ext"
+    )
     return documents
 
 
@@ -454,12 +470,11 @@ def transform_documents_and_save_as_json(
     # ================================================================
     # Step 1: Collect file paths (lightweight — no content read)
     # ================================================================
-    code_extensions = {
-        ".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp",
-        ".go", ".rs", ".jsx", ".tsx", ".html", ".css", ".php",
-        ".swift", ".cs",
-    }
-    doc_extensions = {".md", ".txt", ".rst", ".json", ".yaml", ".yml"}
+
+    # Load supported extensions from included.json (single source of truth)
+    included = get_included_config()
+    code_extensions = set(included["code"])
+    doc_extensions = set(included["doc"])
     all_ext_set = code_extensions | doc_extensions
 
     # Build file filter
@@ -471,7 +486,6 @@ def transform_documents_and_save_as_json(
             included_patterns=(
                 set(included_files) if included_files else set()
             ),
-            max_file_size_mb=10,
         )
     else:
         file_filters = get_file_filters_config()
@@ -484,34 +498,48 @@ def transform_documents_and_save_as_json(
         file_filter = FileFilter(
             excluded_dirs=final_excluded_dirs,
             excluded_patterns=final_excluded_patterns,
-            max_file_size_mb=10,
         )
 
-    skip_dirs = {
-        '.git', 'node_modules', '__pycache__', '.venv', 'venv',
-        'dist', 'build', '.next', '.nuxt', 'coverage', '.tox',
-        'egg-info', '.eggs',
-    }
+    # Load .gitignore from the repo for dynamic filtering
+    gitignore_spec = load_gitignore(repo_path)
 
-    # Walk directory once — collect (full_path, relative_path, ext, is_code)
-    # This is lightweight: ~300 bytes per entry, ~10MB for 35K files
+    # Load excluded_dirs for os.walk() pruning (single source of truth)
+    file_filters_cfg = get_file_filters_config()
+    walk_excluded_dirs = set(file_filters_cfg["excluded_dirs"])
+
+    # Walk directory once with two-layer filtering
+    # Layer 1: Exclusion (.gitignore + excluded.json)
+    # Layer 2: Inclusion (included.json supported extensions)
     file_infos = []
+    skipped_gitignore = 0
+    skipped_excluded = 0
+    skipped_ext = 0
+
     for root, dirs, files in os.walk(repo_path):
-        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        dirs[:] = [d for d in dirs if d not in walk_excluded_dirs]
         for fname in files:
-            ext = os.path.splitext(fname)[1].lower()
-            if ext not in all_ext_set:
-                continue
             full_path = os.path.join(root, fname)
             relative_path = os.path.relpath(full_path, repo_path)
-            try:
-                file_size = os.path.getsize(full_path)
-            except OSError:
+
+            # Layer 1a: Check .gitignore
+            if is_gitignored(gitignore_spec, relative_path):
+                skipped_gitignore += 1
+                logger.debug(f"Skipped (gitignored): {relative_path}")
                 continue
-            if not file_filter.should_process_file(
-                relative_path, file_size
-            ):
+
+            # Layer 1b: Check excluded file patterns
+            if not file_filter.should_process_file(relative_path):
+                skipped_excluded += 1
+                logger.debug(f"Skipped (excluded): {relative_path}")
                 continue
+
+            # Layer 2: Check included extensions
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in all_ext_set:
+                skipped_ext += 1
+                logger.debug(f"Skipped (unsupported ext '{ext}'): {relative_path}")
+                continue
+
             is_code = ext in code_extensions
             file_infos.append(
                 (full_path, relative_path, ext, is_code)
@@ -527,7 +555,10 @@ def transform_documents_and_save_as_json(
 
     logger.info(
         f"[Vec] Collected {total_files} file paths for "
-        f"{repo_name}_{branch}"
+        f"{repo_name}_{branch}. "
+        f"Skipped: {skipped_gitignore} gitignored, "
+        f"{skipped_excluded} excluded, "
+        f"{skipped_ext} unsupported ext"
     )
 
     # ================================================================
@@ -573,12 +604,12 @@ def transform_documents_and_save_as_json(
                 content = safe_read_file(full_path)
 
                 token_count = count_tokens(content)
-                if not is_code and token_count > MAX_EMBEDDING_TOKENS * 10:
-                    logger.warning(
-                        f"Skipping large file {relative_path}: "
-                        f"{token_count} tokens"
+                if token_count > MAX_EMBEDDING_TOKENS * 10:
+                    logger.info(
+                        f"Large file {relative_path}: "
+                        f"{token_count} tokens "
+                        f"(will be split into ~{token_count // 2000} chunks)"
                     )
-                    continue
 
                 is_implementation = is_code and (
                     not relative_path.startswith("test_")

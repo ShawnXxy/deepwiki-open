@@ -25,7 +25,6 @@ class FileFilter(BaseModel):
     excluded_dirs: Set[str] = Field(default_factory=set, description="Directories to exclude")
     included_patterns: Set[str] = Field(default_factory=set, description="File patterns to include (e.g., *.py)")
     excluded_patterns: Set[str] = Field(default_factory=set, description="File patterns to exclude")
-    max_file_size_mb: int = Field(default=10, ge=0, description="Maximum file size in MB")
     
     @validator('included_dirs', 'excluded_dirs', pre=True, always=True)
     def normalize_paths(cls, v):
@@ -49,22 +48,16 @@ class FileFilter(BaseModel):
         """Check if filter is in inclusion mode."""
         return bool(self.included_dirs or self.included_patterns)
     
-    def should_process_file(self, file_path: str, file_size_bytes: int) -> bool:
+    def should_process_file(self, file_path: str) -> bool:
         """
         Determine if a file should be processed based on filters.
         
         Args:
             file_path: Relative path of the file
-            file_size_bytes: Size of the file in bytes
             
         Returns:
             True if file should be processed, False otherwise
         """
-        # Check file size
-        max_size_bytes = self.max_file_size_mb * 1024 * 1024
-        if file_size_bytes > max_size_bytes:
-            return False
-        
         path = Path(file_path)
         path_parts = set(path.parts)
         

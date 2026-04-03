@@ -50,7 +50,8 @@ backend/
 └── config/             # JSON configuration files
     ├── infra.json          # Azure endpoints, MSI, blob, search, AML
     ├── embedder.json       # Embedding settings (batch_size, chunk_size)
-    ├── repo.json           # File filters (excluded_dirs, excluded_files)
+    ├── excluded.json        # File exclusion filters (excluded_dirs, excluded_files)
+    ├── included.json        # Supported file extensions (code, doc)
     └── lang.json           # Supported languages
 ```
 
