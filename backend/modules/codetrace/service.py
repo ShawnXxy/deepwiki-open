@@ -123,12 +123,16 @@ def generate_code_trace(
     # Step 5: Parse XML response
     result = _parse_trace_xml(raw_text, question)
 
-    # Step 6: Extract source files from code refs
+    # Step 6: Extract source files and source contents from RAG docs
     source_files = set()
     for section in result.sections:
         for ref in section.code_refs:
             source_files.add(ref.file_path)
     result.source_files = sorted(source_files)
+
+    # Build source_contents from retrieved documents
+    result.source_contents = _extract_source_contents(retrieved)
+
     result.generated_at = datetime.now(timezone.utc).isoformat()
 
     logger.info(
@@ -136,6 +140,63 @@ def generate_code_trace(
         f"{len(result.source_files)} source files"
     )
     return result
+
+
+def _extract_source_contents(retrieved) -> dict:
+    """Extract source code chunks grouped by file from RAG results.
+
+    Returns dict of file_path -> list of chunk dicts with
+    start_line, end_line, content, language.
+    """
+    contents: dict = {}
+    try:
+        docs = retrieved[0].documents if retrieved else []
+    except (IndexError, AttributeError):
+        return contents
+
+    for doc in docs:
+        meta = doc.meta_data or {}
+        file_path = meta.get('file_path', '')
+        if not file_path:
+            continue
+
+        # Extract raw code from enriched text
+        header_len = meta.get('_header_len', 0)
+        raw_text = doc.text[header_len:] if header_len else doc.text
+
+        start_line = meta.get('start_line', 0)
+        end_line = meta.get('end_line', 0)
+        ext = meta.get('type', '')
+
+        # Language mapping for syntax highlighting
+        lang_map = {
+            'py': 'python', 'js': 'javascript', 'ts': 'typescript',
+            'jsx': 'javascript', 'tsx': 'typescript',
+            'java': 'java', 'go': 'go', 'cs': 'csharp',
+            'cpp': 'cpp', 'c': 'c', 'h': 'c',
+            'rb': 'ruby', 'rs': 'rust', 'php': 'php',
+            'sh': 'bash', 'yaml': 'yaml', 'yml': 'yaml',
+            'json': 'json', 'xml': 'xml', 'sql': 'sql',
+            'md': 'markdown', 'html': 'html', 'css': 'css',
+        }
+        lang = lang_map.get(ext, ext)
+
+        if file_path not in contents:
+            contents[file_path] = []
+
+        contents[file_path].append({
+            'file_path': file_path,
+            'start_line': start_line + 1,  # Convert 0-based to 1-based
+            'end_line': end_line + 1,
+            'content': raw_text.strip(),
+            'language': lang,
+        })
+
+    # Sort chunks within each file by start_line
+    for fp in contents:
+        contents[fp].sort(key=lambda c: c['start_line'])
+
+    return contents
 
 
 def _parse_trace_xml(

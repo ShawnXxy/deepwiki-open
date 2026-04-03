@@ -21,5 +21,14 @@ export interface CodeTraceResult {
   title: string;
   sections: CodeTraceSection[];
   sourceFiles: string[];
+  sourceContents: Record<string, SourceChunk[]>;
   generatedAt?: string;
+}
+
+export interface SourceChunk {
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  content: string;
+  language: string;
 }

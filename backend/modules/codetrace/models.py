@@ -26,12 +26,22 @@ class CodeTraceSection(BaseModel):
     connections: List[str] = []
 
 
+class SourceChunk(BaseModel):
+    """A chunk of source code from a file."""
+    file_path: str
+    start_line: int
+    end_line: int
+    content: str
+    language: str = ""
+
+
 class CodeTraceResult(BaseModel):
     """Complete code trace response."""
     query: str
     title: str
     sections: List[CodeTraceSection] = []
     source_files: List[str] = []
+    source_contents: dict = {}  # file_path -> List[SourceChunk dict]
     generated_at: Optional[str] = None
 
 

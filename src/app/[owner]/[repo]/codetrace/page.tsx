@@ -5,7 +5,7 @@ import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { FaHome, FaSearch, FaCode, FaArrowRight } from 'react-icons/fa';
 import { useCodeTrace } from '@/hooks/useCodeTrace';
-import type { CodeTraceSection, CodeReference } from '@/types/codetrace';
+import type { CodeTraceSection, CodeReference, SourceChunk } from '@/types/codetrace';
 import ThemeToggle from '@/components/theme-toggle';
 
 // ─── Code Reference Box ──────────────────────────────────────
@@ -112,53 +112,105 @@ function TraceSectionCard({
 // ─── Source File Viewer ──────────────────────────────────────
 function SourceFileViewer({
   files,
+  sourceContents,
   activeFile,
   activeLine,
   onFileSelect,
 }: {
   files: string[];
+  sourceContents: Record<string, SourceChunk[]>;
   activeFile: string | null;
   activeLine: number | null;
   onFileSelect: (file: string) => void;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Scroll to highlighted line when it changes
+  useEffect(() => {
+    if (activeLine && scrollRef.current) {
+      const el = scrollRef.current.querySelector(`[data-line="${activeLine}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [activeLine, activeFile]);
+
+  const chunks = activeFile ? (sourceContents[activeFile] || []) : [];
+
   return (
     <div className="h-full flex flex-col bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
       {/* File tabs */}
-      <div className="flex overflow-x-auto border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-1 py-1 gap-0.5">
+      <div className="flex overflow-x-auto border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-1 py-1 gap-0.5 flex-shrink-0">
         {files.map(f => (
           <button
             key={f}
             onClick={() => onFileSelect(f)}
-            className={`px-2.5 py-1 text-[11px] rounded whitespace-nowrap transition-colors ${
+            className={`px-2.5 py-1.5 text-[11px] rounded whitespace-nowrap transition-colors flex items-center gap-1 ${
               activeFile === f
                 ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 font-medium shadow-sm'
                 : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
             }`}
           >
-            <FaCode className="inline mr-1 text-[9px]" />
+            <FaCode className="text-[9px]" />
             {f.split('/').pop()}
           </button>
         ))}
       </div>
 
-      {/* File content placeholder */}
-      <div className="flex-1 overflow-y-auto p-3">
-        {activeFile ? (
-          <div className="font-mono text-[11px] text-gray-500">
-            <div className="text-xs text-gray-400 mb-2 font-sans">{activeFile}</div>
-            {activeLine && (
-              <div className="bg-yellow-50 dark:bg-yellow-900/20 border-l-2 border-yellow-400 px-2 py-1 mb-2 text-yellow-700 dark:text-yellow-300">
-                → Line {activeLine}
+      {/* File path bar */}
+      {activeFile && (
+        <div className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30 flex-shrink-0">
+          <span className="text-[10px] text-gray-400 font-mono">{activeFile}</span>
+        </div>
+      )}
+
+      {/* Source code content */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+        {activeFile && chunks.length > 0 ? (
+          <div className="font-mono text-[11px] leading-[1.6]">
+            {chunks.map((chunk, ci) => (
+              <div key={ci}>
+                {/* Chunk separator */}
+                {ci > 0 && (
+                  <div className="border-t border-dashed border-gray-200 dark:border-gray-700 my-1 mx-3" />
+                )}
+                {/* Line numbers + code */}
+                {chunk.content.split('\n').map((line, li) => {
+                  const lineNum = chunk.startLine + li;
+                  const isHighlighted = activeLine !== null &&
+                    lineNum >= (activeLine) &&
+                    lineNum <= (activeLine + 5);
+                  return (
+                    <div
+                      key={`${ci}-${li}`}
+                      data-line={lineNum}
+                      className={`flex ${
+                        isHighlighted
+                          ? 'bg-yellow-100 dark:bg-yellow-900/30 border-l-2 border-yellow-400'
+                          : 'border-l-2 border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'
+                      }`}
+                    >
+                      <span className="w-12 text-right pr-3 text-gray-400 dark:text-gray-600 select-none flex-shrink-0 text-[10px]">
+                        {lineNum}
+                      </span>
+                      <pre className="flex-1 pr-3 whitespace-pre-wrap break-all text-gray-700 dark:text-gray-300">
+                        {line || ' '}
+                      </pre>
+                    </div>
+                  );
+                })}
               </div>
-            )}
-            <div className="text-gray-400 text-[10px]">
-              Source file content will be loaded from the repository.
-              Click a code reference on the left to highlight specific lines.
-            </div>
+            ))}
+          </div>
+        ) : activeFile ? (
+          <div className="flex items-center justify-center h-full text-gray-400 text-xs p-4">
+            No source code chunks available for this file
           </div>
         ) : (
-          <div className="flex items-center justify-center h-full text-gray-400 text-xs">
-            Select a source file or click a code reference
+          <div className="flex flex-col items-center justify-center h-full text-gray-400 text-xs p-4">
+            <FaCode className="text-2xl mb-2 opacity-30" />
+            <p>Select a source file tab above</p>
+            <p className="text-[10px] mt-1">or click a code reference on the left</p>
           </div>
         )}
       </div>
@@ -184,6 +236,16 @@ export default function CodeTracePage() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { data, loading, error, generate } = useCodeTrace();
+
+  // Auto-select first file when trace data loads
+  useEffect(() => {
+    if (data && !activeFile) {
+      const files = Object.keys(data.sourceContents || {});
+      if (files.length > 0) {
+        setActiveFile(files[0]);
+      }
+    }
+  }, [data, activeFile]);
 
   // Auto-generate on load if query present
   useEffect(() => {
@@ -284,7 +346,8 @@ export default function CodeTracePage() {
         {/* Right panel — Source files */}
         <div className="w-[40%] flex flex-col overflow-hidden p-3">
           <SourceFileViewer
-            files={data?.sourceFiles || []}
+            files={data?.sourceFiles || Object.keys(data?.sourceContents || {})}
+            sourceContents={data?.sourceContents || {}}
             activeFile={activeFile}
             activeLine={activeLine}
             onFileSelect={setActiveFile}
