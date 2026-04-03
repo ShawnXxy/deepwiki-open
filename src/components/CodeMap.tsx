@@ -56,17 +56,8 @@ function FileNode({ data }: { data: any }) {
       </div>
       <div className="text-[10px] text-gray-500 mt-0.5">
         {data.language && <>{data.language} · </>}{data.symbolCount} symbols
+        {data.expanded && <span className="ml-1 text-blue-500">(expanded)</span>}
       </div>
-      {data.expanded && data.symbols?.length > 0 && (
-        <div className="mt-1.5 pt-1.5 border-t border-blue-200 dark:border-gray-600 space-y-0.5 max-h-[200px] overflow-y-auto">
-          {data.symbols.map((s: any) => (
-            <div key={s.id} className="flex items-center gap-1 text-[10px] py-0.5">
-              <span className="flex-shrink-0">{s.kind === 'class' ? '🏛️' : s.kind === 'method' ? '🔧' : '⚡'}</span>
-              <span className="truncate text-gray-600 dark:text-gray-300">{s.name}</span>
-            </div>
-          ))}
-        </div>
-      )}
       <Handle type="source" position={Position.Bottom} className="!bg-blue-400 !w-2 !h-2" />
     </div>
   );
@@ -87,17 +78,8 @@ function ClassNode({ data }: { data: any }) {
       </div>
       <div className="text-[10px] text-gray-500 mt-0.5">
         {data.methodCount} methods · {data.filePath}
+        {data.expanded && <span className="ml-1 text-purple-500">(expanded)</span>}
       </div>
-      {data.expanded && data.methods?.length > 0 && (
-        <div className="mt-1.5 pt-1.5 border-t border-purple-200 dark:border-gray-600 space-y-0.5 max-h-[200px] overflow-y-auto">
-          {data.methods.map((m: any) => (
-            <div key={m.id} className="flex items-center gap-1 text-[10px] py-0.5">
-              <span className="flex-shrink-0">🔧</span>
-              <span className="truncate text-gray-600 dark:text-gray-300 font-mono">{m.signature || m.name}</span>
-            </div>
-          ))}
-        </div>
-      )}
       <Handle type="source" position={Position.Bottom} className="!bg-purple-400 !w-2 !h-2" />
     </div>
   );
@@ -145,12 +127,8 @@ function computeLayout(flowNodes: Node[], flowEdges: Edge[], direction: 'TB' | '
   g.setGraph({ rankdir: direction, nodesep: 80, ranksep: 100, marginx: 30, marginy: 30 });
   g.setDefaultEdgeLabel(() => ({}));
   flowNodes.forEach(node => {
-    /* eslint-disable @typescript-eslint/no-explicit-any */
-    const d = node.data as any;
-    const items = d.expanded ? (d.symbols?.length || d.methods?.length || 0) : 0;
-    const h = (node.type === 'functionNode' ? 38 : 50) + Math.min(items, 20) * 18;
-    const w = node.type === 'functionNode' ? 160 : 230;
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+    const h = node.type === 'functionNode' ? 42 : 55;
+    const w = node.type === 'functionNode' ? 170 : 230;
     g.setNode(node.id, { width: w, height: h });
   });
   flowEdges.forEach(e => { if (g.hasNode(e.source) && g.hasNode(e.target)) g.setEdge(e.source, e.target); });
@@ -205,6 +183,33 @@ function buildGraph(
   const truncated = filtered.length > MAX_NODES;
   if (truncated) filtered = filtered.slice(0, MAX_NODES);
 
+  // When expanded, inject children as real graph nodes
+  const expandedChildren: CodeMapNode[] = [];
+  const existingIds = new Set(filtered.map(n => n.id));
+  expandedIds.forEach(parentId => {
+    const parentNode = raw.find(n => n.id === parentId);
+    if (!parentNode) return;
+    const children = parentNode.kind === 'file'
+      ? (symbolsOf[parentNode.filePath] || []).slice(0, 30)
+      : parentNode.kind === 'class'
+        ? (methodsOf[parentId] || []).slice(0, 30)
+        : [];
+    children.forEach(c => {
+      if (!existingIds.has(c.id)) {
+        expandedChildren.push(c);
+        existingIds.add(c.id);
+      }
+    });
+  });
+
+  const allVisible = [...filtered, ...expandedChildren];
+  const visibleIds = new Set(allVisible.map(n => n.id));
+  const expandedChildIds = new Set(expandedChildren.map(n => n.id));
+
+  // Show call edges for expanded children
+  const allEdgeKinds = new Set(edgeKinds);
+  if (expandedIds.size > 0) allEdgeKinds.add('calls');
+
   // Connected set for highlight
   const connected = new Set<string>();
   if (selectedId) {
@@ -217,50 +222,81 @@ function buildGraph(
     });
   }
 
-  const visibleIds = new Set(filtered.map(n => n.id));
-
-  const flowNodes: Node[] = filtered.map(n => {
+  // Build flow nodes — no more text lists, just simple boxes
+  const flowNodes: Node[] = allVisible.map(n => {
     const sel = n.id === selectedId;
     const conn = selectedId ? connected.has(n.id) : false;
     const dim = selectedId ? !connected.has(n.id) : false;
-    const exp = expandedIds.has(n.id);
+    const isExpanded = expandedIds.has(n.id);
+    const isChild = expandedChildIds.has(n.id);
 
     if (n.kind === 'file') {
-      const syms = symbolsOf[n.filePath] || [];
       return {
         id: n.id, position: { x: 0, y: 0 }, type: 'fileNode',
         data: {
-          label: n.name, language: n.language, symbolCount: syms.length,
-          expanded: exp, symbols: exp ? syms.slice(0, 25).map(s => ({ name: s.name, kind: s.kind, id: s.id })) : [],
+          label: n.name, language: n.language,
+          symbolCount: (symbolsOf[n.filePath] || []).length,
+          expanded: isExpanded,
           isSelected: sel, isConnected: conn, isDimmed: dim,
         },
       };
     }
     if (n.kind === 'class') {
-      const methods = methodsOf[n.id] || [];
       return {
         id: n.id, position: { x: 0, y: 0 }, type: 'classNode',
         data: {
-          label: n.name, methodCount: methods.length,
+          label: n.name,
+          methodCount: (methodsOf[n.id] || []).length,
           filePath: n.filePath?.split('/').pop() || '',
-          expanded: exp, methods: exp ? methods.slice(0, 25).map(m => ({ name: m.name, signature: m.signature, id: m.id })) : [],
+          expanded: isExpanded, isChild,
           isSelected: sel, isConnected: conn, isDimmed: dim,
         },
       };
     }
     return {
       id: n.id, position: { x: 0, y: 0 }, type: 'functionNode',
-      data: { label: n.name, signature: n.signature, isSelected: sel, isConnected: conn, isDimmed: dim },
+      data: {
+        label: n.name, signature: n.signature,
+        isChild,
+        isSelected: sel, isConnected: conn, isDimmed: dim,
+      },
     };
   });
 
-  const fEdges = rawEdges.filter(e => edgeKinds.has(e.kind) && visibleIds.has(e.sourceId) && visibleIds.has(e.targetId));
-  const flowEdges: Edge[] = fEdges.map((e, i) => {
+  // Real edges between visible nodes
+  const realEdges = rawEdges.filter(e =>
+    allEdgeKinds.has(e.kind) && visibleIds.has(e.sourceId) && visibleIds.has(e.targetId)
+  );
+
+  // Parent→child containment edges (animated dashed)
+  const containsEdges: { sourceId: string; targetId: string; kind: string }[] = [];
+  expandedIds.forEach(parentId => {
+    const parentNode = raw.find(p => p.id === parentId);
+    if (!parentNode) return;
+    expandedChildren.forEach(c => {
+      const isMyChild = c.parentId === parentId ||
+        (parentNode.kind === 'file' && c.filePath === parentNode.filePath && c.parentId === undefined);
+      if (isMyChild) {
+        containsEdges.push({ sourceId: parentId, targetId: c.id, kind: 'contains' });
+      }
+    });
+  });
+
+  const allEdges = [...realEdges, ...containsEdges];
+  const flowEdges: Edge[] = allEdges.map((e, i) => {
+    if (e.kind === 'contains') {
+      return {
+        id: `e-${i}`, source: e.sourceId, target: e.targetId,
+        style: { stroke: '#94a3b8', strokeWidth: 1.5, strokeDasharray: '4 2' },
+        markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8' },
+        animated: true,
+      };
+    }
     const hi = selectedId ? (connected.has(e.sourceId) && connected.has(e.targetId)) : true;
     const s = edgeColor(e.kind, hi);
     return {
       id: `e-${i}`, source: e.sourceId, target: e.targetId,
-      style: { stroke: s.stroke, strokeWidth: hi ? 2 : 1, strokeDasharray: s.dash },
+      style: { stroke: s.stroke, strokeWidth: hi ? 2.5 : 1, strokeDasharray: s.dash },
       markerEnd: { type: MarkerType.ArrowClosed, color: s.stroke },
       label: hi && selectedId ? e.kind : undefined,
       labelStyle: { fontSize: 9, fill: '#999' },
@@ -479,6 +515,7 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
             <span><span className="inline-block w-3 border-t-2 border-dashed border-blue-400 mr-1" />imports</span>
             <span><span className="inline-block w-3 border-t-2 border-gray-400 mr-1" />calls</span>
             <span><span className="inline-block w-3 border-t-2 border-green-500 mr-1" />inherits</span>
+            <span><span className="inline-block w-3 border-t-2 border-dashed border-gray-400 mr-1" />contains</span>
           </div>
         </Panel>
       </ReactFlow>
