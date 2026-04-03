@@ -108,6 +108,8 @@ Core function: `analyze_file(file_path, content, language) → (List[SymbolNode]
 | **Python** | `function_definition`, `class_definition` | `call` (attribute + identifier) | `import_statement`, `import_from_statement` | `argument_list` in class def |
 | **JavaScript** | `function_declaration`, `class_declaration`, `arrow_function`, `variable_declarator` | `call_expression` | `import_statement` | `class_heritage` |
 | **TypeScript** | Same as JS + `interface_declaration`, `type_alias_declaration` | `call_expression` | `import_statement` | `class_heritage`, `extends_clause`, `implements_clause` |
+| **C** | `function_definition`, `struct_specifier`, `typedef` | `call_expression` | `preproc_include` (local `"file.h"` only) | — |
+| **C++** | `function_definition`, `class_specifier`, `struct_specifier` | `call_expression` | `preproc_include` (local only) | `base_class_clause` |
 | **Java** | `method_declaration`, `class_declaration`, `interface_declaration` | `method_invocation` | `import_declaration` | `superclass`, `super_interfaces` |
 | **Go** | `function_declaration`, `method_declaration`, `type_declaration` (struct/interface) | `call_expression` | `import_declaration` | Embedded struct fields (composition) |
 | **C#** | `method_declaration`, `class_declaration`, `interface_declaration` | `invocation_expression` | `using_directive` | `base_list` |
@@ -154,6 +156,13 @@ LANGUAGES = {
     'java': Language(tree_sitter_java.language()),
     'go': Language(tree_sitter_go.language()),
     'cs': Language(tree_sitter_c_sharp.language()),
+    'c': Language(tree_sitter_c.language()),
+    'h': Language(tree_sitter_c.language()),
+    'cpp': Language(tree_sitter_cpp.language()),
+    'cc': Language(tree_sitter_cpp.language()),
+    'cxx': Language(tree_sitter_cpp.language()),
+    'hpp': Language(tree_sitter_cpp.language()),
+    'hxx': Language(tree_sitter_cpp.language()),
 }
 ```
 
@@ -161,7 +170,7 @@ LANGUAGES = {
 
 ```python
 # Subset of LANGUAGE_MAP from code_splitter.py for supported AST languages
-SUPPORTED_EXTENSIONS = {'py', 'js', 'jsx', 'ts', 'tsx', 'java', 'go', 'cs'}
+SUPPORTED_EXTENSIONS = {'py', 'js', 'jsx', 'ts', 'tsx', 'java', 'go', 'cs', 'c', 'h', 'cpp', 'cc', 'cxx', 'hpp', 'hxx'}
 ```
 
 ---

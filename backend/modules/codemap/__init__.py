@@ -9,5 +9,14 @@ This module provides interactive code map generation including:
 
 Exports:
     - SymbolNode, SymbolEdge, CodeMapData: Graph models
+    - build_codemap: Graph construction
     - CodeMap cache functions and routes
 """
+
+from backend.modules.codemap.models import (  # noqa: F401
+    SymbolNode,
+    SymbolEdge,
+    CodeMapData,
+    CodeMapMetadata,
+)
+from backend.modules.codemap.graph_builder import build_codemap  # noqa: F401

@@ -33,6 +33,15 @@ azureml-core = ">=1.55.0"
 azure-search-documents = ">=11.4.0"
 azure-mgmt-search = ">=9.0.0"
 orjson = ">=3.9.0"
+tree-sitter = ">=0.24.0"
+tree-sitter-python = ">=0.23.0"
+tree-sitter-javascript = ">=0.23.0"
+tree-sitter-typescript = ">=0.23.0"
+tree-sitter-java = ">=0.23.0"
+tree-sitter-go = ">=0.23.0"
+tree-sitter-c-sharp = ">=0.23.0"
+tree-sitter-c = ">=0.23.0"
+tree-sitter-cpp = ">=0.23.0"
 
 
 [build-system]

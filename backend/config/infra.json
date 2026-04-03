@@ -17,7 +17,7 @@
     "reasoning": {
       "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
       "api_version": "2025-04-01-preview",
-      "deployment": "gpt-5.1",
+      "deployment": "gpt-5.4",
       "temperature": 1.0
     },
     "embedding": {
