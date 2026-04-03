@@ -11,8 +11,7 @@ from typing import List, Tuple
 
 import adalflow as adal
 from adalflow.core.types import Document
-from adalflow.components.data_process import TextSplitter, ToEmbeddings
-from adalflow.core.db import LocalDB
+from adalflow.components.data_process import ToEmbeddings
 
 from backend.config import (
     configs, get_file_filters_config, get_included_config,
@@ -258,38 +257,6 @@ def read_all_documents(
     return documents
 
 
-def prepare_data_pipeline(embedder_type: str = None, is_ollama_embedder: bool = None):
-    """
-    Creates and returns the data transformation pipeline.
-    DEPRECATED: Used only for legacy pkl format. New code uses
-    prepare_embed_only_pipeline() with code-aware pre-splitting.
-
-    Args:
-        embedder_type (str, optional): Kept for backward compatibility, ignored.
-        is_ollama_embedder (bool, optional): DEPRECATED. Kept for backward compatibility.
-
-    Returns:
-        adal.Sequential: The data transformation pipeline
-    """
-    from backend.config import get_embedder_config
-
-    splitter = TextSplitter(**configs["text_splitter"])
-    embedder_config = get_embedder_config()
-
-    embedder = get_embedder()
-
-    # Use batch processing for Azure OpenAI embeddings
-    batch_size = embedder_config.get("batch_size", 500)
-    embedder_transformer = ToEmbeddings(
-        embedder=embedder, batch_size=batch_size
-    )
-
-    data_transformer = adal.Sequential(
-        splitter, embedder_transformer
-    )  # sequential will chain together splitter and embedder
-    return data_transformer
-
-
 def prepare_embed_only_pipeline():
     """
     Creates a pipeline that only embeds (no splitting).
@@ -310,68 +277,6 @@ def prepare_embed_only_pipeline():
         embedder=embedder, batch_size=batch_size
     )
     return embedder_transformer
-
-
-def transform_documents_and_save_to_db(
-    documents: List[Document],
-    db_path: str,
-    embedder_type: str = None,
-    is_ollama_embedder: bool = None,
-    blob_path: str = None
-) -> LocalDB:
-    """
-    Transforms a list of documents and saves them to storage (Azure Blob or local).
-
-    DEPRECATED: This function uses pickle format. New code should use
-    transform_documents_and_save_as_json() for memory-efficient JSON storage.
-
-    Args:
-        documents (list): A list of `Document` objects.
-        db_path (str): The path to the local database file (used as fallback or for local storage).
-        embedder_type (str, optional): Kept for backward compatibility, ignored.
-        is_ollama_embedder (bool, optional): DEPRECATED. Kept for backward compatibility.
-        blob_path (str, optional): Path in blob storage (e.g., "databases/owner_repo.pkl")
-
-    Returns:
-        LocalDB: The transformed database
-    """
-    # Get the data transformer
-    data_transformer = prepare_data_pipeline()
-
-    # Save the documents to a local database
-    db = LocalDB()
-    db.register_transformer(transformer=data_transformer, key="split_and_embed")
-    db.load(documents)
-    db.transform(key="split_and_embed")
-
-    # Save to Azure Blob Storage when configured (no fallback to local)
-    if blob_path and is_blob_storage_configured():
-        try:
-            blob_client = get_blob_storage_client()
-            if not blob_client:
-                error_msg = "Azure Blob Storage is configured but failed to create client. Check MSI configuration."
-                logger.error(error_msg)
-                raise ConnectionError(error_msg)
-
-            if blob_client.save_pickle(blob_path, db):
-                logger.info(f"Database saved to Azure Blob Storage: {blob_path}")
-                return db
-            else:
-                error_msg = f"Failed to save database to Azure Blob Storage: {blob_path}"
-                logger.error(error_msg)
-                raise ConnectionError(error_msg)
-        except ConnectionError:
-            raise  # Re-raise connection errors
-        except Exception as e:
-            error_msg = f"Failed to connect to Azure Blob Storage for saving: {e}"
-            logger.error(error_msg)
-            raise ConnectionError(error_msg) from e
-
-    # Local storage mode (blob not configured)
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    db.save_state(filepath=db_path)
-    logger.info(f"Database saved to local storage: {db_path}")
-    return db
 
 
 def _compute_file_url(

@@ -7,7 +7,7 @@
       ".sh", ".bash", ".ps1", ".psm1", ".bat", ".cmd",
       ".lua", ".dart", ".r", ".jl",
       ".vue", ".svelte", ".razor", ".cshtml", ".astro",
-      ".sql", ".graphql", ".proto",
+      ".sql", ".graphql", ".proto", ".kql", ".json",
       ".xaml", ".xml",
       ".scss", ".sass", ".less",
       ".m", ".mm",

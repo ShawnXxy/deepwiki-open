@@ -11,17 +11,12 @@ Usage:
     # Check storage mode
     mode = storage.get_mode()  # Returns "blob" or "local"
     
-    # Save/load data
-    storage.save_pickle("path/to/data.pkl", data)
-    data = storage.load_pickle("path/to/data.pkl")
-    
     # Check existence
-    if storage.exists("path/to/data.pkl"):
+    if storage.exists("path/to/data"):
         ...
 """
 
 import os
-import pickle
 import logging
 from typing import Optional, Any, List, Dict
 from pathlib import Path
@@ -79,79 +74,6 @@ class StorageClient:
         """Convert relative path to local filesystem path."""
         base_path = get_adalflow_root_path()
         return os.path.join(base_path, relative_path)
-    
-    def save_pickle(self, path: str, obj: Any) -> bool:
-        """
-        Save object as pickle.
-        
-        Args:
-            path: Relative path for the pickle file
-            obj: Python object to save
-            
-        Returns:
-            bool: True if successful
-        """
-        self._ensure_initialized()
-        
-        if self.is_blob_mode():
-            blob_client = get_blob_storage_client()
-            if blob_client:
-                success = blob_client.save_pickle(path, obj)
-                if success:
-                    logger.debug(f"📦 [Storage] Saved to blob: {path}")
-                return success
-            else:
-                logger.error("📦 [Storage] Blob client unavailable")
-                return False
-        else:
-            # Local storage
-            local_path = self._get_local_path(path)
-            try:
-                os.makedirs(os.path.dirname(local_path), exist_ok=True)
-                with open(local_path, 'wb') as f:
-                    pickle.dump(obj, f)
-                logger.debug(f"📦 [Storage] Saved to local: {local_path}")
-                return True
-            except Exception as e:
-                logger.error(f"📦 [Storage] Local save failed: {e}")
-                return False
-    
-    def load_pickle(self, path: str) -> Optional[Any]:
-        """
-        Load object from pickle.
-        
-        Args:
-            path: Relative path for the pickle file
-            
-        Returns:
-            Loaded object or None if not found
-        """
-        self._ensure_initialized()
-        
-        if self.is_blob_mode():
-            blob_client = get_blob_storage_client()
-            if blob_client:
-                obj = blob_client.load_pickle(path)
-                if obj:
-                    logger.debug(f"📦 [Storage] Loaded from blob: {path}")
-                return obj
-            else:
-                logger.error("📦 [Storage] Blob client unavailable")
-                return None
-        else:
-            # Local storage
-            local_path = self._get_local_path(path)
-            if not os.path.exists(local_path):
-                logger.debug(f"📦 [Storage] Not found locally: {local_path}")
-                return None
-            try:
-                with open(local_path, 'rb') as f:
-                    obj = pickle.load(f)
-                logger.debug(f"📦 [Storage] Loaded from local: {local_path}")
-                return obj
-            except Exception as e:
-                logger.error(f"📦 [Storage] Local load failed: {e}")
-                return None
     
     def exists(self, path: str) -> bool:
         """

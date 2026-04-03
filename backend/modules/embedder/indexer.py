@@ -9,7 +9,6 @@ import logging
 from typing import List
 
 from adalflow.core.types import Document
-from adalflow.core.db import LocalDB
 from backend.paths import get_adalflow_root_path
 
 from backend.config import configs
@@ -23,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class DatabaseManager:
     """
-    Manages the creation, loading, transformation, and persistence of LocalDB instances.
+    Manages the creation, loading, and persistence of document embeddings.
     """
 
     def __init__(self):
@@ -43,15 +42,15 @@ class DatabaseManager:
         excluded_files: List[str] = None,
         included_dirs: List[str] = None,
         included_files: List[str] = None,
-        force_reprocess: bool = False
+        force_reprocess: bool = False,
+        repo_dir: str = None
     ) -> List[Document]:
         """
         Create a new database from the repository.
 
         Args:
-            repo_type(str): Type of repository
             repo_url_or_path (str): The URL or local path of the repository
-            type (str): Type of repository (github, gitlab, bitbucket, azuredevops)
+            repo_type (str): Type of repository (github, gitlab, bitbucket, azuredevops)
             access_token (str, optional): Access token for private repositories
             branch (str, optional): Branch name to clone/process
             embedder_type (str, optional): Kept for backward compatibility, ignored.
@@ -60,15 +59,16 @@ class DatabaseManager:
             excluded_files (List[str], optional): List of file patterns to exclude from processing
             included_dirs (List[str], optional): List of directories to include exclusively
             included_files (List[str], optional): List of file patterns to include exclusively
-            force_reprocess (bool): If True, ignore existing pkl/vectors and create fresh JSON vectors.
-                                   Use this to migrate from pkl to vector-based storage.
+            force_reprocess (bool): If True, ignore existing vectors and create fresh.
+            repo_dir (str, optional): Pre-cloned repo directory. Skips clone when provided.
 
         Returns:
             List[Document]: List of Document objects
         """
         self.reset_database()
         self._create_repo(repo_url_or_path, repo_type, access_token, branch,
-                          force_reprocess=force_reprocess)
+                          force_reprocess=force_reprocess,
+                          repo_dir=repo_dir)
         return self.prepare_db_index(
             excluded_dirs=excluded_dirs,
             excluded_files=excluded_files,
@@ -85,49 +85,15 @@ class DatabaseManager:
         self.repo_url_or_path = None
         self.repo_paths = None
 
-    def _delete_legacy_pkl(self, repo_name: str, branch_suffix: str) -> None:
-        """Delete legacy pkl database if it exists.
-
-        Pkl databases are never served live, so deleting upfront is
-        safe and doesn't affect zero-downtime guarantees.
-
-        Args:
-            repo_name: Repository name (owner_repo format)
-            branch_suffix: Branch name
-        """
-        if is_blob_storage_configured():
-            blob_db_path = self.repo_paths.get("blob_db_path") if self.repo_paths else None
-            if blob_db_path:
-                try:
-                    blob_client = get_blob_storage_client()
-                    if blob_client and blob_client.exists(blob_db_path):
-                        logger.info(f"[Pkl] Deleting legacy pkl database: {blob_db_path}")
-                        blob_client.delete_blob(blob_db_path)
-                except Exception as e:
-                    logger.warning(f"[Pkl] Failed to delete legacy pkl: {e}")
-        else:
-            if self.repo_paths and os.path.exists(self.repo_paths.get("save_db_file", "")):
-                pkl_path = self.repo_paths["save_db_file"]
-                logger.info(f"[Pkl] Deleting legacy pkl database: {pkl_path}")
-                try:
-                    os.remove(pkl_path)
-                except Exception as e:
-                    logger.warning(f"[Pkl] Failed to delete legacy pkl: {e}")
-
     def _extract_repo_name_from_url(self, repo_url_or_path: str, repo_type: str) -> str:
-        """Extract owner and repo name to create unique identifier."""
-        url_parts = repo_url_or_path.rstrip('/').split('/')
+        """Extract owner and repo name to create unique identifier.
 
-        if repo_type in ["github", "gitlab", "bitbucket"] and len(url_parts) >= 5:
-            # GitHub URL format: https://github.com/owner/repo
-            # GitLab URL format: https://gitlab.com/owner/repo or https://gitlab.com/group/subgroup/repo
-            # Bitbucket URL format: https://bitbucket.org/owner/repo
-            owner = url_parts[-2]
-            repo = url_parts[-1].replace(".git", "")
-            repo_name = f"{owner}_{repo}"
-        else:
-            repo_name = url_parts[-1].replace(".git", "")
-        return repo_name
+        Delegates to _extract_owner_repo from code_processor for Azure DevOps
+        URLs (handles both dev.azure.com and visualstudio.com formats).
+        """
+        from backend.processor.code_processor import _extract_owner_repo
+        owner, repo = _extract_owner_repo(repo_url_or_path)
+        return f"{owner}_{repo}"
 
     def _create_repo(
         self,
@@ -135,7 +101,8 @@ class DatabaseManager:
         repo_type: str = None,
         access_token: str = None,
         branch: str = None,
-        force_reprocess: bool = False
+        force_reprocess: bool = False,
+        repo_dir: str = None
     ) -> None:
         """
         Download and prepare all paths.
@@ -146,16 +113,18 @@ class DatabaseManager:
         
         Storage paths:
         - Repos (local only): {root}/repos/{owner}_{repo_name}/
-        - Database (local):   {root}/databases/{owner}_{repo_name}_{branch}.pkl
-        - Database (blob):    databases/{owner}_{repo_name}_{branch}.pkl
+        - Vectors (local):    {root}/vectors/{owner}_{repo_name}_{branch}/
+        - Vectors (blob):     vectors/{owner}_{repo_name}_{branch}/
 
         Args:
-            repo_type(str): Type of repository
             repo_url_or_path (str): The URL or local path of the repository
             repo_type (str): Type of repository (github, gitlab, etc.)
             access_token (str, optional): Access token for private repos
             branch (str, optional): Branch name to clone/process (uses 'default' if not specified)
             force_reprocess (bool): If True, git pull latest changes for existing repo
+            repo_dir (str, optional): Pre-cloned repo directory. When provided, skips
+                clone/download and uses this path directly. The caller (e.g. step_clone)
+                is responsible for ensuring the directory is up-to-date.
         """
         logger.info(f"Preparing repo storage for {repo_url_or_path}...")
         logger.debug(f"_create_repo params: repo_type={repo_type}, access_token={'[PROVIDED]' if access_token else '[NONE]'}, branch={branch}, force_reprocess={force_reprocess}")
@@ -173,11 +142,22 @@ class DatabaseManager:
                 repo_name = self._extract_repo_name_from_url(repo_url_or_path, repo_type)
                 logger.info(f"Extracted repo name: {repo_name}")
 
-                save_repo_dir = os.path.join(root_path, "repos", repo_name)
-                blob_repo_path = f"repos/{repo_name}/"  # Blob prefix for repo files
+                save_repo_dir = repo_dir if repo_dir else os.path.join(root_path, "repos", repo_name)
+                blob_repo_path = f"repos/{repo_name}/"
 
-                # Storage mode: blob OR local (no syncing between them)
-                if is_blob_storage_configured():
+                if repo_dir:
+                    # Pre-cloned by step_clone() — skip all clone/download logic
+                    logger.info(f"Using pre-cloned repo at {repo_dir}")
+                    # In blob mode, upload to blob for AML caching if not already there
+                    if is_blob_storage_configured():
+                        try:
+                            blob_client = get_blob_storage_client()
+                            if blob_client and not blob_client.directory_exists(blob_repo_path):
+                                logger.info("Uploading pre-cloned repo to blob for caching")
+                                blob_client.upload_directory(save_repo_dir, blob_repo_path)
+                        except Exception as e:
+                            logger.warning(f"Failed to upload repo to blob cache: {e}")
+                elif is_blob_storage_configured():
                     # BLOB MODE: Check blob first, clone and upload to blob if not found
                     logger.info("Using Azure Blob Storage mode")
                     try:
@@ -224,51 +204,30 @@ class DatabaseManager:
                 save_repo_dir = repo_url_or_path
                 blob_repo_path = f"repos/{repo_name}/"
 
-            # Path consistency: local and blob use same relative structure
-            # Local: ~/.adalflow/databases/{owner}_{repo}_{branch}.pkl
-            # Blob:  databases/{owner}_{repo}_{branch}.pkl (same structure, different root)
-            
-            # Normalize branch: detect actual branch instead of using 'default'
+            # Normalize branch: detect actual branch if not provided
             if not branch or not branch.strip():
-                # Check if database already exists for main/master
-                for candidate_branch in ['main', 'master']:
-                    candidate_path = os.path.join(root_path, f"databases/{repo_name}_{candidate_branch}.pkl")
-                    if os.path.exists(candidate_path):
-                        logger.info(f"Found existing database for branch '{candidate_branch}', reusing it")
-                        branch = candidate_branch
-                        break
-                
-                # If no existing database found, try to detect from repo
-                if not branch or not branch.strip():
-                    if os.path.exists(save_repo_dir) and os.path.exists(os.path.join(save_repo_dir, ".git")):
-                        try:
-                            detected_branch = detect_default_branch(save_repo_dir)
-                            logger.info(f"Detected default branch from repo: {detected_branch}")
-                            branch = detected_branch
-                        except Exception as e:
-                            logger.warning(f"Could not detect default branch: {e}, using 'main'")
-                            branch = 'main'
-                    else:
-                        # Default to main if repo doesn't exist yet
+                if os.path.exists(save_repo_dir) and os.path.exists(os.path.join(save_repo_dir, ".git")):
+                    try:
+                        detected_branch = detect_default_branch(save_repo_dir)
+                        logger.info(f"Detected default branch from repo: {detected_branch}")
+                        branch = detected_branch
+                    except Exception as e:
+                        logger.warning(f"Could not detect default branch: {e}, using 'main'")
                         branch = 'main'
-                        logger.info("Repo not cloned yet, defaulting to 'main' branch")
+                else:
+                    branch = 'main'
+                    logger.info("Repo not cloned yet, defaulting to 'main' branch")
             
             branch_suffix = branch.strip() if branch and branch.strip() else 'main'
-            db_relative_path = f"databases/{repo_name}_{branch_suffix}.pkl"
-            save_db_file = os.path.join(root_path, db_relative_path)
-            blob_db_path = db_relative_path  # Same relative path for blob
             
             os.makedirs(save_repo_dir, exist_ok=True)
-            os.makedirs(os.path.dirname(save_db_file), exist_ok=True)
 
             self.repo_paths = {
                 "save_repo_dir": save_repo_dir,
-                "save_db_file": save_db_file,
-                "blob_db_path": blob_db_path,
-                "blob_repo_path": blob_repo_path,  # Add blob repo path
-                "repo_name": repo_name,  # Store for reference
-                "branch_suffix": branch_suffix,  # Store branch suffix for vector storage
-                "repo_type": repo_type,  # Store repo type for URL construction
+                "blob_repo_path": blob_repo_path,
+                "repo_name": repo_name,
+                "branch_suffix": branch_suffix,
+                "repo_type": repo_type,
             }
             self.repo_url_or_path = repo_url_or_path
             logger.debug(f"Repo: {repo_name}, branch: {branch_suffix}, type: {repo_type}")
@@ -290,12 +249,11 @@ class DatabaseManager:
         """
         Prepare the indexed database for the repository.
         
-        Storage priority (backward compatible):
+        Storage priority:
         1. If force_reprocess=True: Snapshot existing files, overwrite in-place,
            then delete orphans (zero-downtime reprocessing)
-        2. Check for existing pkl database in "databases/" - load if found (backward compat)
-        3. Check for existing JSON vectors in "vectors/" - load if found (new format)
-        4. If neither exists, create new using JSON format in "vectors/"
+        2. Check for existing JSON vectors in "vectors/" - load if found
+        3. If none exist, create new using JSON format in "vectors/"
 
         Zero-downtime reprocessing (force_reprocess=True):
             Instead of deleting all vectors upfront (which creates a window where
@@ -312,8 +270,7 @@ class DatabaseManager:
             excluded_files (List[str], optional): List of file patterns to exclude from processing
             included_dirs (List[str], optional): List of directories to include exclusively
             included_files (List[str], optional): List of file patterns to include exclusively
-            force_reprocess (bool): If True, ignore existing pkl/vectors and create fresh JSON vectors.
-                                   Use this to migrate from pkl to vector-based storage.
+            force_reprocess (bool): If True, ignore existing vectors and create fresh.
 
         Returns:
             List[Document]: List of Document objects
@@ -339,71 +296,39 @@ class DatabaseManager:
             else:
                 logger.info("[Vec] No existing vectors (fresh run)")
 
-            # Delete legacy pkl database (always safe — pkl is not served live)
-            self._delete_legacy_pkl(repo_name, branch_suffix)
-
-            # Skip STEP 1 (loading existing), go directly to STEP 2 (create new)
-            # New vectors will overwrite existing files in-place
+            # Skip loading existing, go directly to creating new
         else:
             logger.info(f"Looking for existing embeddings for {repo_name} (branch: {branch_suffix})...")
         
             # ==================================================================
-            # STEP 1: Check for existing storage (only when not force_reprocess)
+            # STEP 1: Check for existing vectors (only when not force_reprocess)
             # ==================================================================
             if self.repo_paths and is_blob_storage_configured():
-                blob_db_path = self.repo_paths.get("blob_db_path")
-                if blob_db_path:
-                    try:
-                        blob_client = get_blob_storage_client()
-                        if not blob_client:
-                            error_msg = "Azure Blob Storage is configured but failed to create client. Check MSI configuration."
-                            logger.error(error_msg)
-                            raise ConnectionError(error_msg)
-                        
-                        # Check for legacy pkl database first
-                        if blob_client.exists(blob_db_path):
-                            logger.info(f"[Pkl] Found legacy pkl database in Azure Blob: {blob_db_path}")
-                            self.db = blob_client.load_pickle(blob_db_path)
-                            if self.db:
-                                documents = self.db.get_transformed_data(key="split_and_embed")
-                                if documents:
-                                    logger.info(f"[Pkl] Successfully loaded {len(documents)} documents from legacy pkl database")
-                                    return documents
-                            logger.info("[Pkl] Legacy pkl exists but is empty/invalid, switching to check vectors...")
-                        
-                        # Check for new JSON vectors
-                        if vector_storage.exists(repo_name, branch_suffix):
-                            logger.info(f"[Vec] Found JSON vectors at: vectors/{repo_name}_{branch_suffix}/")
-                            documents = vector_storage.load_documents(repo_name, branch_suffix)
-                            if documents:
-                                logger.info(f"[Vec] Successfully loaded {len(documents)} documents from JSON vector storage")
-                                return documents
-                            logger.info("[Vec] Vectors directory exists but empty/invalid, will create new")
-                        else:
-                            logger.info("[Vec] No existing vectors found, will create new with JSON format")
-                            
-                    except ConnectionError:
-                        raise  # Re-raise connection errors
-                    except Exception as e:
-                        error_msg = f"Failed to connect to Azure Blob Storage: {e}"
+                try:
+                    blob_client = get_blob_storage_client()
+                    if not blob_client:
+                        error_msg = "Azure Blob Storage is configured but failed to create client. Check MSI configuration."
                         logger.error(error_msg)
-                        raise ConnectionError(error_msg) from e
-            else:
-                # Local storage mode (blob not configured)
-                # Check for legacy pkl database first
-                if self.repo_paths and os.path.exists(self.repo_paths["save_db_file"]):
-                    logger.info(f"[Pkl] Found legacy pkl database at local: {self.repo_paths['save_db_file']}")
-                    try:
-                        self.db = LocalDB.load_state(self.repo_paths["save_db_file"])
-                        documents = self.db.get_transformed_data(key="split_and_embed")
+                        raise ConnectionError(error_msg)
+                    
+                    if vector_storage.exists(repo_name, branch_suffix):
+                        logger.info(f"[Vec] Found JSON vectors at: vectors/{repo_name}_{branch_suffix}/")
+                        documents = vector_storage.load_documents(repo_name, branch_suffix)
                         if documents:
-                            logger.info(f"[Pkl] Successfully loaded {len(documents)} documents from legacy pkl database")
+                            logger.info(f"[Vec] Successfully loaded {len(documents)} documents from JSON vector storage")
                             return documents
-                    except Exception as e:
-                        logger.error(f"[Pkl] Error loading legacy pkl database: {e}")
-                        logger.info("[Pkl] Switching to check vectors...")
-                
-                # Check for new JSON vectors
+                        logger.info("[Vec] Vectors directory exists but empty/invalid, will create new")
+                    else:
+                        logger.info("[Vec] No existing vectors found, will create new")
+                        
+                except ConnectionError:
+                    raise
+                except Exception as e:
+                    error_msg = f"Failed to connect to Azure Blob Storage: {e}"
+                    logger.error(error_msg)
+                    raise ConnectionError(error_msg) from e
+            else:
+                # Local storage mode
                 if vector_storage.exists(repo_name, branch_suffix):
                     logger.info(f"[Vec] Found JSON vectors at: vectors/{repo_name}_{branch_suffix}/")
                     documents = vector_storage.load_documents(repo_name, branch_suffix)

@@ -13,7 +13,6 @@ Storage decision:
 
 import io
 import os
-import pickle
 import logging
 from typing import Optional, Any, Tuple
 
@@ -115,58 +114,6 @@ class AzureBlobStorageClient:
     def get_container_client(self) -> ContainerClient:
         """Get the container client."""
         return self.blob_service_client.get_container_client(self.container_name)
-
-    def save_pickle(self, blob_name: str, obj: Any) -> bool:
-        """
-        Save a Python object as a pickled blob.
-
-        Args:
-            blob_name: Name of the blob (e.g., "databases/owner_repo.pkl")
-            obj: Python object to pickle and save
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        try:
-            # Pickle the object to bytes
-            data = pickle.dumps(obj)
-            
-            # Upload to blob storage
-            blob_client = self.get_container_client().get_blob_client(blob_name)
-            blob_client.upload_blob(data, overwrite=True)
-            
-            logger.debug(f"Saved pickle to blob: {blob_name} ({len(data)} bytes)")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to save pickle to blob {blob_name}: {e}")
-            return False
-
-    def load_pickle(self, blob_name: str) -> Optional[Any]:
-        """
-        Load a pickled object from blob storage.
-
-        Args:
-            blob_name: Name of the blob to load
-
-        Returns:
-            The unpickled Python object, or None if not found/error
-        """
-        try:
-            blob_client = self.get_container_client().get_blob_client(blob_name)
-            
-            if not blob_client.exists():
-                logger.debug(f"Blob does not exist: {blob_name}")
-                return None
-            
-            # Download and unpickle
-            data = blob_client.download_blob().readall()
-            obj = pickle.loads(data)
-            
-            logger.debug(f"Loaded pickle from blob: {blob_name} ({len(data)} bytes)")
-            return obj
-        except Exception as e:
-            logger.error(f"Failed to load pickle from blob {blob_name}: {e}")
-            return None
 
     def exists(self, blob_name: str) -> bool:
         """
@@ -298,7 +245,10 @@ class AzureBlobStorageClient:
 
     def upload_directory(self, local_dir: str, blob_prefix: str) -> bool:
         """
-        Upload an entire directory to blob storage.
+        Upload an entire directory to blob storage with full sync.
+
+        Uploads all local files and deletes any blob files under the prefix
+        that no longer exist locally (stale file cleanup).
 
         Args:
             local_dir: Local directory path to upload
@@ -316,6 +266,7 @@ class AzureBlobStorageClient:
             
             uploaded_count = 0
             failed_count = 0
+            uploaded_blobs = set()
             
             for root, dirs, files in os.walk(local_dir):
                 for file in files:
@@ -325,6 +276,7 @@ class AzureBlobStorageClient:
                     # Convert Windows path separators to forward slashes
                     rel_path = rel_path.replace("\\", "/")
                     blob_name = f"{blob_prefix.rstrip('/')}/{rel_path}"
+                    uploaded_blobs.add(blob_name)
                     
                     try:
                         with open(local_path, 'rb') as f:
@@ -336,6 +288,20 @@ class AzureBlobStorageClient:
                         logger.warning(f"Failed to upload {local_path}: {e}")
                         failed_count += 1
             
+            # Delete stale blobs that no longer exist locally
+            existing_blobs = set(self.list_blobs(blob_prefix))
+            stale_blobs = existing_blobs - uploaded_blobs
+            if stale_blobs:
+                deleted_count = 0
+                for blob_name in stale_blobs:
+                    try:
+                        blob_client = self.get_container_client().get_blob_client(blob_name)
+                        blob_client.delete_blob()
+                        deleted_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to delete stale blob {blob_name}: {e}")
+                logger.info(f"Deleted {deleted_count} stale blobs from {blob_prefix}")
+
             logger.info(f"Uploaded directory {local_dir} to blob prefix {blob_prefix}: {uploaded_count} files, {failed_count} failed")
             return failed_count == 0
         except Exception as e:

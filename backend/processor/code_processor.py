@@ -269,7 +269,7 @@ def step_build_codemap(repo_path, owner, repo, repo_type, branch):
     return codemap
 
 
-def step_embed(repo_url, token, branch):
+def step_embed(repo_url, token, branch, repo_dir=None):
     """Embed documents and build retriever. Returns RAG instance.
 
     Storage backend (local or blob) and AOAI auth (MSI or API key)
@@ -285,6 +285,7 @@ def step_embed(repo_url, token, branch):
         access_token=token,
         branch=branch,
         force_reprocess=True,
+        repo_dir=repo_dir,
     )
     print(f"  Retriever ready ({len(rag.transformed_docs)} docs)")
 
@@ -299,7 +300,7 @@ def step_embed(repo_url, token, branch):
     return rag
 
 
-def step_embed_cloud(repo_url, token, branch):
+def step_embed_cloud(repo_url, token, branch, repo_dir=None):
     """Embed documents and save to blob (cloud mode, no FAISS).
 
     Skips FAISS construction and document accumulation since wiki
@@ -317,13 +318,11 @@ def step_embed_cloud(repo_url, token, branch):
     db_manager._create_repo(
         repo_url, 'azuredevops', token, branch,
         force_reprocess=True,
+        repo_dir=repo_dir,
     )
 
     repo_name = db_manager.repo_paths["repo_name"]
     branch_suffix = db_manager.repo_paths["branch_suffix"]
-
-    # Delete legacy pkl if exists
-    db_manager._delete_legacy_pkl(repo_name, branch_suffix)
 
     # Snapshot for orphan cleanup
     vector_storage = get_vector_storage()
@@ -587,7 +586,7 @@ def _process(mode, repo_url, branch, language, comprehensive,
         # CLOUD MODE: embed → push to search → generate via search
         # No FAISS, no in-memory document loading (~120 MB peak)
         # ============================================================
-        step_embed_cloud(repo_url, token, branch)
+        step_embed_cloud(repo_url, token, branch, repo_dir=repo_dir)
 
         step_push_to_search(owner, repo, branch, wait=True)
 
@@ -609,7 +608,7 @@ def _process(mode, repo_url, branch, language, comprehensive,
         # LOCAL / DOCKER MODE: embed + FAISS → generate via FAISS
         # (unchanged from existing implementation)
         # ============================================================
-        retriever = step_embed(repo_url, token, branch)
+        retriever = step_embed(repo_url, token, branch, repo_dir=repo_dir)
 
         try:
             wiki_data = step_generate_wiki(
