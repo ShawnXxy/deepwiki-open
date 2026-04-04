@@ -5,12 +5,30 @@ Provides .gitignore parsing and helpers used by document processing
 and wiki generation to avoid hardcoded filter lists.
 """
 import os
+import re
 import logging
 from typing import Optional
 
 import pathspec
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_branch_for_path(branch: str) -> str:
+    """Sanitize a branch name for use in filesystem paths and blob prefixes.
+
+    Replaces characters that are problematic in paths (dots, slashes,
+    spaces, etc.) with dashes. Result is safe for local paths and blob keys.
+
+    Args:
+        branch: Raw branch name (e.g., 'mysql_8.4', 'feature/my-branch')
+
+    Returns:
+        Sanitized string safe for paths (e.g., 'mysql_8-4', 'feature-my-branch')
+    """
+    sanitized = re.sub(r'[^a-zA-Z0-9_\-]', '-', branch)
+    sanitized = re.sub(r'-+', '-', sanitized).strip('-')
+    return sanitized or 'main'
 
 
 def load_gitignore(repo_path: str) -> Optional[pathspec.PathSpec]:

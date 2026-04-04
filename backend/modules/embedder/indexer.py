@@ -142,8 +142,13 @@ class DatabaseManager:
                 repo_name = self._extract_repo_name_from_url(repo_url_or_path, repo_type)
                 logger.info(f"Extracted repo name: {repo_name}")
 
-                save_repo_dir = repo_dir if repo_dir else os.path.join(root_path, "repos", repo_name)
-                blob_repo_path = f"repos/{repo_name}/"
+                # Include branch in clone dir so different branches don't clobber each other
+                from backend.utils.filter import sanitize_branch_for_path
+                branch_safe = sanitize_branch_for_path(branch or 'main')
+                repo_dir_name = f"{repo_name}_{branch_safe}"
+
+                save_repo_dir = repo_dir if repo_dir else os.path.join(root_path, "repos", repo_dir_name)
+                blob_repo_path = f"repos/{repo_dir_name}/"
 
                 if repo_dir:
                     # Pre-cloned by step_clone() — skip all clone/download logic

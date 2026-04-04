@@ -230,9 +230,11 @@ def step_clone(repo_url, token, branch, repo_name, token_type='pat'):
         download_repo, get_head_commit_hash,
     )
     from backend.paths import get_repos_path
+    from backend.utils.filter import sanitize_branch_for_path
 
     print("\n--- Step 1: Cloning repository ---")
-    save_dir = os.path.join(get_repos_path(), repo_name)
+    branch_safe = sanitize_branch_for_path(branch or 'main')
+    save_dir = os.path.join(get_repos_path(), f"{repo_name}_{branch_safe}")
     download_repo(
         repo_url=repo_url,
         local_path=save_dir,
@@ -430,9 +432,7 @@ def step_push_to_search(owner, repo, branch, wait=False):
         return
 
     print("\n--- Step 5: Pushing vectors to AI Search ---")
-    # Use bare repo name (not owner_repo) — matches what
-    # indexer.py._extract_repo_name_from_url() produces for ADO repos.
-    repo_name = repo
+    repo_name = f"{owner}_{repo}"
     vector_storage = get_vector_storage()
 
     # Load all doc paths first (lightweight — just file listing)

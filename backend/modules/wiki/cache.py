@@ -261,9 +261,21 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
     )
     logger.info(f"Attempting to save wiki cache locally. Path: {cache_path}")
     try:
+        import tempfile
         logger.info(f"Writing cache file to: {cache_path}")
-        with open(cache_path, 'w', encoding='utf-8') as f:
-            json.dump(payload.model_dump(), f, indent=2)
+        cache_dir = os.path.dirname(cache_path)
+        # Write to temp file first, then atomic rename to prevent corruption
+        fd, tmp_path = tempfile.mkstemp(dir=cache_dir, suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(payload.model_dump(), f, indent=2)
+            # Atomic rename (same filesystem guaranteed by mkstemp in same dir)
+            os.replace(tmp_path, cache_path)
+        except Exception:
+            # Clean up temp file on failure
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
         logger.info(f"Wiki cache successfully saved to {cache_path}")
         return True
     except IOError as e:
