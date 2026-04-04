@@ -113,6 +113,7 @@ def save_codemap_cache(
 ) -> bool:
     """Save codemap data to storage (blob or local disk)."""
     payload = data.model_dump()
+    del data  # Free Pydantic object before building JSON string
 
     if is_blob_storage_configured():
         blob_path = get_codemap_blob_path(
@@ -125,7 +126,8 @@ def save_codemap_cache(
                     "Blob storage configured but client unavailable"
                 )
                 return False
-            content = json.dumps(payload, indent=2)
+            content = json.dumps(payload, separators=(',', ':'))
+            del payload  # Free dict before upload
             if blob_client.upload_text(blob_path, content):
                 logger.info(
                     f"Codemap saved to blob: {blob_path}"
@@ -143,7 +145,8 @@ def save_codemap_cache(
     try:
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         with open(cache_path, 'w', encoding='utf-8') as f:
-            json.dump(payload, f, indent=2)
+            json.dump(payload, f, separators=(',', ':'))
+        del payload
         logger.info(f"Codemap saved to: {cache_path}")
         return True
     except Exception as e:
