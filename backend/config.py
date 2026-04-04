@@ -15,7 +15,7 @@ from backend.types.config_types import (
     EmbedderConfig,
     GeneratorConfig,
     FileFiltersConfig,
-    RepositoryConfig,
+    IncludedConfig,
     LanguageConfig,
     AzureAccountConfig,
     AzureAISearchConfig,
@@ -33,7 +33,7 @@ _infra_config: Optional[InfraConfig] = None
 _embedder_config: Optional[EmbedderConfig] = None
 _generator_config: Optional[GeneratorConfig] = None
 _file_filters_config: Optional[FileFiltersConfig] = None
-_repository_config: Optional[RepositoryConfig] = None
+_included_config: Optional[IncludedConfig] = None
 _lang_config: Optional[LanguageConfig] = None
 _client_classes: Optional[Dict[str, Any]] = None
 _azure_ai_client: Optional[Any] = None
@@ -61,7 +61,7 @@ def set_config_dir(path: str) -> None:
     """
     global CONFIG_DIR
     global _infra_config, _embedder_config, _generator_config
-    global _file_filters_config, _repository_config, _lang_config
+    global _file_filters_config, _included_config, _lang_config
     global _client_classes, _azure_ai_client
 
     CONFIG_DIR = path
@@ -71,7 +71,7 @@ def set_config_dir(path: str) -> None:
     _embedder_config = None
     _generator_config = None
     _file_filters_config = None
-    _repository_config = None
+    _included_config = None
     _lang_config = None
     _client_classes = None
     _azure_ai_client = None
@@ -401,35 +401,16 @@ def get_file_filters_config_obj() -> FileFiltersConfig:
     """
     global _file_filters_config
     if _file_filters_config is None:
-        config_dict = load_json_config("repo.json")
+        config_dict = load_json_config("excluded.json")
         if config_dict:
             try:
                 file_filters_data = config_dict.get("file_filters", {})
                 _file_filters_config = from_dict(FileFiltersConfig, file_filters_data)
-                logger.info("Successfully loaded and validated file_filters from repo.json")
+                logger.info("Successfully loaded and validated file_filters from excluded.json")
             except Exception as e:
-                logger.error(f"Failed to parse file_filters from repo.json: {e}")
+                logger.error(f"Failed to parse file_filters from excluded.json: {e}")
                 raise
     return _file_filters_config
-
-
-def get_repository_config_obj() -> RepositoryConfig:
-    """
-    Get the repository constraints configuration.
-    Loads on first access and caches.
-    """
-    global _repository_config
-    if _repository_config is None:
-        config_dict = load_json_config("repo.json")
-        if config_dict:
-            try:
-                repository_data = config_dict.get("repository", {})
-                _repository_config = from_dict(RepositoryConfig, repository_data)
-                logger.info("Successfully loaded and validated repository from repo.json")
-            except Exception as e:
-                logger.error(f"Failed to parse repository from repo.json: {e}")
-                raise
-    return _repository_config
 
 
 def get_file_filters_config() -> Dict[str, Any]:
@@ -441,10 +422,29 @@ def get_file_filters_config() -> Dict[str, Any]:
     }
 
 
-def get_repository_config() -> Dict[str, Any]:
-    """Get repository constraints configuration."""
-    config = get_repository_config_obj()
-    return config.model_dump()
+def get_included_config_obj() -> IncludedConfig:
+    """Load supported file extensions from included.json. Caches on first access."""
+    global _included_config
+    if _included_config is None:
+        config_dict = load_json_config("included.json")
+        if config_dict:
+            try:
+                ext_data = config_dict.get("supported_extensions", {})
+                _included_config = from_dict(IncludedConfig, ext_data)
+                logger.info("Successfully loaded included.json")
+            except Exception as e:
+                logger.error(f"Failed to parse included.json: {e}")
+                raise
+        else:
+            _included_config = IncludedConfig()  # Use defaults
+            logger.info("included.json not found, using default extensions")
+    return _included_config
+
+
+def get_included_config() -> Dict[str, Any]:
+    """Get included extensions as a dict."""
+    config = get_included_config_obj()
+    return {"code": config.code, "doc": config.doc}
 
 
 # ============================================================================
@@ -574,7 +574,6 @@ def get_configs_dict() -> Dict[str, Any]:
         "retriever": get_retriever_config(),
         "text_splitter": get_text_splitter_config(),
         "file_filters": get_file_filters_config(),
-        "repository": get_repository_config(),
         "lang_config": get_lang_config(),
     }
     
@@ -620,11 +619,9 @@ def load_embedder_config() -> Dict[str, Any]:
 
 
 def load_repo_config() -> Dict[str, Any]:
-    """Legacy function - use get_file_filters_config() and get_repository_config() instead."""
-    # Return in old format for backward compatibility
+    """Legacy function - use get_file_filters_config() instead."""
     return {
         "file_filters": get_file_filters_config_obj().model_dump(),
-        "repository": get_repository_config_obj().model_dump()
     }
 
 

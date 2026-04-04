@@ -148,7 +148,7 @@ $infra.azure_application_insights.enabled = $true
 $infra | ConvertTo-Json -Depth 10 | Set-Content $cloudInfraPath
 
 # Copy other config files to .cloud
-$configFiles = @("repo.json", "generator.json", "lang.json", "embedder.json")
+$configFiles = @("excluded.json", "included.json", "generator.json", "lang.json", "embedder.json")
 foreach ($configFile in $configFiles) {
     $sourcePath = Join-Path $PSScriptRoot "backend/config/$configFile"
     if (Test-Path $sourcePath) {

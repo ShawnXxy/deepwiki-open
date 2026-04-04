@@ -144,8 +144,11 @@ def download_repo(
 
         # Check if repository already exists
         if os.path.exists(local_path) and os.listdir(local_path):
-            # Directory exists and is not empty
-            if force_update:
+            # Validate the clone is complete (has .git directory)
+            if not os.path.isdir(os.path.join(local_path, ".git")):
+                logger.warning(f"Directory {local_path} exists but has no .git — incomplete clone, removing and re-cloning")
+                shutil.rmtree(local_path)
+            elif force_update:
                 # Pull latest changes instead of skipping
                 logger.info(f"Repository exists at {local_path}, pulling latest changes...")
                 return _pull_repo_internal(local_path, access_token, repo_url, type, token_type=token_type)

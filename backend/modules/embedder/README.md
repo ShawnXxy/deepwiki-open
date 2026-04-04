@@ -34,7 +34,7 @@ Takes code repositories and produces searchable vector embeddings:
 - **Doc files:** `.md`, `.txt`, `.rst`, `.json`, `.yaml`, `.yml`
 
 File filtering uses the `FileFilter` type (from `backend/types/processor_types.py`):
-- **Exclusion mode** (default): Loads filters from `backend/config/repo.json` — excludes `.git`, `node_modules`, `__pycache__`, etc.
+- **Exclusion mode** (default): Loads filters from `backend/config/excluded.json` — excludes `.git`, `node_modules`, `__pycache__`, etc. Also respects the repo's root `.gitignore`.
 - **Inclusion mode**: When `included_dirs` or `included_files` are provided, only those are processed.
 - **Size limit**: 10 MB per file (configurable via `max_file_size_mb`)
 

@@ -1,0 +1,25 @@
+{
+  "supported_extensions": {
+    "code": [
+      ".py", ".pyx", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp",
+      ".go", ".rs", ".jsx", ".tsx", ".html", ".css", ".php",
+      ".swift", ".cs", ".rb", ".kt", ".scala",
+      ".sh", ".bash", ".ps1", ".psm1", ".bat", ".cmd",
+      ".lua", ".dart", ".r", ".jl",
+      ".vue", ".svelte", ".razor", ".cshtml", ".astro",
+      ".sql", ".graphql", ".proto", ".kql", ".json",
+      ".xaml", ".xml",
+      ".scss", ".sass", ".less",
+      ".m", ".mm",
+      ".ex", ".exs", ".clj", ".cljs", ".erl", ".hrl",
+      ".pl", ".pm", ".vb", ".fs", ".fsx",
+      ".groovy",
+      ".hs",
+      ".f90", ".f95", ".f03", ".f", ".for",
+      ".asm", ".s"
+    ],
+    "doc": [
+      ".md", ".rst", ".yaml", ".yml"
+    ]
+  }
+}

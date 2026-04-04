@@ -31,6 +31,15 @@ def _sanitize_index_name(name: str) -> str:
     return sanitized[:128]
 
 
+def _sanitize_document_key(key: str) -> str:
+    """Sanitize a string for use as an AI Search document key.
+
+    Keys can only contain letters, digits, underscore (_), dash (-),
+    or equal sign (=). Replace anything else with underscore.
+    """
+    return re.sub(r'[^a-zA-Z0-9_\-=]', '_', key)
+
+
 def get_index_name(owner: str, repo: str, branch: str) -> str:
     """Derive AI Search index name for a repo+branch."""
     return _sanitize_index_name(f"deepwiki-{owner}-{repo}-{branch}")
@@ -233,7 +242,7 @@ def push_documents(
     for i, doc in enumerate(documents):
         meta = doc.meta_data or {}
         search_doc = {
-            "id": f"{repo_name}_{branch}_{i}",
+            "id": _sanitize_document_key(f"{repo_name}_{branch}_{i}"),
             "title": meta.get('file_path', ''),
             "filepath": meta.get('file_path', ''),
             "content": doc.text or '',

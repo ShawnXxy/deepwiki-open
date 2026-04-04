@@ -155,18 +155,27 @@ class GeneratorConfig(BaseModel):
 
 
 # ============================================================================
-# Repository Configuration (repo.json)
+# Repository Configuration (excluded.json + included.json)
 # ============================================================================
 
 class FileFiltersConfig(BaseModel):
-    """File filtering configuration from repo.json."""
+    """File filtering configuration from excluded.json."""
     excluded_dirs: List[str] = Field(default_factory=list)
     excluded_files: List[str] = Field(default_factory=list)
 
 
-class RepositoryConfig(BaseModel):
-    """Repository size and constraints configuration from repo.json."""
-    max_size_mb: int = 50000
+class IncludedConfig(BaseModel):
+    """Supported file extensions from included.json."""
+    code: List[str] = Field(
+        default_factory=lambda: [
+            ".py", ".js", ".ts", ".java", ".cpp", ".c", ".h", ".hpp",
+            ".go", ".rs", ".jsx", ".tsx", ".html", ".css", ".php",
+            ".swift", ".cs",
+        ]
+    )
+    doc: List[str] = Field(
+        default_factory=lambda: [".md", ".txt", ".rst"]
+    )
 
 
 # ============================================================================

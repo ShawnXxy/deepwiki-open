@@ -232,7 +232,8 @@ IMPORTANT FORMATTING RULES:
         excluded_files: List[str] = None,
         included_dirs: List[str] = None,
         included_files: List[str] = None,
-        force_reprocess: bool = False
+        force_reprocess: bool = False,
+        repo_dir: str = None
     ):
         """
         Prepare the retriever for a repository.
@@ -308,7 +309,8 @@ IMPORTANT FORMATTING RULES:
             excluded_files=excluded_files,
             included_dirs=included_dirs,
             included_files=included_files,
-            force_reprocess=force_reprocess
+            force_reprocess=force_reprocess,
+            repo_dir=repo_dir
         )
         logger.info(f"Loaded {len(self.transformed_docs)} documents for retrieval")
 
