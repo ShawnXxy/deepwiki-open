@@ -250,13 +250,34 @@ def step_clone(repo_url, token, branch, repo_name, token_type='pat'):
     return save_dir, commit
 
 
+def _log_rss(label: str):
+    """Log current process RSS for memory debugging."""
+    try:
+        import psutil
+        rss_mb = psutil.Process().memory_info().rss / (1024 * 1024)
+        print(f"  [MEM] {label}: {rss_mb:.0f} MB RSS")
+        logger.info(f"[MEM] {label}: {rss_mb:.0f} MB RSS")
+    except ImportError:
+        pass
+
+
 def step_build_codemap(repo_path, owner, repo, repo_type, branch):
     """Build codemap graph from cloned repository."""
     from backend.modules.codemap.graph_builder import build_codemap
     from backend.modules.codemap.cache import save_codemap_cache
+    from backend.config import get_file_filters_config
+    from backend.types import FileFilter
 
     print("\n--- Step: Building codemap graph ---")
-    codemap = build_codemap(repo_path)
+
+    # Reuse the same file filter as the embedder (excluded.json)
+    file_filters = get_file_filters_config()
+    file_filter = FileFilter(
+        excluded_dirs=set(file_filters["excluded_dirs"]),
+        excluded_patterns=set(file_filters["excluded_files"]),
+    )
+
+    codemap = build_codemap(repo_path, file_filter=file_filter)
     codemap.metadata.owner = owner
     codemap.metadata.repo = repo
     codemap.metadata.repo_type = repo_type
@@ -571,6 +592,8 @@ def _process(mode, repo_url, branch, language, comprehensive,
         else:
             raise
 
+    _log_rss("after clone")
+
     # Build codemap graph (all modes, unless skipped)
     if not skip_codemap:
         try:
@@ -580,6 +603,10 @@ def _process(mode, repo_url, branch, language, comprehensive,
         except Exception as e:
             logger.warning(f"Codemap generation failed (non-fatal): {e}")
             print(f"  WARNING: Codemap generation failed: {e}")
+        finally:
+            gc.collect()
+
+    _log_rss("after codemap")
 
     if mode == 'cloud':
         # ============================================================
@@ -587,8 +614,10 @@ def _process(mode, repo_url, branch, language, comprehensive,
         # No FAISS, no in-memory document loading (~120 MB peak)
         # ============================================================
         step_embed_cloud(repo_url, token, branch, repo_dir=repo_dir)
+        _log_rss("after embed_cloud")
 
         step_push_to_search(owner, repo, branch, wait=True)
+        _log_rss("after push_to_search")
 
         try:
             wiki_data = step_generate_wiki_cloud(
@@ -602,6 +631,7 @@ def _process(mode, repo_url, branch, language, comprehensive,
             print(f"\n  ERROR in wiki generation: {e}")
             sys.exit(1)
 
+        _log_rss("after generate_wiki")
         step_save_wiki(wiki_data, language, comprehensive)
     else:
         # ============================================================
@@ -625,6 +655,7 @@ def _process(mode, repo_url, branch, language, comprehensive,
         # Free FAISS index + transformed_docs before save/push
         del retriever
         gc.collect()
+        _log_rss("after generate_wiki (FAISS freed)")
 
         step_save_wiki(wiki_data, language, comprehensive)
 

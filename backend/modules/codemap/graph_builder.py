@@ -34,6 +34,12 @@ _SKIP_DIRS = {
     'bower_components', 'jspm_packages',
 }
 
+# Maximum number of symbols to extract via AST analysis.
+# Beyond this, files still appear as file nodes but without
+# internal symbols (functions, classes, methods).
+# Prevents unbounded memory growth for very large repos.
+MAX_SYMBOLS = 200_000
+
 
 def build_codemap(
     repo_path: str,
@@ -65,6 +71,8 @@ def build_codemap(
     all_edges: List[SymbolEdge] = []
     language_stats: Dict[str, int] = defaultdict(int)
     file_nodes: List[SymbolNode] = []
+    symbol_budget_exhausted = False
+    current_symbol_count = 0
 
     workers = max_workers or min(os.cpu_count() or 4, len(files))
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -85,7 +93,7 @@ def build_codemap(
             lang_name = LANGUAGE_DISPLAY.get(ext, ext)
             language_stats[lang_name] += 1
 
-            # Create file-level node
+            # Create file-level node (always kept)
             file_node = SymbolNode(
                 id=rel_path,
                 name=os.path.basename(rel_path),
@@ -94,8 +102,21 @@ def build_codemap(
                 language=lang_name,
             )
             file_nodes.append(file_node)
-            all_nodes.extend(nodes)
-            all_edges.extend(edges)
+
+            # Only accumulate symbols if budget allows
+            if not symbol_budget_exhausted:
+                current_symbol_count += len(nodes)
+                all_nodes.extend(nodes)
+                all_edges.extend(edges)
+
+                if current_symbol_count >= MAX_SYMBOLS:
+                    symbol_budget_exhausted = True
+                    logger.warning(
+                        f"[CodeMap] Symbol budget ({MAX_SYMBOLS}) reached "
+                        f"at {len(file_nodes)} files, "
+                        f"{current_symbol_count} symbols. "
+                        f"Remaining files will be file-level only."
+                    )
 
     all_nodes = file_nodes + all_nodes
 
@@ -103,6 +124,9 @@ def build_codemap(
     resolved_edges = _resolve_references(
         all_nodes, all_edges, repo_path,
     )
+
+    # Free raw edges — no longer needed after resolution
+    del all_edges
 
     # Phase 4: Deduplicate edges
     seen_edges: Set[Tuple[str, str, str]] = set()
@@ -112,6 +136,10 @@ def build_codemap(
         if key not in seen_edges:
             seen_edges.add(key)
             unique_edges.append(edge)
+
+    # Free intermediate structures
+    del resolved_edges
+    del seen_edges
 
     # Build metadata
     commit_hash = _read_commit_hash(repo_path)
@@ -287,6 +315,11 @@ def _resolve_references(
 
         else:
             resolved.append(edge)
+
+    # Free lookup tables before returning
+    del node_by_id
+    del symbols_by_name
+    del file_path_set
 
     return resolved
 
