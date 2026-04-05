@@ -219,6 +219,16 @@ def create_or_update_index(index_name: str) -> None:
     logger.info(f"Created/updated AI Search index: {index_name}")
 
 
+def _is_payload_too_large(e: Exception) -> bool:
+    """Check if exception indicates Azure Search payload too large (413)."""
+    err_str = str(e)
+    return (
+        '413' in err_str
+        or 'Too Large' in err_str
+        or (isinstance(e, KeyError) and 'error_map' in err_str)
+    )
+
+
 def push_documents(
     index_name: str,
     documents: list,
@@ -226,6 +236,9 @@ def push_documents(
     branch: str,
 ) -> int:
     """Push vector documents to AI Search index.
+
+    Uses adaptive batch sizing: starts at 500, halves on 413 errors.
+    Once a smaller size succeeds, all remaining batches use that size.
 
     Args:
         index_name: Target index name
@@ -238,7 +251,8 @@ def push_documents(
     """
     client = _get_search_documents_client(index_name)
 
-    batch = []
+    # Build search docs
+    search_docs = []
     for i, doc in enumerate(documents):
         meta = doc.meta_data or {}
         search_doc = {
@@ -254,22 +268,33 @@ def push_documents(
             "service_id": repo_name,
             "content_vector": doc.vector if doc.vector else [],
         }
-        batch.append(search_doc)
+        search_docs.append(search_doc)
 
-        # Upload in batches of 1000
-        if len(batch) >= 1000:
+    # Adaptive batch upload: start large, halve on 413 errors
+    batch_size = 500
+    offset = 0
+    total = len(search_docs)
+
+    while offset < total:
+        batch = search_docs[offset:offset + batch_size]
+        try:
             client.upload_documents(documents=batch)
             logger.info(
-                f"Pushed batch of {len(batch)} docs to {index_name}"
+                f"Pushed {len(batch)} docs to {index_name} "
+                f"({offset + len(batch)}/{total}, batch_size={batch_size})"
             )
-            batch = []
+            offset += len(batch)
+        except Exception as e:
+            if _is_payload_too_large(e) and batch_size > 1:
+                batch_size = max(1, batch_size // 2)
+                logger.warning(
+                    f"Payload too large for {index_name}, "
+                    f"reducing batch size to {batch_size}"
+                )
+                # Don't advance offset — retry same docs with smaller batch
+            else:
+                raise
 
-    # Final batch
-    if batch:
-        client.upload_documents(documents=batch)
-        logger.info(f"Pushed final batch of {len(batch)} docs to {index_name}")
-
-    total = len(documents)
     logger.info(f"Total {total} documents pushed to index {index_name}")
     return total
 
