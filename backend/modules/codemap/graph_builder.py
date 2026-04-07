@@ -201,13 +201,7 @@ def _collect_files(
 
             # Apply file filter if provided
             if file_filter:
-                try:
-                    size = os.path.getsize(abs_path)
-                    if not file_filter.should_process_file(
-                        rel_path, size
-                    ):
-                        continue
-                except OSError:
+                if not file_filter.should_process_file(rel_path):
                     continue
 
             files.append((rel_path, ext, abs_path))
