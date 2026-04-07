@@ -20,7 +20,7 @@ mermaid.initialize({
   },
   fontFamily: 'var(--font-geist-sans), "Segoe UI", sans-serif',
   fontSize: 12,
-});
+} as Parameters<typeof mermaid.initialize>[0]);
 
 // Reusable icon components
 const ZoomOutIcon = () => (
