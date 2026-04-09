@@ -279,10 +279,6 @@ def push_documents(
         batch = search_docs[offset:offset + batch_size]
         try:
             client.upload_documents(documents=batch)
-            logger.info(
-                f"Pushed {len(batch)} docs to {index_name} "
-                f"({offset + len(batch)}/{total}, batch_size={batch_size})"
-            )
             offset += len(batch)
         except Exception as e:
             if _is_payload_too_large(e) and batch_size > 1:
@@ -560,7 +556,7 @@ def wait_for_indexer(
             status = client.get_indexer_status(indexer_name)
             last_result = status.last_result
             if last_result is None:
-                logger.info(
+                logger.debug(
                     f"Indexer {indexer_name}: no run yet, waiting..."
                 )
                 time.sleep(poll_interval)
@@ -576,7 +572,7 @@ def wait_for_indexer(
                 )
                 return True
             elif run_status in ("inProgress", "InProgress"):
-                logger.info(
+                logger.debug(
                     f"Indexer {indexer_name}: in progress, "
                     f"waiting {poll_interval}s..."
                 )

@@ -266,6 +266,7 @@ class AzureBlobStorageClient:
             
             uploaded_count = 0
             failed_count = 0
+            failed_files: list = []  # collect first few failures for summary
             uploaded_blobs = set()
             
             for root, dirs, files in os.walk(local_dir):
@@ -285,21 +286,34 @@ class AzureBlobStorageClient:
                         blob_client.upload_blob(data, overwrite=True)
                         uploaded_count += 1
                     except Exception as e:
-                        logger.warning(f"Failed to upload {local_path}: {e}")
+                        if len(failed_files) < 3:
+                            failed_files.append(f"{local_path}: {e}")
                         failed_count += 1
             
+            if failed_count > 0:
+                logger.warning(
+                    f"Failed to upload {failed_count} files "
+                    f"(first: {failed_files[0]})"
+                )
+
             # Delete stale blobs that no longer exist locally
             existing_blobs = set(self.list_blobs(blob_prefix))
             stale_blobs = existing_blobs - uploaded_blobs
             if stale_blobs:
                 deleted_count = 0
+                stale_failures = 0
                 for blob_name in stale_blobs:
                     try:
                         blob_client = self.get_container_client().get_blob_client(blob_name)
                         blob_client.delete_blob()
                         deleted_count += 1
                     except Exception as e:
-                        logger.warning(f"Failed to delete stale blob {blob_name}: {e}")
+                        stale_failures += 1
+                if stale_failures > 0:
+                    logger.warning(
+                        f"Failed to delete {stale_failures}/{len(stale_blobs)} "
+                        f"stale blobs from {blob_prefix}"
+                    )
                 logger.info(f"Deleted {deleted_count} stale blobs from {blob_prefix}")
 
             logger.info(f"Uploaded directory {local_dir} to blob prefix {blob_prefix}: {uploaded_count} files, {failed_count} failed")
@@ -331,6 +345,7 @@ class AzureBlobStorageClient:
             
             downloaded_count = 0
             failed_count = 0
+            failed_blobs: list = []  # collect first few failures for summary
             
             for blob_name in blobs:
                 # Calculate relative path from prefix
@@ -347,9 +362,16 @@ class AzureBlobStorageClient:
                         f.write(data)
                     downloaded_count += 1
                 except Exception as e:
-                    logger.warning(f"Failed to download {blob_name}: {e}")
+                    if len(failed_blobs) < 3:
+                        failed_blobs.append(f"{blob_name}: {e}")
                     failed_count += 1
             
+            if failed_count > 0:
+                logger.warning(
+                    f"Failed to download {failed_count}/{len(blobs)} blobs "
+                    f"(first: {failed_blobs[0]})"
+                )
+
             logger.info(f"Downloaded {downloaded_count} files from blob prefix {blob_prefix} to {local_dir}, {failed_count} failed")
             return failed_count == 0 and downloaded_count > 0
         except Exception as e:
@@ -444,10 +466,15 @@ class AzureBlobStorageClient:
                     blob_client = self.get_container_client().get_blob_client(blob_name)
                     blob_client.delete_blob()
                     deleted_count += 1
-                except Exception as e:
-                    logger.warning(f"Failed to delete blob {blob_name}: {e}")
+                except Exception:
                     failed_count += 1
             
+            if failed_count > 0:
+                logger.warning(
+                    f"Failed to delete {failed_count}/{len(blobs)} blobs "
+                    f"with prefix {blob_prefix}"
+                )
+
             logger.info(f"Deleted {deleted_count} blobs with prefix {blob_prefix}, {failed_count} failed")
             return failed_count == 0
         except Exception as e:

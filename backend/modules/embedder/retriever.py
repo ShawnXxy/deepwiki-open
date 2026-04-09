@@ -139,10 +139,15 @@ IMPORTANT FORMATTING RULES:
 
         embedding_sizes = {}  # size -> count
         docs_by_size = {}     # size -> list of docs
+        # Counters for per-document issues (logged as summary)
+        _no_vector = 0
+        _invalid_type = 0
+        _empty_vector = 0
+        _check_errors = 0
 
         for i, doc in enumerate(documents):
             if not hasattr(doc, 'vector') or doc.vector is None:
-                logger.warning(f"Document {i} has no embedding vector, skipping")
+                _no_vector += 1
                 continue
 
             try:
@@ -157,14 +162,11 @@ IMPORTANT FORMATTING RULES:
                 elif hasattr(doc.vector, '__len__'):
                     embedding_size = len(doc.vector)
                 else:
-                    logger.warning(
-                        f"Document {i} has invalid embedding vector "
-                        f"type: {type(doc.vector)}, skipping"
-                    )
+                    _invalid_type += 1
                     continue
 
                 if embedding_size == 0:
-                    logger.warning(f"Document {i} has empty embedding vector, skipping")
+                    _empty_vector += 1
                     continue
 
                 embedding_sizes[embedding_size] = (
@@ -174,12 +176,18 @@ IMPORTANT FORMATTING RULES:
                     docs_by_size[embedding_size] = []
                 docs_by_size[embedding_size].append(doc)
 
-            except Exception as e:
-                logger.warning(
-                    f"Error checking embedding size for document {i}: "
-                    f"{str(e)}, skipping"
-                )
+            except Exception:
+                _check_errors += 1
                 continue
+
+        # Log summary of skipped documents
+        skipped = _no_vector + _invalid_type + _empty_vector + _check_errors
+        if skipped > 0:
+            logger.warning(
+                f"Embedding validation: {skipped} documents skipped "
+                f"(no_vector={_no_vector}, invalid_type={_invalid_type}, "
+                f"empty={_empty_vector}, errors={_check_errors})"
+            )
 
         if not embedding_sizes:
             logger.error("No valid embeddings found in any documents")

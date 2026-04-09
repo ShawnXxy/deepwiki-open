@@ -717,7 +717,7 @@ class AzureAIClient(ModelClient):
                     input_str = match.group(2)
 
                 else:
-                    print("No match found.")
+                    log.debug("No regex match for system/user prompt tags in input.")
                 if system_prompt and input_str:
                     messages.append({"role": "system", "content": system_prompt})
                     messages.append({"role": "user", "content": input_str})
