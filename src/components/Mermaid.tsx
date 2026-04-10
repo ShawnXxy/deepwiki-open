@@ -92,11 +92,11 @@ const FullScreenModal: React.FC<{
 
   if (!isOpen) return null;
 
-  const buttonClass = "text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 p-2 rounded-md border border-[var(--border-color)] transition-colors";
+  const buttonClass = "text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 p-2 rounded-lg border border-[var(--border-color)] transition-all hover:shadow-sm";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4">
-      <div ref={modalRef} className="bg-[var(--card-bg)] rounded shadow-custom max-w-5xl max-h-[90vh] w-full overflow-hidden flex flex-col card-azure">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md p-4">
+      <div ref={modalRef} className="bg-[var(--card-bg)] rounded-2xl shadow-modal max-w-5xl max-h-[90vh] w-full overflow-hidden flex flex-col card-azure animate-slide-up">
         {/* Header with zoom controls */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)]">
           <div className="font-medium text-[var(--foreground)]">Diagram View</div>

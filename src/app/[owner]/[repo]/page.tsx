@@ -49,16 +49,16 @@ interface WikiStructure {
 
 // ─── Styles ───────────────────────────────────────────────────
 const wikiStyles = `
-  .prose code { @apply bg-[var(--background)]/70 px-1.5 py-0.5 rounded font-mono text-xs border border-[var(--border-color)]; }
-  .prose pre { @apply bg-[var(--background)]/80 text-[var(--foreground)] rounded-md p-4 overflow-x-auto border border-[var(--border-color)] shadow-sm; }
-  .prose h1, .prose h2, .prose h3, .prose h4 { @apply font-semibold text-[var(--foreground)]; }
+  .prose code { @apply bg-[var(--accent-primary)]/5 px-1.5 py-0.5 rounded-lg font-mono text-xs border border-[var(--accent-primary)]/15; }
+  .prose pre { @apply bg-[var(--card-bg-solid)] text-[var(--foreground)] rounded-2xl p-5 overflow-x-auto border border-[var(--border-color)] shadow-custom; }
+  .prose h1, .prose h2, .prose h3, .prose h4 { @apply font-bold text-[var(--foreground)]; }
   .prose p { @apply text-[var(--foreground)] leading-relaxed; }
-  .prose a { @apply text-[var(--accent-primary)] hover:text-[var(--highlight)] transition-colors no-underline border-b border-[var(--border-color)] hover:border-[var(--accent-primary)]; }
-  .prose blockquote { @apply border-l-4 border-[var(--accent-primary)]/30 bg-[var(--background)]/30 pl-4 py-1 italic; }
+  .prose a { @apply text-[var(--accent-primary)] hover:text-[var(--highlight)] transition-colors no-underline border-b border-[var(--accent-primary)]/30 hover:border-[var(--accent-primary)]; }
+  .prose blockquote { @apply border-l-4 border-[var(--accent-primary)]/30 bg-[var(--accent-primary)]/5 pl-4 py-2 italic rounded-r-2xl; }
   .prose ul, .prose ol { @apply text-[var(--foreground)]; }
-  .prose table { @apply border-collapse border border-[var(--border-color)]; }
-  .prose th { @apply bg-[var(--background)]/70 text-[var(--foreground)] p-2 border border-[var(--border-color)]; }
-  .prose td { @apply p-2 border border-[var(--border-color)]; }
+  .prose table { @apply border-collapse border border-[var(--border-color)] rounded-2xl overflow-hidden; }
+  .prose th { @apply bg-[var(--accent-primary)]/5 text-[var(--foreground)] p-3 border border-[var(--border-color)] font-semibold; }
+  .prose td { @apply p-3 border border-[var(--border-color)]; }
 `;
 
 // ─── Component ────────────────────────────────────────────────
@@ -319,14 +319,19 @@ export default function RepoWikiPage() {
 
   // ─── Render ─────────────────────────────────────────────────
   return (
-    <div className="h-screen paper-texture p-4 md:p-8 flex flex-col">
+    <div className="h-screen paper-texture p-4 md:p-6 flex flex-col relative overflow-hidden">
+      {/* Decorative floating orbs */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden z-0">
+        <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full bg-[var(--accent-primary)]/6 blur-3xl animate-float" />
+        <div className="absolute -bottom-32 -right-32 w-80 h-80 rounded-full bg-[var(--highlight)]/5 blur-3xl animate-float" style={{ animationDelay: '3s' }} />
+      </div>
       <style>{wikiStyles}</style>
 
       {/* Header */}
-      <header className="max-w-[90%] xl:max-w-[1400px] mx-auto mb-8 h-fit w-full">
+      <header className="max-w-[90%] xl:max-w-[1400px] mx-auto mb-6 h-fit w-full animate-fade-in relative z-10">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-center gap-4">
-            <Link href="/" className="text-[var(--accent-primary)] hover:text-[var(--highlight)] flex items-center gap-1.5 transition-colors border-b border-[var(--border-color)] hover:border-[var(--accent-primary)] pb-0.5">
+            <Link href="/" className="text-[var(--accent-primary)] hover:text-[var(--highlight)] flex items-center gap-1.5 transition-all px-4 py-2 rounded-xl hover:bg-[var(--accent-primary)]/10 font-medium">
               <FaHome /> {messages.repoPage?.home || 'Home'}
             </Link>
           </div>
@@ -334,10 +339,10 @@ export default function RepoWikiPage() {
       </header>
 
       {/* Main */}
-      <main className={`flex-1 mx-auto overflow-hidden ${activeView === 'codemap' ? 'w-full px-4' : wikiStructure && !isChatPanelCollapsed ? 'w-full px-4' : 'max-w-[90%] xl:max-w-[1400px]'}`}>
+      <main className={`flex-1 mx-auto overflow-hidden relative z-10 ${activeView === 'codemap' ? 'w-full px-4' : wikiStructure && !isChatPanelCollapsed ? 'w-full px-4' : 'max-w-[90%] xl:max-w-[1400px]'}`}>
         {isLoading ? (
           /* Loading state */
-          <div className="flex flex-col items-center justify-center p-8 bg-[var(--card-bg)] rounded shadow-custom card-azure max-w-2xl mx-auto">
+          <div className="flex flex-col items-center justify-center p-12 glass-surface rounded-3xl shadow-elevated max-w-2xl mx-auto animate-fade-in">
             <div className="relative mb-6">
               <div className="absolute -inset-4 bg-[var(--accent-primary)]/10 rounded-full blur-md animate-pulse"></div>
               <div className="relative flex items-center justify-center">
@@ -350,14 +355,14 @@ export default function RepoWikiPage() {
           </div>
         ) : error ? (
           /* Error / Wiki not available */
-          <div className="bg-[var(--highlight)]/5 border border-[var(--highlight)]/30 rounded-lg p-5 mb-4 shadow-sm max-w-2xl mx-auto">
+          <div className="bg-[var(--warning)]/8 border border-[var(--warning)]/25 rounded-2xl p-6 mb-4 shadow-custom max-w-2xl mx-auto animate-fade-in">
             <div className="flex items-center text-[var(--highlight)] mb-3">
               <FaExclamationTriangle className="mr-2" />
               <span className="font-semibold">{messages.common?.error || 'Error'}</span>
             </div>
             <p className="text-[var(--foreground)] text-sm mb-3">{error}</p>
             <div className="mt-5 flex gap-3">
-              <Link href="/" className="btn-azure px-5 py-2 inline-flex items-center gap-1.5">
+              <Link href="/" className="btn-azure px-6 py-2.5 inline-flex items-center gap-2 rounded-xl">
                 <FaHome className="text-sm" />
                 {messages.repoPage?.backToHome || 'Back to Home'}
               </Link>
@@ -367,13 +372,13 @@ export default function RepoWikiPage() {
           /* Wiki viewer */
           <div className="h-full flex flex-col w-full overflow-hidden">
             {/* Tab switcher */}
-            <div className="flex items-center gap-1 mb-3 border-b border-[var(--border-color)] pb-2">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[var(--border-color)]">
               <button
                 onClick={() => setActiveView('wiki')}
-                className={`px-4 py-1.5 text-sm font-medium rounded-t transition-colors flex items-center gap-1.5 ${
+                className={`px-5 py-2.5 text-sm font-semibold rounded-xl transition-all flex items-center gap-2 ${
                   activeView === 'wiki'
-                    ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] border-b-2 border-[var(--accent-primary)]'
-                    : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                    ? 'bg-gradient-to-r from-[var(--accent-primary)] to-[var(--highlight)] text-white shadow-lg'
+                    : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--accent-primary)]/5 glass-surface'
                 }`}
               >
                 <FaBookOpen className="text-xs" />
@@ -381,16 +386,16 @@ export default function RepoWikiPage() {
               </button>
               <button
                 onClick={() => setActiveView('codemap')}
-                className={`px-4 py-1.5 text-sm font-medium rounded-t transition-colors flex items-center gap-1.5 ${
+                className={`px-5 py-2.5 text-sm font-semibold rounded-xl transition-all flex items-center gap-2 ${
                   activeView === 'codemap'
-                    ? 'bg-[var(--accent-primary)]/10 text-[var(--accent-primary)] border-b-2 border-[var(--accent-primary)]'
-                    : 'text-[var(--muted)] hover:text-[var(--foreground)]'
+                    ? 'bg-gradient-to-r from-[var(--accent-primary)] to-[var(--highlight)] text-white shadow-lg'
+                    : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--accent-primary)]/5 glass-surface'
                 }`}
               >
                 <FaProjectDiagram className="text-xs" />
                 Code Map
                 {codeMapData && (
-                  <span className="text-[10px] px-1 py-0.5 rounded-full bg-[var(--accent-primary)]/20">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/20 font-bold">
                     {codeMapData.metadata.totalFiles}
                   </span>
                 )}
@@ -399,7 +404,7 @@ export default function RepoWikiPage() {
 
             {activeView === 'codemap' ? (
               /* Code Map view */
-              <div className="w-full bg-[var(--card-bg)] rounded shadow-custom card-azure" style={{ height: 'calc(100vh - 180px)' }}>
+              <div className="w-full glass-surface rounded-3xl shadow-elevated" style={{ height: 'calc(100vh - 180px)' }}>
                 {codeMapLoading ? (
                   <div className="flex items-center justify-center h-full">
                     <div className="flex items-center gap-2 text-[var(--muted)]">
@@ -441,9 +446,9 @@ export default function RepoWikiPage() {
             ) : (
             <div className="flex-1 flex flex-col lg:flex-row gap-4 overflow-hidden">
             {/* Wiki Section (left 2/3) */}
-            <div className={`h-full flex flex-col lg:flex-row gap-4 overflow-hidden bg-[var(--card-bg)] rounded shadow-custom card-azure transition-all duration-300 ${isChatPanelCollapsed ? 'w-full' : 'w-full lg:w-2/3'}`}>
+            <div className={`h-full flex flex-col lg:flex-row gap-0 overflow-hidden glass-surface rounded-3xl shadow-elevated transition-all duration-300 ${isChatPanelCollapsed ? 'w-full' : 'w-full lg:w-2/3'}`}>
               {/* Sidebar navigation */}
-              <div className="h-full w-full lg:w-[280px] xl:w-[320px] flex-shrink-0 bg-[var(--background)]/50 rounded-lg rounded-r-none p-5 border-b lg:border-b-0 lg:border-r border-[var(--border-color)] overflow-y-auto">
+              <div className="h-full w-full lg:w-[280px] xl:w-[320px] flex-shrink-0 p-5 border-b lg:border-b-0 lg:border-r border-[var(--border-color)] overflow-y-auto scrollbar-thin" style={{ background: 'var(--gradient-sidebar)' }}>
                 <h3 className="text-lg font-semibold text-[var(--foreground)] mb-3">{wikiStructure.title}</h3>
                 <p className="text-[var(--muted)] text-sm mb-5 leading-relaxed">{wikiStructure.description}</p>
 
@@ -499,7 +504,7 @@ export default function RepoWikiPage() {
                       <button
                         onClick={() => exportWiki('markdown')}
                         disabled={isExporting}
-                        className="btn-azure flex items-center text-xs px-3 py-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="btn-azure flex items-center text-xs px-4 py-3 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <FaDownload className="mr-2" />
                         {messages.repoPage?.exportAsMarkdown || 'Export as Markdown'}
@@ -507,7 +512,7 @@ export default function RepoWikiPage() {
                       <button
                         onClick={() => exportWiki('json')}
                         disabled={isExporting}
-                        className="flex items-center text-xs px-3 py-2 bg-[var(--background)] text-[var(--foreground)] rounded-md hover:bg-[var(--background)]/80 disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--border-color)] transition-colors"
+                        className="flex items-center text-xs px-4 py-3 bg-[var(--card-bg-solid)] text-[var(--foreground)] rounded-xl hover:bg-[var(--accent-primary)]/5 disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--border-color)] transition-all"
                       >
                         <FaFileExport className="mr-2" />
                         {messages.repoPage?.exportAsJson || 'Export as JSON'}
@@ -526,7 +531,7 @@ export default function RepoWikiPage() {
                   </h4>
                   <button
                     onClick={() => { setIsSearchOpen(!isSearchOpen); setTimeout(() => searchInputRef.current?.focus(), 50); }}
-                    className="p-1.5 text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors rounded-md hover:bg-[var(--background)]"
+                    className="p-1.5 text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors rounded-lg hover:bg-[var(--accent-primary)]/10"
                     title="Search pages (Ctrl+K)"
                   >
                     <FaSearch className="text-xs" />
@@ -542,7 +547,7 @@ export default function RepoWikiPage() {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search pages..."
-                      className="w-full px-3 py-1.5 text-xs bg-[var(--background)] text-[var(--foreground)] border border-[var(--border-color)] rounded-md focus:outline-none focus:border-[var(--accent-primary)] placeholder:text-[var(--muted)]"
+                      className="w-full px-4 py-2.5 text-xs bg-[var(--input-bg)] text-[var(--foreground)] border-2 border-[var(--border-color)] rounded-xl focus:outline-none focus:border-[var(--accent-primary)] focus:ring-4 focus:ring-[var(--accent-primary)]/12 placeholder:text-[var(--muted)] transition-all"
                     />
                     {searchResults && searchResults.length > 0 && (
                       <div className="mt-1 max-h-40 overflow-y-auto">
@@ -550,7 +555,7 @@ export default function RepoWikiPage() {
                           <button
                             key={page.id}
                             onClick={() => { setCurrentPageId(page.id); setSearchQuery(''); setIsSearchOpen(false); }}
-                            className="w-full text-left px-3 py-1.5 text-xs text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 rounded truncate"
+                            className="w-full text-left px-3 py-1.5 text-xs text-[var(--foreground)] hover:bg-[var(--accent-primary)]/10 rounded-lg truncate transition-colors"
                           >
                             {page.title}
                           </button>
@@ -589,7 +594,7 @@ export default function RepoWikiPage() {
                       </h3>
                       <button
                         onClick={handleShare}
-                        className="flex-shrink-0 p-2 text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors rounded-md hover:bg-[var(--background)]"
+                        className="flex-shrink-0 p-2 text-[var(--muted)] hover:text-[var(--accent-primary)] transition-colors rounded-lg hover:bg-[var(--accent-primary)]/10"
                         title="Copy link to this page"
                       >
                         <FaLink className="text-sm" />
@@ -622,7 +627,7 @@ export default function RepoWikiPage() {
                             return relatedPage ? (
                               <button
                                 key={relatedId}
-                                className="bg-[var(--accent-primary)]/10 hover:bg-[var(--accent-primary)]/20 text-xs text-[var(--accent-primary)] px-3 py-1.5 rounded-md transition-colors truncate max-w-full border border-[var(--accent-primary)]/20"
+                                className="bg-[var(--accent-primary)]/8 hover:bg-[var(--accent-primary)]/15 text-xs text-[var(--accent-primary)] font-medium px-4 py-2 rounded-xl transition-all truncate max-w-full border border-[var(--accent-primary)]/15 hover:shadow-sm hover:scale-[1.02]"
                                 onClick={() => setCurrentPageId(relatedId)}
                               >
                                 {relatedPage.title}
@@ -651,7 +656,7 @@ export default function RepoWikiPage() {
                 <div className="hidden lg:flex h-full items-start pt-4">
                   <button
                     onClick={() => setIsChatPanelCollapsed(false)}
-                    className="w-10 h-10 rounded-full bg-[var(--accent-primary)] text-white shadow-lg flex items-center justify-center hover:bg-[var(--accent-primary)]/90 transition-all"
+                    className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[var(--accent-primary)] to-[var(--highlight)] text-white shadow-lg flex items-center justify-center hover:shadow-xl transition-all hover:scale-110"
                     aria-label={messages.ask?.title || 'Ask about this repository'}
                     title={messages.ask?.title || 'Ask about this repository'}
                   >
@@ -659,15 +664,15 @@ export default function RepoWikiPage() {
                   </button>
                 </div>
               )}
-              <div className={`h-full bg-[var(--card-bg)] rounded shadow-custom card-azure flex flex-col overflow-hidden ${isChatPanelCollapsed ? 'hidden' : ''}`}>
-                <div className="flex items-center justify-between p-3 border-b border-[var(--border-color)] bg-[var(--background)]/50">
+              <div className={`h-full glass-surface rounded-3xl shadow-elevated flex flex-col overflow-hidden ${isChatPanelCollapsed ? 'hidden' : ''}`}>
+                <div className="flex items-center justify-between p-4 border-b border-[var(--border-color)]">
                   <h3 className="text-sm font-semibold text-[var(--foreground)] flex items-center gap-2">
                     <FaComments className="text-[var(--accent-primary)]" />
                     {messages.ask?.title || 'Ask about this repository'}
                   </h3>
                   <button
                     onClick={() => setIsChatPanelCollapsed(true)}
-                    className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors p-1.5 rounded-md hover:bg-[var(--background)]"
+                    className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors p-1.5 rounded-lg hover:bg-[var(--background)]"
                     aria-label="Collapse chat"
                   >
                     <FaTimes className="text-sm" />
@@ -690,7 +695,7 @@ export default function RepoWikiPage() {
             {isChatPanelCollapsed && (
               <button
                 onClick={() => setIsChatPanelCollapsed(false)}
-                className="lg:hidden fixed bottom-6 right-6 w-14 h-14 rounded-full bg-[var(--accent-primary)] text-white shadow-lg flex items-center justify-center hover:bg-[var(--accent-primary)]/90 transition-all z-50"
+                className="lg:hidden fixed bottom-6 right-6 w-14 h-14 rounded-2xl bg-gradient-to-br from-[var(--accent-primary)] to-[var(--highlight)] text-white shadow-lg flex items-center justify-center hover:shadow-xl transition-all hover:scale-110 z-50"
                 aria-label={messages.ask?.title || 'Ask about this repository'}
               >
                 <FaComments className="text-xl" />
@@ -703,8 +708,8 @@ export default function RepoWikiPage() {
       </main>
 
       {/* Footer */}
-      <footer className={`max-w-[90%] xl:max-w-[1400px] mx-auto mt-8 flex flex-col gap-4 w-full ${!isChatPanelCollapsed && wikiStructure ? 'hidden lg:hidden' : ''}`}>
-        <div className="flex justify-between items-center gap-4 text-[var(--muted)] text-sm h-fit w-full bg-[var(--card-bg)] rounded-lg p-3 shadow-sm border border-[var(--border-color)]">
+      <footer className={`max-w-[90%] xl:max-w-[1400px] mx-auto mt-6 flex flex-col gap-4 w-full relative z-10 ${!isChatPanelCollapsed && wikiStructure ? 'hidden lg:hidden' : ''}`}>
+        <div className="flex justify-between items-center gap-4 text-[var(--muted)] text-sm h-fit w-full glass-surface rounded-2xl p-3">
           <p className="shrink-0 text-xs opacity-70 whitespace-nowrap">
             {messages.footer?.brand || '© Microsoft | Azure'}
           </p>
