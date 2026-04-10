@@ -94,10 +94,10 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl mx-auto w-full overflow-y-auto relative z-10 scrollbar-thin">
-        <div className="min-h-full flex flex-col items-center p-8 pt-10 glass-surface rounded-3xl shadow-elevated animate-fade-in" style={{ animationDelay: '0.1s' }}>
+      <main className="flex-1 min-h-0 max-w-6xl mx-auto w-full relative z-10">
+        <div className="h-full flex flex-col items-center p-8 pt-10 glass-surface rounded-3xl shadow-elevated animate-fade-in" style={{ animationDelay: '0.1s' }}>
           {!projectsLoading && projects.length > 0 ? (
-            <div className="w-full">
+            <div className="w-full flex-1 min-h-0 flex flex-col">
               <div className="flex flex-col items-center w-full max-w-2xl mb-8 mx-auto">
                 <div className="flex flex-col sm:flex-row items-center mb-6 gap-5">
                   <div className="relative">
