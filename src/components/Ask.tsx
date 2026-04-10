@@ -1064,11 +1064,12 @@ const Ask: React.FC<AskProps> = ({
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                  className={`max-w-[85%] rounded-3xl px-5 py-3.5 ${
                     msg.role === 'user'
-                      ? 'bg-[var(--accent-primary)] text-white rounded-br-md'
-                      : 'bg-[var(--card-bg)] border border-[var(--border-color)] rounded-bl-md'
+                      ? 'text-white rounded-br-lg shadow-lg'
+                      : 'glass-surface rounded-bl-lg shadow-custom'
                   }`}
+                  style={msg.role === 'user' ? { background: 'var(--gradient-primary)' } : undefined}
                 >
                   {msg.role === 'user' ? (
                     <div className="text-sm whitespace-pre-wrap">
@@ -1248,7 +1249,7 @@ const Ask: React.FC<AskProps> = ({
                   {/* Download button */}
                   <button
                     onClick={downloadresponse}
-                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 px-3 py-1.5 rounded-full bg-[var(--card-bg)] border border-[var(--border-color)] hover:border-green-500 flex items-center gap-1 transition-colors"
+                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 px-3 py-1.5 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] hover:border-green-500 flex items-center gap-1 transition-all hover:shadow-sm"
                     title="Download response as markdown file"
                   >
                     <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1261,7 +1262,7 @@ const Ask: React.FC<AskProps> = ({
                   <button
                     id="ask-clear-conversation"
                     onClick={clearConversation}
-                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 px-3 py-1.5 rounded-full bg-[var(--card-bg)] border border-[var(--border-color)] hover:border-red-500 transition-colors"
+                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 px-3 py-1.5 rounded-lg bg-[var(--card-bg)] border border-[var(--border-color)] hover:border-red-500 transition-all hover:shadow-sm"
                   >
                     Clear chat
                   </button>
@@ -1333,7 +1334,7 @@ const Ask: React.FC<AskProps> = ({
               }
             }}
             placeholder={messages.ask?.placeholder || 'What would you like to know about this codebase?'}
-            className="block w-full rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] text-[var(--foreground)] px-5 py-3.5 text-base shadow-sm focus:border-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]/30 focus:outline-none transition-all resize-none overflow-y-auto max-h-[200px] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="block w-full rounded-2xl border-2 border-[var(--border-color)] bg-[var(--input-bg)] text-[var(--foreground)] px-5 py-4 text-base shadow-custom focus:border-[var(--accent-primary)] focus:ring-4 focus:ring-[var(--accent-primary)]/15 focus:outline-none transition-all resize-none overflow-y-auto max-h-[200px] disabled:opacity-50 disabled:cursor-not-allowed"
             disabled={isLoading || connectionStatus !== 'connected'}
           />
 
@@ -1345,7 +1346,7 @@ const Ask: React.FC<AskProps> = ({
                 <select
                   value={chatMode}
                   onChange={(e) => setChatMode(e.target.value as 'chat' | 'deepresearch' | 'codetrace')}
-                  className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 text-gray-700 dark:text-gray-300 outline-none focus:border-blue-400 cursor-pointer"
+                  className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-2.5 py-1.5 text-gray-700 dark:text-gray-300 outline-none focus:border-blue-400 cursor-pointer transition-colors"
                 >
                   <option value="chat">💬 Chat</option>
                   <option value="deepresearch">🔬 Deep Research</option>
@@ -1388,11 +1389,12 @@ const Ask: React.FC<AskProps> = ({
               ref={buttonRef}
               type="submit"
               disabled={isLoading || !question.trim() || connectionStatus !== 'connected'}
-              className={`px-4 py-1.5 rounded-md font-medium text-sm ${
+              className={`px-5 py-2.5 rounded-xl font-semibold text-sm ${
                 isLoading || !question.trim() || connectionStatus !== 'connected'
                   ? 'bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)] cursor-not-allowed'
-                  : 'bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-primary)]/90 shadow-sm'
-              } transition-all duration-200 flex items-center gap-1.5`}
+                  : 'text-white hover:shadow-lg'
+              } transition-all duration-200 flex items-center gap-2`}
+              style={!(isLoading || !question.trim() || connectionStatus !== 'connected') ? { background: 'var(--gradient-primary)' } : undefined}
             >
               {isLoading ? (
                 <div className="w-4 h-4 rounded-full border-2 border-t-transparent border-white animate-spin" />

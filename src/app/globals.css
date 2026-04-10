@@ -4,58 +4,83 @@
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 :root {
-  /* Microsoft Azure / Fluent UI color palette - light mode */
-  --background: #f3f2f1; /* Fluent neutral lighter */
-  --foreground: #323130; /* Fluent neutral primary text */
-  --shadow-color: rgba(0, 0, 0, 0.08);
-  --accent-primary: #0078d4; /* Azure Blue - primary brand */
-  --accent-secondary: #deecf9; /* Azure Blue tint 30 */
-  --accent-dark: #005a9e; /* Azure Blue shade 20 */
-  --border-color: #edebe9; /* Fluent neutral border */
-  --card-bg: #ffffff; /* White surface */
-  --highlight: #00bcf2; /* Azure Cyan */
-  --muted: #605e5c; /* Fluent neutral secondary text */
-  --link-color: #0078d4; /* Azure Blue links */
-  --success: #107c10; /* Fluent green */
-  --warning: #ff8c00; /* Fluent warning orange */
-  --danger: #d13438; /* Fluent red */
-  --nav-bg: #f8f8f8; /* Azure portal nav background */
-  --top-bar-bg: #0078d4; /* Azure portal top bar */
+  /* Fluent 2 Copilot — Vibrant modern palette */
+  --background: #f0f4f8;
+  --foreground: #1a1a2e;
+  --shadow-color: rgba(0, 0, 0, 0.06);
+  --accent-primary: #0f6cbd;
+  --accent-secondary: #e8f0fe;
+  --accent-dark: #0d5ba6;
+  --accent-glow: rgba(15, 108, 189, 0.35);
+  --border-color: rgba(0, 0, 0, 0.08);
+  --card-bg: rgba(255, 255, 255, 0.85);
+  --card-bg-solid: #ffffff;
+  --highlight: #0078d4;
+  --muted: #5a6577;
+  --link-color: #0f6cbd;
+  --success: #0e7a0d;
+  --warning: #f7630c;
+  --danger: #c4314b;
+  --nav-bg: rgba(255, 255, 255, 0.6);
+  --top-bar-bg: #0f6cbd;
   --top-bar-text: #ffffff;
+  /* Surface & glass */
+  --surface-glass: rgba(255, 255, 255, 0.55);
+  --surface-glass-border: rgba(255, 255, 255, 0.6);
+  --surface-card: rgba(255, 255, 255, 0.82);
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, #0f6cbd 0%, #2b88d8 40%, #00bcf2 100%);
+  --gradient-hero: linear-gradient(135deg, #e8f0fe 0%, #f0f4f8 50%, #e0ecff 100%);
+  --gradient-mesh: radial-gradient(ellipse at 20% 20%, rgba(15, 108, 189, 0.08) 0%, transparent 50%), radial-gradient(ellipse at 80% 80%, rgba(0, 188, 242, 0.06) 0%, transparent 50%), radial-gradient(ellipse at 50% 50%, rgba(107, 70, 193, 0.04) 0%, transparent 50%);
+  --gradient-sidebar: linear-gradient(180deg, rgba(15, 108, 189, 0.03) 0%, rgba(107, 70, 193, 0.02) 100%);
+  --gradient-subtle: linear-gradient(180deg, rgba(15, 108, 189, 0.04) 0%, transparent 100%);
+  --input-bg: rgba(255, 255, 255, 0.9);
 }
 
 html[data-theme='dark'] {
-  /* Microsoft Azure / Fluent UI color palette - dark mode */
-  --background: #1b1a19; /* Fluent dark background */
-  --foreground: #f3f2f1; /* Fluent light text on dark */
-  --shadow-color: rgba(0, 0, 0, 0.36);
-  --accent-primary: #2b88d8; /* Azure Blue tint for dark */
-  --accent-secondary: #004578; /* Azure Blue shade 30 */
-  --accent-dark: #6cb8f6; /* Lighter blue for contrast */
-  --border-color: #3b3a39; /* Fluent dark border */
-  --card-bg: #252423; /* Fluent dark surface */
-  --highlight: #50e6ff; /* Azure Light Blue */
-  --muted: #a19f9d; /* Fluent dark secondary text */
-  --link-color: #6cb8f6; /* Lighter link for dark */
-  --success: #92c353; /* Fluent green light */
-  --warning: #ffc83d; /* Fluent warning light */
-  --danger: #f1707b; /* Fluent red light */
-  --nav-bg: #292827; /* Dark nav */
-  --top-bar-bg: #1b1a19; /* Dark top bar */
-  --top-bar-text: #f3f2f1;
+  /* Fluent 2 Copilot — Dark mode */
+  --background: #0d1117;
+  --foreground: #e6edf3;
+  --shadow-color: rgba(0, 0, 0, 0.5);
+  --accent-primary: #58a6ff;
+  --accent-secondary: #0d2240;
+  --accent-dark: #79c0ff;
+  --accent-glow: rgba(88, 166, 255, 0.3);
+  --border-color: rgba(255, 255, 255, 0.08);
+  --card-bg: rgba(22, 27, 34, 0.85);
+  --card-bg-solid: #161b22;
+  --highlight: #79c0ff;
+  --muted: #8b949e;
+  --link-color: #58a6ff;
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger: #f85149;
+  --nav-bg: rgba(22, 27, 34, 0.6);
+  --top-bar-bg: #0d1117;
+  --top-bar-text: #e6edf3;
+  /* Surface & glass */
+  --surface-glass: rgba(22, 27, 34, 0.6);
+  --surface-glass-border: rgba(255, 255, 255, 0.06);
+  --surface-card: rgba(22, 27, 34, 0.82);
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, #58a6ff 0%, #79c0ff 40%, #50e6ff 100%);
+  --gradient-hero: linear-gradient(135deg, #0d1117 0%, #0d2240 50%, #0d1117 100%);
+  --gradient-mesh: radial-gradient(ellipse at 20% 20%, rgba(88, 166, 255, 0.08) 0%, transparent 50%), radial-gradient(ellipse at 80% 80%, rgba(80, 230, 255, 0.05) 0%, transparent 50%), radial-gradient(ellipse at 50% 50%, rgba(137, 87, 229, 0.04) 0%, transparent 50%);
+  --gradient-sidebar: linear-gradient(180deg, rgba(88, 166, 255, 0.04) 0%, rgba(137, 87, 229, 0.03) 100%);
+  --gradient-subtle: linear-gradient(180deg, rgba(88, 166, 255, 0.04) 0%, transparent 100%);
+  --input-bg: rgba(22, 27, 34, 0.9);
 }
 
 /* Fix for unreadable <select> options in Chrome's dark mode */
 [data-theme="dark"] select option {
-  background: var(--background);
+  background: var(--card-bg-solid);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  /* Segoe UI first — Microsoft standard font, then system fallbacks */
-  --font-sans: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Noto Sans CJK JP", "Hiragino Sans", Meiryo, sans-serif;
-  --font-mono: "Cascadia Code", "Cascadia Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-sans: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, "Inter", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Noto Sans CJK JP", "Hiragino Sans", Meiryo, sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", "Fira Code", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 body {
@@ -67,151 +92,188 @@ body {
   overflow: hidden;
 }
 
-/* Custom scrollbar styles for project list */
+/* ── Scrollbar ────────────────────────────────────────────── */
 .scrollbar-thin {
   scrollbar-width: thin;
-  scrollbar-color: var(--border-color) transparent;
+  scrollbar-color: rgba(0,0,0,0.15) transparent;
 }
-
-.scrollbar-thin::-webkit-scrollbar {
-  width: 6px;
-}
-
-.scrollbar-thin::-webkit-scrollbar-track {
-  background: transparent;
-}
-
+.scrollbar-thin::-webkit-scrollbar { width: 6px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background-color: var(--border-color);
-  border-radius: 3px;
+  background: rgba(0,0,0,0.15);
+  border-radius: 99px;
 }
-
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-  background-color: var(--muted);
+  background: rgba(0,0,0,0.25);
 }
+html[data-theme='dark'] .scrollbar-thin { scrollbar-color: rgba(255,255,255,0.12) transparent; }
+html[data-theme='dark'] .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); }
+html[data-theme='dark'] .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
-/* Custom shadow styles - Fluent UI depth tokens */
+/* ── Shadows — Soft, elevated, realistic ──────────────────── */
 .shadow-custom {
-  box-shadow: 0 1.6px 3.6px 0 var(--shadow-color), 0 0.3px 0.9px 0 var(--shadow-color);
+  box-shadow:
+    0 1px 2px rgba(0,0,0,0.04),
+    0 4px 12px rgba(0,0,0,0.06);
 }
-
-/* Fluent depth-8 for elevated surfaces */
+.shadow-elevated {
+  box-shadow:
+    0 4px 8px rgba(0,0,0,0.04),
+    0 12px 32px rgba(0,0,0,0.08);
+}
 .shadow-depth-8 {
-  box-shadow: 0 3.2px 7.2px 0 var(--shadow-color), 0 0.6px 1.8px 0 var(--shadow-color);
+  box-shadow:
+    0 4px 8px rgba(0,0,0,0.04),
+    0 12px 32px rgba(0,0,0,0.08);
+}
+.shadow-modal {
+  box-shadow:
+    0 8px 16px rgba(0,0,0,0.06),
+    0 24px 64px rgba(0,0,0,0.12);
+}
+html[data-theme='dark'] .shadow-custom {
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2), 0 4px 12px rgba(0,0,0,0.3);
+}
+html[data-theme='dark'] .shadow-elevated,
+html[data-theme='dark'] .shadow-depth-8 {
+  box-shadow: 0 4px 8px rgba(0,0,0,0.3), 0 12px 32px rgba(0,0,0,0.4);
+}
+html[data-theme='dark'] .shadow-modal {
+  box-shadow: 0 8px 16px rgba(0,0,0,0.4), 0 24px 64px rgba(0,0,0,0.5);
 }
 
-/* Clean surface */
+/* ── Glass Surface — Frosted acrylic ──────────────────────── */
+.glass-surface {
+  background: var(--surface-glass);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  backdrop-filter: blur(24px) saturate(200%);
+  border: 1px solid var(--surface-glass-border);
+}
+
+/* ── Paper — Animated mesh gradient background ────────────── */
 .paper-texture {
   background-color: var(--background);
-  background-image: none;
+  background-image: var(--gradient-mesh);
+  background-attachment: fixed;
 }
-
-/* Dark mode clean surface */
 html[data-theme='dark'] .paper-texture {
-  background-image: none;
+  background-image: var(--gradient-mesh);
 }
 
-/* Azure Portal primary button */
+/* ── Buttons — Gradient + glow ────────────────────────────── */
 .btn-azure, .btn-japanese {
-  background-color: var(--accent-primary);
+  background: var(--gradient-primary);
   color: white;
-  border: 1px solid var(--accent-primary);
-  border-radius: 2px;
-  padding: 6px 20px;
+  border: none;
+  border-radius: 12px;
+  padding: 10px 24px;
   font-weight: 600;
   font-size: 14px;
   line-height: 20px;
-  transition: background-color 0.1s ease, border-color 0.1s ease;
-  position: relative;
   cursor: pointer;
+  position: relative;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 8px var(--accent-glow);
 }
-
 .btn-azure:hover, .btn-japanese:hover {
-  background-color: var(--accent-dark, #005a9e);
-  border-color: var(--accent-dark, #005a9e);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px var(--accent-glow);
+  filter: brightness(1.1);
 }
-
 .btn-azure:active, .btn-japanese:active {
-  background-color: #004578;
-  border-color: #004578;
+  transform: translateY(0);
+  box-shadow: 0 2px 6px var(--accent-glow);
+  filter: brightness(0.95);
 }
-
 .btn-azure:disabled, .btn-japanese:disabled {
-  background-color: #c8c6c4;
-  border-color: #c8c6c4;
+  background: #c8c6c4;
   color: #a19f9d;
   cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+  filter: none;
 }
 
-/* Azure Portal secondary/outline button */
+/* Secondary button — glass pill */
 .btn-azure-secondary {
-  background-color: var(--card-bg);
-  color: var(--foreground);
+  background: var(--surface-glass);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+  color: var(--accent-primary);
   border: 1px solid var(--border-color);
-  border-radius: 2px;
-  padding: 6px 20px;
+  border-radius: 12px;
+  padding: 10px 24px;
   font-weight: 600;
   font-size: 14px;
   line-height: 20px;
-  transition: background-color 0.1s ease;
   cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
-
 .btn-azure-secondary:hover {
-  background-color: var(--nav-bg);
+  border-color: var(--accent-primary);
+  box-shadow: 0 2px 12px rgba(15, 108, 189, 0.12);
+  transform: translateY(-1px);
 }
 
-/* Azure Portal input style */
+/* ── Input — Frosted with focus glow ──────────────────────── */
 .input-azure, .input-japanese {
-  background-color: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 2px;
-  padding: 6px 12px;
+  background: var(--input-bg);
+  border: 1.5px solid var(--border-color);
+  border-radius: 12px;
+  padding: 10px 16px;
   font-size: 14px;
   line-height: 20px;
-  transition: border-color 0.1s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
-
 .input-azure:focus, .input-japanese:focus {
   border-color: var(--accent-primary);
   outline: none;
+  box-shadow: 0 0 0 4px var(--accent-glow);
 }
-
 .input-azure:hover, .input-japanese:hover {
-  border-color: var(--muted);
+  border-color: var(--accent-primary);
 }
 
-/* Azure Portal card style */
+/* ── Card — Glass card with rounded-2xl ───────────────────── */
 .card-azure, .card-japanese {
-  background-color: var(--card-bg);
+  background: var(--surface-card);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid var(--border-color);
-  border-radius: 2px;
+  border-radius: 20px;
   overflow: hidden;
-  transition: box-shadow 0.1s ease;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
-
 .card-azure:hover, .card-japanese:hover {
-  box-shadow: 0 3.2px 7.2px 0 var(--shadow-color), 0 0.6px 1.8px 0 var(--shadow-color);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04);
+  border-color: rgba(15, 108, 189, 0.15);
+}
+html[data-theme='dark'] .card-azure:hover,
+html[data-theme='dark'] .card-japanese:hover {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3), 0 2px 8px rgba(0,0,0,0.2);
+  border-color: rgba(88, 166, 255, 0.12);
 }
 
-/* Azure left-accent indicator for active items */
+/* Active indicator — accent pill left bar */
 .azure-active-indicator {
-  border-left: 2px solid var(--accent-primary);
+  border-left: 3px solid var(--accent-primary);
+  border-radius: 0 4px 4px 0;
 }
 
-/* Azure Portal top bar */
+/* ── Top bar ──────────────────────────────────────────────── */
 .azure-top-bar {
-  background-color: var(--top-bar-bg);
+  background: var(--gradient-primary);
   color: var(--top-bar-text);
-  height: 40px;
+  height: 48px;
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  padding: 0 20px;
   font-size: 13px;
-  font-weight: 400;
+  font-weight: 500;
+  border-radius: 16px;
 }
 
-/* Azure Portal breadcrumb */
+/* Breadcrumbs */
 .azure-breadcrumb {
   display: flex;
   align-items: center;
@@ -219,131 +281,74 @@ html[data-theme='dark'] .paper-texture {
   font-size: 13px;
   color: var(--muted);
 }
-
-.azure-breadcrumb a {
-  color: var(--link-color);
-  text-decoration: none;
-}
-
-.azure-breadcrumb a:hover {
-  text-decoration: underline;
-}
-
-.azure-breadcrumb .separator {
-  color: var(--muted);
-  margin: 0 2px;
-}
+.azure-breadcrumb a { color: var(--link-color); text-decoration: none; }
+.azure-breadcrumb a:hover { text-decoration: underline; }
+.azure-breadcrumb .separator { color: var(--muted); margin: 0 2px; }
 
 /* Line clamp utilities */
-.line-clamp-1 {
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
+.line-clamp-1 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; }
+.line-clamp-2 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.line-clamp-3 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+
+/* ── Animations ───────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(24px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes glow-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.05); }
+}
+.animate-fade-in {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.animate-slide-up {
+  animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+.animate-glow {
+  animation: glow-pulse 3s ease-in-out infinite;
 }
 
-.line-clamp-2 {
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.line-clamp-3 {
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-/* Mermaid diagram styles - Azure color palette */
+/* ── Mermaid diagram — Modern ─────────────────────────────── */
 .mermaid-diagram {
-  /* Prevent text clipping inside nodes */
-  & foreignObject {
-    overflow: visible;
-  }
-  & .nodeLabel {
-    white-space: normal;
-    word-wrap: break-word;
-  }
-  /* Light mode node styles */
+  & foreignObject { overflow: visible; }
+  & .nodeLabel { white-space: normal; word-wrap: break-word; }
   & .node rect, & .node circle, & .node ellipse, & .node polygon, & .node path {
-    fill: var(--card-bg);
-    stroke: var(--accent-primary);
-    stroke-width: 1px;
-  }
-  & .edgePath .path {
+    fill: var(--card-bg-solid);
     stroke: var(--accent-primary);
     stroke-width: 1.5px;
   }
-  & .edgeLabel {
-    background-color: transparent;
-    color: var(--foreground);
-  }
-  & .edgeLabel p {
-    background-color: transparent !important;
-  }
-  & .label {
-    color: var(--foreground);
-  }
-  & .cluster rect {
-    fill: var(--card-bg);
-    stroke: var(--accent-primary);
-    stroke-width: 1px;
-  }
-  /* Sequence diagram */
-  & .actor {
-    fill: var(--card-bg);
-    stroke: var(--accent-primary);
-    stroke-width: 1px;
-  }
-  & text.actor, & .messageText, & .noteText {
-    fill: var(--foreground);
-    stroke: none;
-  }
-  & .messageLine0, & .messageLine1 {
-    stroke: var(--accent-primary);
-  }
-  /* General text */
-  & text {
-    fill: var(--muted) !important;
-  }
-  /* Clickable elements */
-  & .clickable {
-    transition: all 0.2s ease;
-    cursor: pointer;
-  }
-  & .clickable:hover {
-    transform: scale(1.03);
-    filter: brightness(0.95);
-  }
+  & .edgePath .path { stroke: var(--accent-primary); stroke-width: 2px; }
+  & .edgeLabel { background-color: transparent; color: var(--foreground); }
+  & .edgeLabel p { background-color: transparent !important; }
+  & .label { color: var(--foreground); }
+  & .cluster rect { fill: var(--accent-secondary); stroke: var(--accent-primary); stroke-width: 1.5px; }
+  & .actor { fill: var(--card-bg-solid); stroke: var(--accent-primary); stroke-width: 1.5px; }
+  & text.actor, & .messageText, & .noteText { fill: var(--foreground); stroke: none; }
+  & .messageLine0, & .messageLine1 { stroke: var(--accent-primary); }
+  & text { fill: var(--muted) !important; }
+  & .clickable { transition: all 0.2s ease; cursor: pointer; }
+  & .clickable:hover { transform: scale(1.03); filter: brightness(0.95); }
 }
-
-/* Dark mode mermaid overrides */
 html[data-theme='dark'] .mermaid-diagram {
   & .node rect, & .node circle, & .node ellipse, & .node polygon, & .node path,
-  & .cluster rect, & .actor {
-    fill: var(--card-bg);
-    stroke: var(--accent-primary);
-  }
-  & .edgePath .path, & .flowchart-link, & .messageLine0, & .messageLine1 {
-    stroke: var(--accent-primary);
-    stroke-width: 1.5px;
-  }
+  & .cluster rect, & .actor { fill: var(--card-bg-solid); stroke: var(--accent-primary); }
+  & .edgePath .path, & .flowchart-link, & .messageLine0, & .messageLine1 { stroke: var(--accent-primary); stroke-width: 2px; }
   & .edgeLabel, & .label, & text.actor, & .messageText, & .noteText,
-  & #sequenceNumber, & text.sequenceText, & text.loopText, & text.loopText tspan {
-    color: var(--foreground);
-    fill: var(--foreground) !important;
-  }
-  & text {
-    fill: var(--foreground) !important;
-  }
-  /* Text readability enhancement */
+  & #sequenceNumber, & text.sequenceText, & text.loopText, & text.loopText tspan { color: var(--foreground); fill: var(--foreground) !important; }
+  & text { fill: var(--foreground) !important; }
   & .messageText, & text.sequenceText {
-    paint-order: stroke;
-    stroke: var(--background);
-    stroke-width: 2px;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+    paint-order: stroke; stroke: var(--background); stroke-width: 2px; stroke-linecap: round; stroke-linejoin: round;
   }
 }

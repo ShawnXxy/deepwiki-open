@@ -87,21 +87,22 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
       <div key={sectionId} className="mb-2">
         <div className="flex items-center">
           <button
-            className="flex-shrink-0 w-6 flex items-center justify-center rounded hover:bg-[var(--background)]/70 transition-colors"
+            className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[var(--accent-primary)]/10 transition-all"
             onClick={(e) => toggleSection(sectionId, e)}
           >
             {isExpanded ? (
-              <FaChevronDown className="text-xs text-[var(--foreground)]" />
+              <FaChevronDown className="text-[10px] text-[var(--accent-primary)]" />
             ) : (
-              <FaChevronRight className="text-xs text-[var(--foreground)]" />
+              <FaChevronRight className="text-[10px] text-[var(--muted)]" />
             )}
           </button>
           <button
-            className={`flex-1 text-left px-1 py-1.5 rounded-md text-sm font-medium transition-colors ${
+            className={`flex-1 text-left px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
               isOverviewSelected
-                ? 'text-[var(--accent-primary)]'
-                : 'text-[var(--foreground)] hover:bg-[var(--background)]/70'
-            } ${level === 0 ? 'bg-[var(--background)]/50' : ''}`}
+                ? 'text-white shadow-sm'
+                : 'text-[var(--foreground)] hover:bg-[var(--accent-primary)]/8'
+            } ${level === 0 ? '' : ''}`}
+            style={isOverviewSelected ? { background: 'var(--gradient-primary)' } : undefined}
             onClick={() => {
               if (hasOverviewPage) {
                 onPageSelect(sectionId);
@@ -110,12 +111,12 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
               }
             }}
           >
-            <span className="truncate"><span className="text-[var(--muted)] mr-1.5 font-normal">{sectionId}</span>{section.title}</span>
+            <span className="truncate"><span className="text-[var(--muted)] mr-1.5 font-normal text-xs opacity-60">{sectionId}</span>{section.title}</span>
           </button>
         </div>
 
         {isExpanded && (
-          <div className="ml-4 mt-1 space-y-1 pl-2 border-l border-[var(--border-color)]/30">
+          <div className="ml-4 mt-1.5 space-y-1 pl-3 border-l-2 border-[var(--accent-primary)]/20">
             {/* Render child pages (skip the overview page — it's the section header) */}
             {childPages.map(pageId => {
               const page = wikiStructure.pages.find(p => p.id === pageId);
@@ -125,10 +126,10 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
               return (
                 <button
                   key={pageId}
-                  className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors ${
+                  className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-all ${
                     currentPageId === pageId
-                      ? 'bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] border border-[var(--accent-primary)]/30'
-                      : 'text-[var(--foreground)] hover:bg-[var(--background)] border border-transparent'
+                      ? 'bg-[var(--accent-primary)]/12 text-[var(--accent-primary)] font-semibold border border-[var(--accent-primary)]/20 shadow-sm'
+                      : 'text-[var(--foreground)]/80 hover:bg-[var(--accent-primary)]/6 border border-transparent hover:text-[var(--foreground)]'
                   }`}
                   onClick={() => onPageSelect(pageId)}
                 >
@@ -174,18 +175,19 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
         <div className="flex items-center">
           {hasChildren ? (
             <button
-              className="flex-shrink-0 w-6 flex items-center justify-center rounded hover:bg-[var(--background)]/70 transition-colors"
+              className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-lg hover:bg-[var(--accent-primary)]/10 transition-all"
               onClick={(e) => toggleSection(section.id, e)}
             >
-              {isExpanded ? <FaChevronDown className="text-xs" /> : <FaChevronRight className="text-xs" />}
+              {isExpanded ? <FaChevronDown className="text-[10px] text-[var(--accent-primary)]" /> : <FaChevronRight className="text-[10px] text-[var(--muted)]" />}
             </button>
-          ) : <span className="w-6 flex-shrink-0" />}
+          ) : <span className="w-7 flex-shrink-0" />}
           <button
-            className={`flex-1 text-left px-1 py-1 rounded-md text-sm font-medium transition-colors ${
+            className={`flex-1 text-left px-3 py-2 rounded-xl text-sm font-semibold transition-all ${
               isOverviewSelected
-                ? 'text-[var(--accent-primary)]'
-                : 'text-[var(--foreground)] hover:bg-[var(--background)]/70'
+                ? 'text-white shadow-sm'
+                : 'text-[var(--foreground)] hover:bg-[var(--accent-primary)]/8'
             }`}
+            style={isOverviewSelected ? { background: 'var(--gradient-primary)' } : undefined}
             onClick={() => {
               if (hasOverviewPage) {
                 onPageSelect(section.id);
@@ -194,26 +196,26 @@ const WikiTreeView: React.FC<WikiTreeViewProps> = ({
               }
             }}
           >
-            <span className="truncate"><span className="text-[var(--muted)] mr-1.5 font-normal">{section.id}</span>{section.title}</span>
+            <span className="truncate"><span className={`mr-1.5 font-normal text-xs ${isOverviewSelected ? 'opacity-70' : 'text-[var(--muted)] opacity-60'}`}>{section.id}</span>{section.title}</span>
           </button>
         </div>
 
         {isExpanded && (
-          <div className={`ml-4 mt-1 space-y-1 pl-2 border-l border-[var(--border-color)]/30`}>
+          <div className={`ml-4 mt-1.5 space-y-1 pl-3 border-l-2 border-[var(--accent-primary)]/20`}>
             {childPages.map(pageId => {
               const page = wikiStructure.pages.find(p => p.id === pageId);
               if (!page) return null;
               return (
                 <button
                   key={pageId}
-                  className={`w-full text-left px-3 py-1.5 rounded-md text-sm transition-colors ${
+                  className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-all ${
                     currentPageId === pageId
-                      ? 'bg-[var(--accent-primary)]/20 text-[var(--accent-primary)] border border-[var(--accent-primary)]/30'
-                      : 'text-[var(--foreground)] hover:bg-[var(--background)] border border-transparent'
+                      ? 'bg-[var(--accent-primary)]/12 text-[var(--accent-primary)] font-semibold border border-[var(--accent-primary)]/20 shadow-sm'
+                      : 'text-[var(--foreground)]/80 hover:bg-[var(--accent-primary)]/6 border border-transparent hover:text-[var(--foreground)]'
                   }`}
                   onClick={() => onPageSelect(pageId)}
                 >
-                  <span className="truncate"><span className="text-[var(--muted)] mr-1.5 text-xs">{pageId}</span>{page.title}</span>
+                  <span className="truncate"><span className="text-[var(--muted)] mr-1.5 text-xs opacity-60">{pageId}</span>{page.title}</span>
                 </button>
               );
             })}

@@ -183,7 +183,7 @@ export default function ProcessedProjects({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={t('searchPlaceholder')}
-            className="input-azure block w-full pl-4 pr-12 py-2.5 border border-[var(--border-color)] rounded bg-[var(--background)] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:border-[var(--accent-primary)] focus:ring-1 focus:ring-[var(--accent-primary)]"
+            className="input-azure block w-full pl-4 pr-12 py-3 border-2 border-[var(--border-color)] rounded-2xl bg-[var(--input-bg)] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:border-[var(--accent-primary)] focus:ring-4 focus:ring-[var(--accent-primary)]/12 transition-all"
           />
           {searchQuery && (
             <button
@@ -196,25 +196,27 @@ export default function ProcessedProjects({
         </div>
 
         {/* View Toggle */}
-        <div className="flex items-center bg-[var(--background)] border border-[var(--border-color)] rounded-lg p-1">
+        <div className="flex items-center bg-[var(--card-bg-solid)] border border-[var(--border-color)] rounded-2xl p-1.5">
           <button
             onClick={() => setViewMode('card')}
-            className={`p-2 rounded transition-colors ${
+            className={`p-2.5 rounded-xl transition-all ${
               viewMode === 'card'
-                ? 'bg-[var(--accent-primary)] text-white'
-                : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--card-bg)]'
+                ? 'text-white shadow-lg'
+                : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--accent-primary)]/5'
             }`}
+            style={viewMode === 'card' ? { background: 'var(--gradient-primary)' } : undefined}
             title="Card View"
           >
             <FaTh className="h-4 w-4" />
           </button>
           <button
             onClick={() => setViewMode('list')}
-            className={`p-2 rounded transition-colors ${
+            className={`p-2.5 rounded-xl transition-all ${
               viewMode === 'list'
-                ? 'bg-[var(--accent-primary)] text-white'
-                : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--card-bg)]'
+                ? 'text-white shadow-lg'
+                : 'text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--accent-primary)]/5'
             }`}
+            style={viewMode === 'list' ? { background: 'var(--gradient-primary)' } : undefined}
             title="List View"
           >
             <FaList className="h-4 w-4" />
@@ -230,7 +232,7 @@ export default function ProcessedProjects({
           <div className={viewMode === 'card' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4' : 'space-y-2'}>
             {filteredProjects.map((project) => (
             viewMode === 'card' ? (
-              <div key={project.id} className="relative p-4 border border-[var(--border-color)] rounded-lg bg-[var(--card-bg)] shadow-sm hover:shadow-md transition-all duration-200 hover:scale-[1.02]">
+              <div key={project.id} className="relative p-5 border border-[var(--border-color)] rounded-2xl bg-[var(--card-bg)] shadow-custom hover:shadow-elevated transition-all duration-300 hover:scale-[1.02] hover:border-[var(--accent-primary)]/20 group">
                 {/* Delete button hidden - users cannot remove existing wikis */}
                 <Link
                   href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}${project.branch ? `&branch=${project.branch}` : ''}`}
@@ -265,7 +267,7 @@ export default function ProcessedProjects({
                 </Link>
               </div>
             ) : (
-              <div key={project.id} className="relative p-3 border border-[var(--border-color)] rounded-lg bg-[var(--card-bg)] hover:bg-[var(--background)] transition-colors">
+              <div key={project.id} className="relative p-4 border border-[var(--border-color)] rounded-2xl bg-[var(--card-bg)] hover:bg-[var(--accent-primary)]/5 transition-all hover:border-[var(--accent-primary)]/15">
                 {/* Delete button hidden - users cannot remove existing wikis */}
                 <Link
                   href={`/${project.owner}/${project.repo}?type=${project.repo_type}&language=${project.language}&comprehensive=${project.comprehensive}${project.branch ? `&branch=${project.branch}` : ''}`}

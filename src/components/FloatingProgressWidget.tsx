@@ -55,9 +55,9 @@ export default function FloatingProgressWidget() {
   };
 
   return (
-    <div className="fixed bottom-6 left-6 z-50 w-80 bg-[var(--card-bg)] rounded-lg shadow-2xl border-2 border-[var(--accent-primary)]/30 overflow-hidden">
+    <div className="fixed bottom-6 left-6 z-50 w-80 glass-surface rounded-3xl shadow-elevated overflow-hidden animate-slide-up">
       {/* Header */}
-      <div className="bg-[var(--accent-primary)]/10 px-4 py-3 flex items-center justify-between border-b border-[var(--border-color)]">
+      <div className="px-5 py-4 flex items-center justify-between border-b border-[var(--border-color)]" style={{ background: 'var(--gradient-sidebar)' }}>
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {progress.isGenerating && (
             <FaSpinner className="text-[var(--accent-primary)] animate-spin flex-shrink-0" />
@@ -69,7 +69,7 @@ export default function FloatingProgressWidget() {
         <div className="flex items-center gap-2 flex-shrink-0">
           <button
             onClick={() => setIsExpanded(!isExpanded)}
-            className="p-1 hover:bg-[var(--background)]/50 rounded transition-colors"
+            className="p-1 hover:bg-[var(--accent-primary)]/10 rounded-lg transition-colors"
             aria-label={isExpanded ? 'Collapse' : 'Expand'}
             title={isExpanded ? 'Collapse' : 'Expand'}
           >
@@ -101,10 +101,10 @@ export default function FloatingProgressWidget() {
 
           {/* Progress Bar */}
           <div>
-            <div className="bg-[var(--background)]/50 rounded-full h-2 overflow-hidden border border-[var(--border-color)]">
+            <div className="bg-[var(--background)]/50 rounded-full h-3 overflow-hidden">
               <div
-                className="bg-[var(--accent-primary)] h-2 rounded-full transition-all duration-300"
-                style={{ width: `${Math.max(5, progressPercentage)}%` }}
+                className="h-3 rounded-full transition-all duration-500"
+                style={{ width: `${Math.max(5, progressPercentage)}%`, background: 'var(--gradient-primary)' }}
               />
             </div>
             <div className="mt-1 flex justify-between text-xs text-[var(--muted)]">
@@ -124,7 +124,7 @@ export default function FloatingProgressWidget() {
               <div className="flex gap-2 pt-2">
                 <button
                   onClick={handleRestore}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-[var(--accent-primary)] text-white rounded-md hover:bg-[var(--highlight)] transition-colors font-medium text-sm"
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-white rounded-2xl transition-all font-semibold text-sm hover:shadow-lg hover:scale-[1.02]"
                 >
                   <FaPlay className="text-xs" />
                   {messages.wikiProgress?.resume || 'Resume Generation'}
