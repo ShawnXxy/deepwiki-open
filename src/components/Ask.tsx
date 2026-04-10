@@ -1333,8 +1333,8 @@ const Ask: React.FC<AskProps> = ({
               }
             }}
             placeholder={messages.ask?.placeholder || 'What would you like to know about this codebase?'}
-            className="block w-full rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] text-[var(--foreground)] px-5 py-3.5 text-base shadow-sm focus:border-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]/30 focus:outline-none transition-all resize-none overflow-y-auto max-h-[200px]"
-            disabled={isLoading}
+            className="block w-full rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] text-[var(--foreground)] px-5 py-3.5 text-base shadow-sm focus:border-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]/30 focus:outline-none transition-all resize-none overflow-y-auto max-h-[200px] disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isLoading || connectionStatus !== 'connected'}
           />
 
           {/* Chat Mode Selector + Ask Button */}
@@ -1387,9 +1387,9 @@ const Ask: React.FC<AskProps> = ({
             <button
               ref={buttonRef}
               type="submit"
-              disabled={isLoading || !question.trim()}
+              disabled={isLoading || !question.trim() || connectionStatus !== 'connected'}
               className={`px-4 py-1.5 rounded-md font-medium text-sm ${
-                isLoading || !question.trim()
+                isLoading || !question.trim() || connectionStatus !== 'connected'
                   ? 'bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)] cursor-not-allowed'
                   : 'bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-primary)]/90 shadow-sm'
               } transition-all duration-200 flex items-center gap-1.5`}
