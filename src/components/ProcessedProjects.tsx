@@ -162,7 +162,7 @@ export default function ProcessedProjects({
   };
 
   return (
-    <div className={`${className}`}>
+    <div className={`flex flex-col flex-1 min-h-0 ${className}`}>
       {showHeader && (
         <header className="mb-6">
           <div className="flex items-center justify-between">
@@ -228,7 +228,7 @@ export default function ProcessedProjects({
       {error && <p className="text-[var(--highlight)]">{t('errorLoading')} {error}</p>}
 
       {!isLoading && !error && filteredProjects.length > 0 && (
-        <div className="max-h-[400px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-[var(--border-color)] scrollbar-track-transparent">
+        <div className="flex-1 min-h-0 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-[var(--border-color)] scrollbar-track-transparent">
           <div className={viewMode === 'card' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4' : 'space-y-2'}>
             {filteredProjects.map((project) => (
             viewMode === 'card' ? (
