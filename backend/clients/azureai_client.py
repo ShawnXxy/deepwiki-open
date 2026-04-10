@@ -3,6 +3,7 @@
 import os
 import time
 import re
+import uuid
 import asyncio
 from typing import (
     Dict,
@@ -79,23 +80,32 @@ def _extract_request_id(error_or_response) -> str:
     """
     headers = None
     try:
-        # Error objects: e.response.headers
+        # Error objects: e.response.headers (APIStatusError subclasses)
         if hasattr(error_or_response, 'response') and error_or_response.response is not None:
             resp = error_or_response.response
             if hasattr(resp, 'headers'):
                 headers = resp.headers
-        # Response objects: response._response.headers
-        elif hasattr(error_or_response, '_response'):
-            if hasattr(error_or_response._response, 'headers'):
-                headers = error_or_response._response.headers
     except Exception:
         pass
 
     if headers:
-        return (headers.get('apim-request-id')
-                or headers.get('x-ms-client-request-id')
-                or headers.get('x-request-id')
-                or 'unknown')
+        req_id = (headers.get('apim-request-id')
+                  or headers.get('x-ms-client-request-id')
+                  or headers.get('x-request-id'))
+        if req_id:
+            return req_id
+
+    # OpenAI SDK parsed responses (ChatCompletion, CreateEmbeddingResponse)
+    # store the x-request-id header value in _request_id during deserialization
+    sdk_req_id = getattr(error_or_response, '_request_id', None)
+    if sdk_req_id:
+        return sdk_req_id
+
+    # Fallback: client-generated request ID attached by call()/acall()
+    # This covers APITimeoutError / APIConnectionError where no response exists
+    client_id = getattr(error_or_response, '_client_request_id', None)
+    if client_id:
+        return f"client:{client_id}"
     return 'unknown'
 
 
@@ -243,10 +253,11 @@ def azure_openai_retry_with_delay(func):
                 else:
                     raise
             except APIConnectionError as e:
+                req_id = _extract_request_id(e)
                 log.error(_mask_secrets(
-                    f"Connection error to Azure OpenAI: {e}. "
+                    f"Connection error to Azure OpenAI (req_id={req_id}): {e}. "
                     f"Cause: {type(e.__cause__).__name__}: {e.__cause__}"
-                    if e.__cause__ else f"Connection error: {e}"
+                    if e.__cause__ else f"Connection error (req_id={req_id}): {e}"
                 ))
                 raise
         
@@ -320,10 +331,11 @@ def azure_openai_async_retry_with_delay(func):
                 else:
                     raise
             except APIConnectionError as e:
+                req_id = _extract_request_id(e)
                 log.error(_mask_secrets(
-                    f"Async connection error to Azure OpenAI: {e}. "
+                    f"Async connection error to Azure OpenAI (req_id={req_id}): {e}. "
                     f"Cause: {type(e.__cause__).__name__}: {e.__cause__}"
-                    if e.__cause__ else f"Async connection error: {e}"
+                    if e.__cause__ else f"Async connection error (req_id={req_id}): {e}"
                 ))
                 raise
         
@@ -717,7 +729,7 @@ class AzureAIClient(ModelClient):
                     input_str = match.group(2)
 
                 else:
-                    print("No match found.")
+                    log.debug("No regex match for system/user prompt tags in input.")
                 if system_prompt and input_str:
                     messages.append({"role": "system", "content": system_prompt})
                     messages.append({"role": "user", "content": input_str})
@@ -734,6 +746,12 @@ class AzureAIClient(ModelClient):
         """
         kwargs is the combined input and model_kwargs.  Support streaming call.
         """
+        # Generate a client-side request ID so timeouts/connection errors
+        # can still be correlated with Azure APIM server-side logs.
+        client_req_id = str(uuid.uuid4())
+        api_kwargs.setdefault('extra_headers', {})
+        api_kwargs['extra_headers']['x-ms-client-request-id'] = client_req_id
+
         # Log api_kwargs summary without full message/input content
         try:
             debug_kwargs = {}
@@ -745,19 +763,22 @@ class AzureAIClient(ModelClient):
                         debug_kwargs[k] = f"[{len(v)} texts]"
                     else:
                         debug_kwargs[k] = f"[{len(str(v))} chars]"
+                elif k == 'extra_headers':
+                    continue
                 else:
                     debug_kwargs[k] = v
-            log.debug(f"api_kwargs: {debug_kwargs}")
+            log.debug(f"api_kwargs: {debug_kwargs} (client_req_id={client_req_id})")
         except Exception as e:
             log.debug(f"api_kwargs logging failed: {str(e)}")
         
         if model_type == ModelType.EMBEDDER:
             try:
                 result = self.sync_client.embeddings.create(**api_kwargs)
-                # Use response object's built-in ID for logging
-                log.debug("Embedding call succeeded")
+                req_id = _extract_request_id(result)
+                log.debug(f"Embedding call succeeded (req_id={req_id})")
                 return result
             except Exception as e:
+                e._client_request_id = client_req_id
                 req_id = _extract_request_id(e)
                 log.critical(
                     _mask_secrets(f"CRITICAL: Azure Embedding Failed (req_id={req_id}): {e}")
@@ -765,13 +786,13 @@ class AzureAIClient(ModelClient):
                 raise e
         elif model_type == ModelType.LLM:
             if "stream" in api_kwargs and api_kwargs.get("stream", False):
-                log.debug("streaming call")
+                log.debug(f"streaming call (client_req_id={client_req_id})")
                 self.chat_completion_parser = handle_streaming_response
                 return self.sync_client.chat.completions.create(**api_kwargs)
             result = self.sync_client.chat.completions.create(**api_kwargs)
-            # ChatCompletion.id is the OpenAI request ID (e.g. "chatcmpl-...")
+            req_id = _extract_request_id(result)
             completion_id = getattr(result, 'id', 'unknown')
-            log.debug(f"LLM call succeeded (completion_id={completion_id})")
+            log.debug(f"LLM call succeeded (completion_id={completion_id}, req_id={req_id})")
             return result
         else:
             raise ValueError(f"model_type {model_type} is not supported")
@@ -785,12 +806,19 @@ class AzureAIClient(ModelClient):
         if self.async_client is None:
             self.async_client = self.init_async_client()
             log.info(f"Async client initialized: endpoint={self._azure_endpoint}")
+
+        # Generate a client-side request ID for correlation
+        client_req_id = str(uuid.uuid4())
+        api_kwargs.setdefault('extra_headers', {})
+        api_kwargs['extra_headers']['x-ms-client-request-id'] = client_req_id
+
         if model_type == ModelType.EMBEDDER:
             return await self.async_client.embeddings.create(**api_kwargs)
         elif model_type == ModelType.LLM:
-            debug_kwargs = {k: v for k, v in api_kwargs.items() if k != 'messages'}
+            debug_kwargs = {k: v for k, v in api_kwargs.items()
+                           if k not in ('messages', 'extra_headers')}
             debug_kwargs['messages'] = f"[{len(api_kwargs.get('messages', []))} messages]"
-            log.debug(f"LLM async api_kwargs: {debug_kwargs}")
+            log.debug(f"LLM async api_kwargs: {debug_kwargs} (client_req_id={client_req_id})")
             return await self.async_client.chat.completions.create(
                 **api_kwargs
             )

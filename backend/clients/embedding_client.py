@@ -143,7 +143,7 @@ class SafeEmbedder:
             if token_count > SAFE_EMBEDDING_TOKENS:
                 # Split into chunks instead of truncating
                 chunks = split_into_chunks(text, SAFE_EMBEDDING_TOKENS, overlap=200)
-                logger.info(
+                logger.debug(
                     f"Text {i} has {token_count} tokens, split into {len(chunks)} chunks"
                 )
                 for chunk in chunks:

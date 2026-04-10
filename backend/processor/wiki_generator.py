@@ -282,15 +282,12 @@ def generate_wiki(
     _, language_name = get_language_info(language)
 
     # Step 1: Build file tree + read README
-    print(f"\n{'='*60}")
-    print(f"GENERATING WIKI: {owner}/{repo} ({branch})")
-    print(f"{'='*60}")
+    logger.info(f"GENERATING WIKI: {owner}/{repo} ({branch})")
 
     file_tree = build_file_tree(repo_path)
     readme = read_readme(repo_path)
     file_count = len(file_tree.splitlines())
-    print(f"  File tree: {file_count} entries")
-    print(f"  README: {len(readme)} chars")
+    logger.info(f"File tree: {file_count} entries, README: {len(readme)} chars")
 
     # Step 2: Get LLM client
     from backend.config import get_azure_ai_client
@@ -298,7 +295,7 @@ def generate_wiki(
     deployment = get_azure_deployment_name(task='reasoning')
 
     # Step 3: Generate wiki structure via LLM
-    print("\n--- Generating wiki structure ---")
+    logger.info("Generating wiki structure")
 
     structure_prompt = _build_structure_prompt(
         file_tree=file_tree, readme=readme,
@@ -330,10 +327,10 @@ def generate_wiki(
     # Release large strings — no longer needed after parsing
     del structure_prompt, structure_xml
     gc.collect()
-    print(f"  Title: {title}")
-    print(f"  Pages: {len(pages_data)}")
-    print(f"  Sections: {len(sections_data)}")
-    print(f"  Root sections: {root_sections}")
+    logger.info(
+        f"Structure: title={title}, pages={len(pages_data)}, "
+        f"sections={len(sections_data)}, root_sections={root_sections}"
+    )
 
     # Build page catalog for cross-page links
     page_catalog = format_page_catalog(
@@ -341,7 +338,7 @@ def generate_wiki(
     )
 
     # Step 4: Generate each page via LLM + retrieval
-    print(f"\n--- Generating {len(pages_data)} pages ---")
+    logger.info(f"Generating {len(pages_data)} pages")
     generated_pages: Dict[str, WikiPage] = {}
     wiki_top_k = 40  # Same as current system
 
@@ -349,8 +346,6 @@ def generate_wiki(
         page_id = page_data['id']
         page_title = page_data['title']
         page_file_paths = page_data.get('filePaths', [])
-
-        print(f"  [{i}/{len(pages_data)}] {page_id}: {page_title}...", end='')
 
         # RAG retrieval with file-path priority
         try:
@@ -417,7 +412,10 @@ def generate_wiki(
             importance=page_data.get('importance', 'medium'),
             relatedPages=page_data.get('relatedPages', []),
         )
-        print(f" ✓ ({len(content)} chars)")
+        logger.info(
+            f"[{i}/{len(pages_data)}] {page_id}: {page_title} "
+            f"({len(content)} chars)"
+        )
 
     # Step 5: Assemble WikiCacheData
     wiki_pages_for_structure = [
@@ -462,11 +460,10 @@ def generate_wiki(
         indexed_at=datetime.now(timezone.utc).isoformat(),
     )
 
-    print(f"\n{'='*60}")
-    print("✓ Wiki generation complete")
-    print(f"  Title: {title}")
-    print(f"  Pages: {len(generated_pages)}")
-    print(f"  Commit: {commit_hash[:7] if commit_hash else 'N/A'}")
-    print(f"{'='*60}\n")
+    logger.info(
+        f"Wiki generation complete: title={title}, "
+        f"pages={len(generated_pages)}, "
+        f"commit={commit_hash[:7] if commit_hash else 'N/A'}"
+    )
 
     return cache_data

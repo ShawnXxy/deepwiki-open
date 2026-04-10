@@ -266,6 +266,7 @@ class VectorStorage:
         os.makedirs(local_base, exist_ok=True)
         
         chunks_saved = 0
+        save_errors: list = []  # accumulate errors for summary
         
         for source_file, doc_list in docs_by_file.items():
             file_total_chunks = len(doc_list)
@@ -293,8 +294,18 @@ class VectorStorage:
                         progress_callback(chunks_saved, total_chunks)
                         
                 except Exception as e:
-                    logger.error(f"[Vec] Failed to save {json_path}: {e}")
-                    return False
+                    if len(save_errors) < 3:
+                        save_errors.append(f"{json_path}: {e}")
+                    else:
+                        save_errors.append(None)  # count only
+        
+        if save_errors:
+            real_errors = [e for e in save_errors if e is not None]
+            logger.error(
+                f"[Vec] Failed to save {len(save_errors)} chunks locally "
+                f"(first: {real_errors[0] if real_errors else 'N/A'})"
+            )
+            return False
         
         logger.info(f"[Vec] Saved {chunks_saved} chunk files to local storage")
         return True
@@ -313,6 +324,7 @@ class VectorStorage:
             return False
         
         chunks_saved = 0
+        save_errors: list = []  # accumulate errors for summary
         
         for source_file, doc_list in docs_by_file.items():
             file_total_chunks = len(doc_list)
@@ -330,8 +342,11 @@ class VectorStorage:
                 
                 try:
                     if not blob_client.upload_text(blob_path, json_content):
-                        logger.error(f"[Vec] Failed to upload to blob: {blob_path}")
-                        return False
+                        if len(save_errors) < 3:
+                            save_errors.append(f"upload failed: {blob_path}")
+                        else:
+                            save_errors.append(None)
+                        continue
                     
                     chunks_saved += 1
                     
@@ -339,8 +354,18 @@ class VectorStorage:
                         progress_callback(chunks_saved, total_chunks)
                         
                 except Exception as e:
-                    logger.error(f"[Vec] Failed to save to blob {blob_path}: {e}")
-                    return False
+                    if len(save_errors) < 3:
+                        save_errors.append(f"{blob_path}: {e}")
+                    else:
+                        save_errors.append(None)
+        
+        if save_errors:
+            real_errors = [e for e in save_errors if e is not None]
+            logger.error(
+                f"[Vec] Failed to save {len(save_errors)} chunks to blob "
+                f"(first: {real_errors[0] if real_errors else 'N/A'})"
+            )
+            return False
         
         logger.info(f"[Vec] Saved {chunks_saved} chunk files to blob storage")
         return True
@@ -383,8 +408,8 @@ class VectorStorage:
             else:
                 with open(json_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
-        except Exception as e:
-            logger.error(f"[Vec] Failed to load {json_path}: {e}")
+        except Exception:
+            # Errors are counted by the caller; per-file logging is too noisy
             return None
 
     def _load_from_local(
@@ -427,7 +452,12 @@ class VectorStorage:
             if chunk_data is not None:
                 documents.append(self._dict_to_document(chunk_data))
 
+        failed = total - len(documents)
         elapsed = time.time() - load_start
+        if failed > 0:
+            logger.warning(
+                f"[Vec] {failed}/{total} chunk files failed to load from local storage"
+            )
         logger.info(
             f"[Vec] Loaded {len(documents)}/{total} chunks from local storage "
             f"in {elapsed:.1f}s ({workers} workers)"
@@ -471,8 +501,9 @@ class VectorStorage:
                     if _USE_ORJSON:
                         return _json_fast.loads(content.encode('utf-8') if isinstance(content, str) else content)
                     return json.loads(content)
-            except Exception as e:
-                logger.error(f"[Vec] Failed to load blob {blob_name}: {e}")
+            except Exception:
+                # Errors are counted by the caller; per-blob logging is too noisy
+                pass
             return None
 
         # Parallel download: network-bound, more workers help
@@ -485,7 +516,12 @@ class VectorStorage:
             if chunk_data is not None:
                 documents.append(self._dict_to_document(chunk_data))
 
+        failed = total - len(documents)
         elapsed = time.time() - load_start
+        if failed > 0:
+            logger.warning(
+                f"[Vec] {failed}/{total} chunk files failed to load from blob storage"
+            )
         logger.info(
             f"[Vec] Loaded {len(documents)}/{total} chunks from blob storage "
             f"in {elapsed:.1f}s ({workers} workers)"

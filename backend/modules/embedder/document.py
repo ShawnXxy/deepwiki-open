@@ -485,6 +485,8 @@ def transform_documents_and_save_as_json(
     total_chunks = 0
     all_embedded_docs: List[Document] = []
     pipeline_start = time.time()
+    _read_errors: List[str] = []  # accumulated per-file read errors
+    _embed_warnings: List[str] = []  # accumulated embed batch warnings
 
     total_file_batches = (
         (total_files + FILE_BATCH_SIZE - 1) // FILE_BATCH_SIZE
@@ -536,7 +538,7 @@ def transform_documents_and_save_as_json(
                 )
                 batch_docs.append(doc)
             except Exception as e:
-                logger.error(f"[BE] Error reading {full_path}: {e}")
+                _read_errors.append(f"{full_path}: {e}")
 
         # --- Split into enriched chunks ---
         batch_chunks = []
@@ -589,9 +591,8 @@ def transform_documents_and_save_as_json(
             ]
 
             if not batch_transformed:
-                logger.warning(
-                    f"[Vec] File batch {fb_idx + 1}, embed batch "
-                    f"{eb_idx + 1}: no documents after embedding"
+                _embed_warnings.append(
+                    f"file_batch={fb_idx + 1}, embed_batch={eb_idx + 1}"
                 )
                 continue
 
@@ -623,7 +624,7 @@ def transform_documents_and_save_as_json(
         gc.collect()
 
         if total_file_batches > 1:
-            logger.info(
+            logger.debug(
                 f"[Vec] File batch {fb_idx + 1}/"
                 f"{total_file_batches}: {files_read}/{total_files} "
                 f"files, {chunks_saved}/{total_chunks} chunks saved"
@@ -632,6 +633,18 @@ def transform_documents_and_save_as_json(
     # Release file_infos
     del file_infos
     gc.collect()
+
+    # Log accumulated errors/warnings from the pipeline
+    if _read_errors:
+        logger.error(
+            f"[Vec] {len(_read_errors)} file read errors "
+            f"(first: {_read_errors[0]})"
+        )
+    if _embed_warnings:
+        logger.warning(
+            f"[Vec] {len(_embed_warnings)} embed batches produced "
+            f"no documents after embedding"
+        )
 
     pipeline_elapsed = time.time() - pipeline_start
     logger.info(

@@ -3,8 +3,14 @@
     "excluded_dirs": [
       ".git",
       ".github",
+      ".githooks",
       ".copilot",
-      ".vscode"
+      ".vscode",
+      ".azuredevops",
+      ".config",
+      ".pipelines",
+      ".devcontainer",
+      ".cargo"
     ],
     "excluded_files": [
       "*.txt",

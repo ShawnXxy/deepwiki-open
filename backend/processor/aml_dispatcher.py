@@ -67,13 +67,10 @@ def main():
     from backend.processor.code_processor import _extract_owner_repo
     owner, repo = _extract_owner_repo(args.repo)
 
-    print(f"\n{'='*60}")
-    print("DeepWiki AML Dispatcher")
-    print(f"{'='*60}")
-    print(f"  Repo:   {args.repo}")
-    print(f"  Branch: {args.branch}")
-    print(f"  Owner:  {owner}")
-    print(f"  Repo:   {repo}")
+    logger.info(
+        f"DeepWiki AML Dispatcher: repo={args.repo}, branch={args.branch}, "
+        f"owner={owner}, repo={repo}"
+    )
 
     # Step 1: Copy config to .cloud/ with Azure services force-enabled
     from backend.processor.cloud_setup import write_cloud_config
@@ -85,7 +82,6 @@ def main():
 
     # Step 3: Setup AML resources (compute, AI Search, pipeline, image)
     from backend.processor.cloud_setup import setup_cloud_resources
-    print("\n--- Setting up cloud resources ---")
     logger.info("Starting cloud resource setup...")
     resources = setup_cloud_resources(
         repo_url=args.repo,
@@ -93,14 +89,7 @@ def main():
         owner=owner,
         repo=repo,
     )
-    print(f"  Resources: {resources}")
-
-    print(f"\n{'='*60}")
-    print("Cloud setup complete")
-    print("  Pipeline schedule created — runs automatically.")
-    print("  Inside AML, pipeline runs: code_processor --mode cloud")
-    print("  Monitor runs in Azure ML Studio.")
-    print(f"{'='*60}\n")
+    logger.info(f"Cloud setup complete: resources={resources}")
 
 
 if __name__ == '__main__':

@@ -67,7 +67,7 @@ def write_cloud_config() -> None:
             shutil.copy2(src, dst)
             logger.info(f"Copied config: {dst}")
 
-    print(f"  ✓ Cloud config written to {cloud_dir}")
+    logger.info(f"Cloud config written to {cloud_dir}")
 
 
 def write_docker_config() -> None:
@@ -102,7 +102,7 @@ def write_docker_config() -> None:
             shutil.copy2(src, dst)
             logger.info(f"Copied config: {dst}")
 
-    print(f"  ✓ Docker config written to {local_dir}")
+    logger.info(f"Docker config written to {local_dir}")
 
 
 def _get_aml_pipeline_config() -> dict:
@@ -185,38 +185,38 @@ def setup_cloud_resources(
     if is_search_configured():
         search_config = get_search_config()
         index_name = get_index_name(owner, repo, branch)
-        print(f"\n--- Setting up AI Search: {index_name} ---")
+        logger.info(f"Setting up AI Search: {index_name}")
 
         # Optionally recreate (delete first) on initial run
         if search_config.recreate_index:
-            print("  Recreating index (recreate_index=true)...")
+            logger.info("Recreating index (recreate_index=true)")
             delete_indexer(index_name)
             delete_index(index_name)
 
         create_or_update_index(index_name)
-        print(f"  ✓ Index ready: {index_name}")
+        logger.info(f"Index ready: {index_name}")
 
         ds_name = create_data_source(index_name, repo_name, branch)
-        print(f"  ✓ Data source ready: {ds_name}")
+        logger.info(f"Data source ready: {ds_name}")
 
         indexer_name = create_indexer(
             index_name, ds_name,
             interval=search_config.indexer_interval,
         )
-        print(f"  ✓ Indexer ready: {indexer_name} "
+        logger.info(f"Indexer ready: {indexer_name} "
               f"(schedule={search_config.indexer_interval})")
 
         result['search_index'] = index_name
         result['search_indexer'] = indexer_name
     else:
-        print("  ⊘ AI Search not configured (skipping)")
+        logger.info("AI Search not configured (skipping)")
 
     # --- AML pipeline ---
     aml_config = get_aml_config()
     if aml_config and aml_config.enabled:
         pipeline_config = _get_aml_pipeline_config()
         name = _pipeline_name(owner, repo, branch)
-        print(f"\n--- Setting up AML pipeline: {name} ---")
+        logger.info(f"Setting up AML pipeline: {name}")
 
         try:
             ml_client = _get_ml_client()
@@ -233,13 +233,12 @@ def setup_cloud_resources(
                 owner, repo, pipeline_config,
             )
             result['aml_pipeline'] = name
-            print(f"  ✓ Pipeline ready: {name}")
+            logger.info(f"Pipeline ready: {name}")
         except Exception as e:
             logger.error(f"AML setup failed: {e}")
-            print(f"  ✗ AML setup failed: {e}")
             raise
     else:
-        print("  ⊘ Azure ML not configured (skipping)")
+        logger.info("Azure ML not configured (skipping)")
 
     return result
 
@@ -259,7 +258,7 @@ def _ensure_environment(ml_client, config: dict) -> None:
             f"Dockerfile.processor not found at {dockerfile}, "
             f"skipping environment creation"
         )
-        print("  ⊘ Dockerfile.processor not found, skipping environment")
+
         return
 
     env = Environment(
@@ -272,7 +271,7 @@ def _ensure_environment(ml_client, config: dict) -> None:
     )
 
     ml_client.environments.create_or_update(env)
-    print(f"  ✓ Environment created/updated: {env_name}")
+    logger.info(f"Environment created/updated: {env_name}")
 
 
 def _ensure_compute(ml_client, config: dict) -> None:
@@ -312,7 +311,7 @@ def _ensure_compute(ml_client, config: dict) -> None:
         ),
     )
     ml_client.compute.begin_create_or_update(compute).result()
-    print(f"  ✓ Compute created/updated: {compute_name} "
+    logger.info(f"Compute created/updated: {compute_name} "
           f"(identity: {infra.managed_identity.name})")
 
 
@@ -405,7 +404,6 @@ def _create_or_update_pipeline(
     ml_client.schedules.begin_create_or_update(schedule).result()
     logger.info(f"Created/updated schedule: {name} (every {interval_hours}h)")
     # RecurrenceTrigger fires immediately on creation — no explicit first run needed
-    print(f"  ✓ Schedule {'updated' if not is_new else 'created'}: {name}")
 
 
 def teardown_cloud_resources(owner: str, repo: str, branch: str) -> None:
@@ -416,7 +414,7 @@ def teardown_cloud_resources(owner: str, repo: str, branch: str) -> None:
     # Delete AI Search resources (indexer + data source + index)
     if is_search_configured():
         index_name = get_index_name(owner, repo, branch)
-        print(f"  Deleting AI Search resources: {index_name}")
+        logger.info(f"Deleting AI Search resources: {index_name}")
         delete_indexer(index_name)
         delete_index(index_name)
 
@@ -424,7 +422,7 @@ def teardown_cloud_resources(owner: str, repo: str, branch: str) -> None:
     aml_config = get_aml_config()
     if aml_config and aml_config.enabled:
         name = _pipeline_name(owner, repo, branch)
-        print(f"  Deleting AML pipeline: {name}")
+        logger.info(f"Deleting AML pipeline: {name}")
         try:
             ml_client = _get_ml_client()
             ml_client.schedules.begin_disable(name).result()

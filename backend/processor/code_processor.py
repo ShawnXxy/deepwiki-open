@@ -153,11 +153,11 @@ def resolve_auth(mode: str) -> tuple:
 
     if pat:
         masked = pat[:6] + '***' if len(pat) > 6 else '***'
-        print(f"  Auth: PAT from environment ({masked})")
+        logger.info(f"Auth: PAT from environment ({masked})")
         return pat, 'pat'
 
     if mode == 'docker':
-        print("  ERROR: Docker mode requires REPO_ACCESS_TOKEN in .env")
+        logger.error("Docker mode requires REPO_ACCESS_TOKEN in .env")
         sys.exit(1)
 
     try:
@@ -166,14 +166,14 @@ def resolve_auth(mode: str) -> tuple:
             from backend.config import get_managed_identity_client_id
             msi_client_id = get_managed_identity_client_id()
             if not msi_client_id:
-                print("  ERROR: managed_identity.client_id not set in infra.json")
+                logger.error("managed_identity.client_id not set in infra.json")
                 sys.exit(1)
-            print(f"  Auth: managed identity ({msi_client_id[:8]}...)")
+            logger.info(f"Auth: managed identity ({msi_client_id[:8]}...)")
             credential = DefaultAzureCredential(
                 managed_identity_client_id=msi_client_id,
             )
         else:
-            print("  Auth: Azure CLI identity (no PAT found)...")
+            logger.info("Auth: Azure CLI identity (no PAT found)")
             credential = DefaultAzureCredential(
                 exclude_managed_identity_credential=True,
             )
@@ -181,16 +181,16 @@ def resolve_auth(mode: str) -> tuple:
             "499b84ac-1321-427f-aa17-267ca6975798/.default"
         )
         method = 'managed identity' if mode == 'cloud' else 'Azure CLI'
-        print(f"  Auth: token acquired via {method}")
+        logger.info(f"Auth: token acquired via {method}")
         return token.token, 'bearer'
     except Exception as e:
         logger.warning(f"Could not acquire Azure identity token: {e}")
-        print("  ERROR: No authentication available for private repo.")
+        logger.error("No authentication available for private repo.")
         if mode == 'cloud':
-            print("  Check managed identity in infra.json")
+            logger.error("Check managed identity in infra.json")
         else:
-            print("  1. Set REPO_ACCESS_TOKEN in backend/.env")
-            print("  2. Run 'az login' first")
+            logger.error("1. Set REPO_ACCESS_TOKEN in backend/.env")
+            logger.error("2. Run 'az login' first")
         sys.exit(1)
 
 
@@ -213,14 +213,14 @@ def _resolve_umi_auth() -> tuple:
         raise RuntimeError(
             "managed_identity.client_id not set in infra.json"
         )
-    print(f"  Auth: falling back to managed identity ({msi_client_id[:8]}...)")
+    logger.info(f"Auth: falling back to managed identity ({msi_client_id[:8]}...)")
     credential = DefaultAzureCredential(
         managed_identity_client_id=msi_client_id,
     )
     token = credential.get_token(
         "499b84ac-1321-427f-aa17-267ca6975798/.default"
     )
-    print("  Auth: token acquired via managed identity (fallback)")
+    logger.info("Auth: token acquired via managed identity (fallback)")
     return token.token, 'bearer'
 
 
@@ -232,7 +232,7 @@ def step_clone(repo_url, token, branch, repo_name, token_type='pat'):
     from backend.paths import get_repos_path
     from backend.utils.filter import sanitize_branch_for_path
 
-    print("\n--- Step 1: Cloning repository ---")
+    logger.info("Step 1: Cloning repository")
     branch_safe = sanitize_branch_for_path(branch or 'main')
     save_dir = os.path.join(get_repos_path(), f"{repo_name}_{branch_safe}")
     download_repo(
@@ -245,8 +245,7 @@ def step_clone(repo_url, token, branch, repo_name, token_type='pat'):
         token_type=token_type,
     )
     commit = get_head_commit_hash(save_dir)
-    print(f"  Cloned to: {save_dir}")
-    print(f"  Commit: {commit[:7] if commit else 'unknown'}")
+    logger.info(f"Cloned to: {save_dir}, commit: {commit[:7] if commit else 'unknown'}")
     return save_dir, commit
 
 
@@ -255,8 +254,7 @@ def _log_rss(label: str):
     try:
         import psutil
         rss_mb = psutil.Process().memory_info().rss / (1024 * 1024)
-        print(f"  [MEM] {label}: {rss_mb:.0f} MB RSS")
-        logger.info(f"[MEM] {label}: {rss_mb:.0f} MB RSS")
+        logger.debug(f"[MEM] {label}: {rss_mb:.0f} MB RSS")
     except ImportError:
         pass
 
@@ -268,7 +266,7 @@ def step_build_codemap(repo_path, owner, repo, repo_type, branch):
     from backend.config import get_file_filters_config
     from backend.types import FileFilter
 
-    print("\n--- Step: Building codemap graph ---")
+    logger.info("Step: Building codemap graph")
 
     # Reuse the same file filter as the embedder (excluded.json)
     file_filters = get_file_filters_config()
@@ -284,8 +282,8 @@ def step_build_codemap(repo_path, owner, repo, repo_type, branch):
     codemap.metadata.branch = branch
 
     save_codemap_cache(codemap, owner, repo, repo_type, branch)
-    print(
-        f"  CodeMap: {codemap.metadata.total_files} files, "
+    logger.info(
+        f"CodeMap: {codemap.metadata.total_files} files, "
         f"{codemap.metadata.total_symbols} symbols, "
         f"{codemap.metadata.total_edges} edges"
     )
@@ -300,7 +298,7 @@ def step_embed(repo_url, token, branch, repo_dir=None):
     """
     from backend.modules.embedder.retriever import RAG
 
-    print("\n--- Step 2: Embedding documents ---")
+    logger.info("Step 2: Embedding documents")
     rag = RAG(provider='azure')
     rag.prepare_retriever(
         repo_url_or_path=repo_url,
@@ -310,7 +308,7 @@ def step_embed(repo_url, token, branch, repo_dir=None):
         force_reprocess=True,
         repo_dir=repo_dir,
     )
-    print(f"  Retriever ready ({len(rag.transformed_docs)} docs)")
+    logger.info(f"Retriever ready ({len(rag.transformed_docs)} docs)")
 
     # Release components unused during processor wiki generation:
     # - generator: wiki_generator.py uses its own _call_llm()
@@ -336,7 +334,7 @@ def step_embed_cloud(repo_url, token, branch, repo_dir=None):
     )
     from backend.clients.vector_storage import get_vector_storage
 
-    print("\n--- Step 2: Embedding documents (cloud mode) ---")
+    logger.info("Step 2: Embedding documents (cloud mode)")
     db_manager = DatabaseManager()
     db_manager._create_repo(
         repo_url, 'azuredevops', token, branch,
@@ -373,7 +371,7 @@ def step_embed_cloud(repo_url, token, branch, repo_dir=None):
                 repo_name, branch_suffix, orphans
             )
 
-    print(f"  Embedded {chunk_count} chunks (saved to blob, no FAISS)")
+    logger.info(f"Embedded {chunk_count} chunks (saved to blob, no FAISS)")
     return chunk_count
 
 
@@ -384,7 +382,7 @@ def step_generate_wiki(
     """Generate wiki pages. Returns wiki_data."""
     from backend.processor.wiki_generator import generate_wiki
 
-    print("\n--- Step 3: Generating wiki ---")
+    logger.info("Step 3: Generating wiki")
     return generate_wiki(
         repo_url=repo_url,
         branch=branch,
@@ -405,7 +403,7 @@ def step_save_wiki(wiki_data, language, comprehensive):
     from backend.modules.wiki.cache import save_wiki_cache
     from backend.modules.wiki.models import WikiCacheRequest
 
-    print("\n--- Step 4: Saving wiki cache ---")
+    logger.info("Step 4: Saving wiki cache")
     cache_request = WikiCacheRequest(
         repo=wiki_data.repo,
         language=language,
@@ -421,12 +419,11 @@ def step_save_wiki(wiki_data, language, comprehensive):
     try:
         result = asyncio.run(save_wiki_cache(cache_request))
         if result:
-            print("  Wiki cache saved")
+            logger.info("Wiki cache saved")
         else:
-            print("  WARNING: save_wiki_cache returned False")
+            logger.warning("save_wiki_cache returned False")
     except Exception as e:
         logger.error(f"Failed to save wiki cache: {e}", exc_info=True)
-        print(f"  ERROR saving wiki cache: {e}")
 
 
 def step_push_to_search(owner, repo, branch, wait=False):
@@ -452,7 +449,7 @@ def step_push_to_search(owner, repo, branch, wait=False):
         logger.info(f"AI Search index '{idx_name}' not found, skipping push")
         return
 
-    print("\n--- Step 5: Pushing vectors to AI Search ---")
+    logger.info("Step 5: Pushing vectors to AI Search")
     repo_name = f"{owner}_{repo}"
     vector_storage = get_vector_storage()
 
@@ -460,7 +457,7 @@ def step_push_to_search(owner, repo, branch, wait=False):
     docs = vector_storage.load_documents(repo_name, branch)
 
     if not docs:
-        print("  No vector documents found to push")
+        logger.info("No vector documents found to push")
         return
 
     # Push in batches to limit memory during upload
@@ -474,30 +471,25 @@ def step_push_to_search(owner, repo, branch, wait=False):
         # Release batch vectors after push
         for doc in batch:
             doc.vector = None
-        logger.info(
-            f"Pushed batch {i // PUSH_BATCH_SIZE + 1}: "
-            f"{pushed}/{total} docs"
-        )
 
     del docs
     import gc
     gc.collect()
 
-    print(f"  Pushed {pushed} documents to AI Search")
+    logger.info(f"Pushed {pushed} documents to AI Search")
     run_indexer(idx_name)
-    print("  Indexer triggered")
+    logger.info("Indexer triggered")
 
     if wait:
-        print("  Waiting for indexer to complete...")
+        logger.info("Waiting for indexer to complete...")
         success = wait_for_indexer(idx_name, timeout_seconds=600)
         if not success:
-            print("  WARNING: Indexer did not complete in time")
             logger.error(
                 "Indexer timeout — wiki generation may have "
                 "incomplete results"
             )
         else:
-            print("  Indexer completed successfully")
+            logger.info("Indexer completed successfully")
 
 
 # ============================================================================
@@ -517,7 +509,7 @@ def step_generate_wiki_cloud(
     from backend.clients.search_client import get_index_name
     from backend.processor.wiki_generator import generate_wiki
 
-    print("\n--- Step 3: Generating wiki (cloud retrieval) ---")
+    logger.info("Step 3: Generating wiki (cloud retrieval)")
 
     # Create lightweight RAG for cloud retrieval only
     rag = RAG(provider='azure')
@@ -560,15 +552,10 @@ def _process(mode, repo_url, branch, language, comprehensive,
     owner, repo = _extract_owner_repo(repo_url)
     repo_name = f"{owner}_{repo}"
 
-    print(f"\n{'='*60}")
-    print("DeepWiki Code Processor")
-    print(f"{'='*60}")
-    print(f"  Repo:     {repo_url}")
-    print(f"  Branch:   {branch}")
-    print(f"  Mode:     {mode}")
-    print(f"  Language: {language}")
-    print(f"  Owner:    {owner}")
-    print(f"  Repo:     {repo}")
+    logger.info(
+        f"Processing: repo={repo_url}, branch={branch}, "
+        f"mode={mode}, language={language}, owner={owner}, repo={repo}"
+    )
 
     token, token_type = resolve_auth(mode)
 
@@ -584,7 +571,6 @@ def _process(mode, repo_url, branch, language, comprehensive,
                 "PAT clone failed in cloud mode, "
                 "falling back to managed identity"
             )
-            print("  WARN: PAT clone failed, retrying with managed identity...")
             token, token_type = _resolve_umi_auth()
             repo_dir, commit_hash = step_clone(
                 repo_url, token, branch, repo_name, token_type,
@@ -602,7 +588,6 @@ def _process(mode, repo_url, branch, language, comprehensive,
             )
         except Exception as e:
             logger.warning(f"Codemap generation failed (non-fatal): {e}")
-            print(f"  WARNING: Codemap generation failed: {e}")
         finally:
             gc.collect()
 
@@ -628,7 +613,6 @@ def _process(mode, repo_url, branch, language, comprehensive,
             logger.error(
                 f"Wiki generation failed: {e}", exc_info=True
             )
-            print(f"\n  ERROR in wiki generation: {e}")
             sys.exit(1)
 
         _log_rss("after generate_wiki")
@@ -649,7 +633,6 @@ def _process(mode, repo_url, branch, language, comprehensive,
             logger.error(
                 f"Wiki generation failed: {e}", exc_info=True
             )
-            print(f"\n  ERROR in wiki generation: {e}")
             sys.exit(1)
 
         # Free FAISS index + transformed_docs before save/push
@@ -659,11 +642,10 @@ def _process(mode, repo_url, branch, language, comprehensive,
 
         step_save_wiki(wiki_data, language, comprehensive)
 
-    print(f"\n{'='*60}")
-    print("Processing complete")
-    print(f"  Pages generated: {len(wiki_data.generated_pages)}")
-    print(f"  Commit hash: {commit_hash[:7] if commit_hash else 'N/A'}")
-    print(f"{'='*60}\n")
+    logger.info(
+        f"Processing complete: {len(wiki_data.generated_pages)} pages, "
+        f"commit={commit_hash[:7] if commit_hash else 'N/A'}"
+    )
 
     return wiki_data
 
@@ -683,26 +665,26 @@ def _run_docker_build(args):
     image_name = 'deepwiki-processor'
 
     if not dockerfile.is_file():
-        print(f"  Dockerfile.processor not found at {dockerfile}")
+        logger.error(f"Dockerfile.processor not found at {dockerfile}")
         sys.exit(1)
 
     write_docker_config()
 
-    print("\n--- Building Docker image ---")
+    logger.info("Building Docker image")
     build_cmd = [
         'docker', 'build',
         '-f', str(dockerfile),
         '-t', image_name,
         str(project_root),
     ]
-    print(f"  $ {' '.join(build_cmd)}")
+    logger.info(f"$ {' '.join(build_cmd)}")
     result = subprocess.run(build_cmd, cwd=str(project_root))
     if result.returncode != 0:
-        print("  Docker build failed")
+        logger.error("Docker build failed")
         sys.exit(1)
-    print("  Image built")
+    logger.info("Image built")
 
-    print("\n--- Running processor in container ---")
+    logger.info("Running processor in container")
     adalflow_dir = Path.home() / '.adalflow'
     adalflow_dir.mkdir(parents=True, exist_ok=True)
 
@@ -727,12 +709,12 @@ def _run_docker_build(args):
         '--language', args.language,
     ])
 
-    print(f"  $ docker run ... {image_name} --repo=... --branch={args.branch}")
+    logger.info(f"$ docker run ... {image_name} --repo=... --branch={args.branch}")
     result = subprocess.run(run_cmd)
     if result.returncode != 0:
-        print("  Docker run failed")
+        logger.error("Docker run failed")
         sys.exit(1)
-    print("  Docker processing complete")
+    logger.info("Docker processing complete")
 
 
 # ============================================================================
@@ -759,12 +741,12 @@ def main():
 
     if args.mode == 'cloud':
         set_config_dir(_CONFIG_CLOUD)
-        print(f"Config: {_CONFIG_CLOUD}")
+        logger.info(f"Config: {_CONFIG_CLOUD}")
     elif args.mode == 'docker':
         set_config_dir(_CONFIG_DOCKER)
-        print(f"Config: {_CONFIG_DOCKER}")
+        logger.info(f"Config: {_CONFIG_DOCKER}")
     else:
-        print(f"Config: {_CONFIG_DEFAULT}")
+        logger.info(f"Config: {_CONFIG_DEFAULT}")
 
     # --- Run processing ---
     _process(
