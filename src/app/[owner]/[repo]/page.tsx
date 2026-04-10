@@ -719,7 +719,7 @@ export default function RepoWikiPage() {
       </main>
 
       {/* Footer */}
-      <footer className={`max-w-[90%] xl:max-w-[1400px] mx-auto mt-6 flex flex-col gap-4 w-full relative z-10 ${!isChatPanelCollapsed && wikiStructure ? 'hidden lg:hidden' : ''}`}>
+      <footer className={`max-w-[90%] xl:max-w-[1400px] mx-auto mt-6 flex flex-col gap-4 w-full relative z-10 ${!isChatPanelCollapsed && wikiStructure ? 'hidden lg:flex' : ''}`}>
         <div className="flex justify-between items-center gap-4 text-[var(--muted)] text-sm h-fit w-full glass-surface rounded-2xl p-3">
           <p className="shrink-0 text-xs opacity-70 whitespace-nowrap">
             {messages.footer?.brand || '© Microsoft | Azure'}
