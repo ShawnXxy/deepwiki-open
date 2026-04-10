@@ -16,10 +16,12 @@ mermaid.initialize({
     curve: 'basis',
     nodeSpacing: 60,
     rankSpacing: 60,
-    padding: 20,
+    padding: 30,
+    useMaxWidth: false,
+    wrappingWidth: 200,
   },
-  fontFamily: 'var(--font-geist-sans), "Segoe UI", sans-serif',
-  fontSize: 12,
+  fontFamily: '"Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif',
+  fontSize: 14,
 } as Parameters<typeof mermaid.initialize>[0]);
 
 // Reusable icon components
@@ -265,6 +267,7 @@ const Mermaid: React.FC<MermaidProps> = ({ chart, className = '', zoomingEnabled
       svgEl.style.maxWidth = 'none';
       svgEl.style.width = '100%';
       svgEl.style.height = '100%';
+      svgEl.style.overflow = 'visible';
 
       try {
         const svgPanZoom = (await import('svg-pan-zoom')).default;

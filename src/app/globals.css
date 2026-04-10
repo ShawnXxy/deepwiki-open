@@ -258,6 +258,14 @@ html[data-theme='dark'] .paper-texture {
 
 /* Mermaid diagram styles - Azure color palette */
 .mermaid-diagram {
+  /* Prevent text clipping inside nodes */
+  & foreignObject {
+    overflow: visible;
+  }
+  & .nodeLabel {
+    white-space: normal;
+    word-wrap: break-word;
+  }
   /* Light mode node styles */
   & .node rect, & .node circle, & .node ellipse, & .node polygon, & .node path {
     fill: var(--card-bg);
