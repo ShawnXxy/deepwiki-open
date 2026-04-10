@@ -105,7 +105,7 @@ const Ask: React.FC<AskProps> = ({
   const [conversationHistory, setConversationHistory] = useState<Message[]>([]);
   const [researchIteration, setResearchIteration] = useState(0);
   const [researchComplete, setResearchComplete] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const responseRef = useRef<HTMLDivElement>(null);
   const providerRef = useRef(provider);
   const modelRef = useRef(model);
@@ -843,6 +843,10 @@ const Ask: React.FC<AskProps> = ({
   const handleConfirmAsk = async () => {
     const currentQuestion = question;
     setQuestion(''); // Clear input immediately
+    // Reset textarea height
+    if (inputRef.current) {
+      inputRef.current.style.height = 'auto';
+    }
     setIsLoading(true);
     setResponse('');
     setResearchIteration(0);
@@ -1046,16 +1050,7 @@ const Ask: React.FC<AskProps> = ({
     }
   };
 
-  const [buttonWidth, setButtonWidth] = useState(0);
   const buttonRef = useRef<HTMLButtonElement>(null);
-
-  // Measure button width and update state
-  useEffect(() => {
-    if (buttonRef.current) {
-      const width = buttonRef.current.offsetWidth;
-      setButtonWidth(width);
-    }
-  }, [messages.ask?.askButton, isLoading]);
 
   return (
     <div className="flex flex-col h-full">
@@ -1319,22 +1314,81 @@ const Ask: React.FC<AskProps> = ({
       {/* Question input - fixed at bottom */}
       <div className="flex-shrink-0 p-4 border-t border-[var(--border-color)] bg-[var(--card-bg)]">
         <form onSubmit={handleSubmit}>
-          <div className="relative">
-            <input
-              ref={inputRef}
-              type="text"
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              placeholder={messages.ask?.placeholder || 'What would you like to know about this codebase?'}
-              className="block w-full rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] text-[var(--foreground)] px-5 py-3.5 text-base shadow-sm focus:border-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]/30 focus:outline-none transition-all"
-              style={{ paddingRight: `${buttonWidth + 24}px` }}
-              disabled={isLoading}
-            />
+          <textarea
+            ref={inputRef}
+            rows={1}
+            value={question}
+            onChange={(e) => {
+              setQuestion(e.target.value);
+              // Auto-resize textarea
+              e.target.style.height = 'auto';
+              e.target.style.height = `${e.target.scrollHeight}px`;
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!isLoading && question.trim()) {
+                  handleSubmit(e as unknown as React.FormEvent);
+                }
+              }
+            }}
+            placeholder={messages.ask?.placeholder || 'What would you like to know about this codebase?'}
+            className="block w-full rounded-md border border-[var(--border-color)] bg-[var(--input-bg)] text-[var(--foreground)] px-5 py-3.5 text-base shadow-sm focus:border-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)]/30 focus:outline-none transition-all resize-none overflow-y-auto max-h-[200px]"
+            disabled={isLoading}
+          />
+
+          {/* Chat Mode Selector + Ask Button */}
+          <div className="flex items-center mt-2 justify-between">
+            <div className="flex items-center gap-3">
+              <div className="group relative flex items-center gap-2">
+                <span className="text-xs text-gray-600 dark:text-gray-400">Mode:</span>
+                <select
+                  value={chatMode}
+                  onChange={(e) => setChatMode(e.target.value as 'chat' | 'deepresearch' | 'codetrace')}
+                  className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 text-gray-700 dark:text-gray-300 outline-none focus:border-blue-400 cursor-pointer"
+                >
+                  <option value="chat">💬 Chat</option>
+                  <option value="deepresearch">🔬 Deep Research</option>
+                  <option value="codetrace">🔍 Code Trace</option>
+                </select>
+                <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded p-2 w-72 z-10">
+                  <div className="relative">
+                    <div className="absolute -bottom-2 left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800"></div>
+                    {chatMode === 'chat' && <p>Direct Q&A about the codebase. Fast, concise answers.</p>}
+                    {chatMode === 'deepresearch' && (
+                      <>
+                        <p className="mb-1">Multi-turn investigation process:</p>
+                        <ul className="list-disc pl-4 text-xs">
+                          <li><strong>Initial Research:</strong> Creates a research plan</li>
+                          <li><strong>Iterations 1-4:</strong> Explores in depth</li>
+                          <li><strong>Final:</strong> Comprehensive answer</li>
+                        </ul>
+                      </>
+                    )}
+                    {chatMode === 'codetrace' && (
+                      <p>AI-powered code flow trace. Opens a dedicated page showing connected code sections with source file references.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+              {chatMode === 'deepresearch' && (
+                <div className="text-xs text-purple-600 dark:text-purple-400">
+                  Multi-turn research enabled
+                  {researchIteration > 0 && !researchComplete && ` (iteration ${researchIteration})`}
+                  {researchComplete && ` (complete)`}
+                </div>
+              )}
+              {chatMode === 'codetrace' && (
+                <div className="text-xs text-blue-600 dark:text-blue-400">
+                  Opens trace page on submit
+                </div>
+              )}
+            </div>
             <button
               ref={buttonRef}
               type="submit"
               disabled={isLoading || !question.trim()}
-              className={`absolute right-3 top-1/2 transform -translate-y-1/2 px-4 py-2 rounded-md font-medium text-sm ${
+              className={`px-4 py-1.5 rounded-md font-medium text-sm ${
                 isLoading || !question.trim()
                   ? 'bg-[var(--button-disabled-bg)] text-[var(--button-disabled-text)] cursor-not-allowed'
                   : 'bg-[var(--accent-primary)] text-white hover:bg-[var(--accent-primary)]/90 shadow-sm'
@@ -1351,53 +1405,6 @@ const Ask: React.FC<AskProps> = ({
                 </>
               )}
             </button>
-          </div>
-
-          {/* Chat Mode Selector */}
-          <div className="flex items-center mt-2 justify-between">
-            <div className="group relative flex items-center gap-2">
-              <span className="text-xs text-gray-600 dark:text-gray-400">Mode:</span>
-              <select
-                value={chatMode}
-                onChange={(e) => setChatMode(e.target.value as 'chat' | 'deepresearch' | 'codetrace')}
-                className="text-xs bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 text-gray-700 dark:text-gray-300 outline-none focus:border-blue-400 cursor-pointer"
-              >
-                <option value="chat">💬 Chat</option>
-                <option value="deepresearch">🔬 Deep Research</option>
-                <option value="codetrace">🔍 Code Trace</option>
-              </select>
-              <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded p-2 w-72 z-10">
-                <div className="relative">
-                  <div className="absolute -bottom-2 left-4 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-800"></div>
-                  {chatMode === 'chat' && <p>Direct Q&A about the codebase. Fast, concise answers.</p>}
-                  {chatMode === 'deepresearch' && (
-                    <>
-                      <p className="mb-1">Multi-turn investigation process:</p>
-                      <ul className="list-disc pl-4 text-xs">
-                        <li><strong>Initial Research:</strong> Creates a research plan</li>
-                        <li><strong>Iterations 1-4:</strong> Explores in depth</li>
-                        <li><strong>Final:</strong> Comprehensive answer</li>
-                      </ul>
-                    </>
-                  )}
-                  {chatMode === 'codetrace' && (
-                    <p>AI-powered code flow trace. Opens a dedicated page showing connected code sections with source file references.</p>
-                  )}
-                </div>
-              </div>
-            </div>
-            {chatMode === 'deepresearch' && (
-              <div className="text-xs text-purple-600 dark:text-purple-400">
-                Multi-turn research enabled
-                {researchIteration > 0 && !researchComplete && ` (iteration ${researchIteration})`}
-                {researchComplete && ` (complete)`}
-              </div>
-            )}
-            {chatMode === 'codetrace' && (
-              <div className="text-xs text-blue-600 dark:text-blue-400">
-                Opens trace page on submit
-              </div>
-            )}
           </div>
         </form>
       </div>
