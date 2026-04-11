@@ -307,8 +307,8 @@ def setup_logging(
     except ValueError:
         backup_count = 30
     
-    # Log format
-    log_format = "%(asctime)s - %(levelname)s - %(name)s - %(filename)s:%(lineno)d - %(message)s"
+    # Log format: name has full module path, so use funcName instead of redundant filename
+    log_format = "%(asctime)s - %(levelname)s - %(name)s - %(funcName)s - %(message)s"
     formatter = logging.Formatter(log_format)
     
     # File handler with daily rotation

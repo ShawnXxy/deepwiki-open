@@ -143,8 +143,15 @@ class SafeEmbedder:
             if token_count > SAFE_EMBEDDING_TOKENS:
                 # Split into chunks instead of truncating
                 chunks = split_into_chunks(text, SAFE_EMBEDDING_TOKENS, overlap=200)
+                # Extract file path from enrichment header for readable logging
+                file_hint = ''
+                if text.startswith('[File: '):
+                    end = text.find(' |')
+                    if end > 7:
+                        file_hint = f" ({text[7:end]})"
                 logger.debug(
-                    f"Text {i} has {token_count} tokens, split into {len(chunks)} chunks"
+                    f"Oversized text{file_hint}: {token_count} tokens, "
+                    f"split into {len(chunks)} chunks"
                 )
                 for chunk in chunks:
                     safe_inputs.append(chunk)
