@@ -37,6 +37,7 @@ with professional descriptions instead.
 {readme}
 </readme>
 
+{additional_context}
 I want to create a wiki for this repository. Determine the most logical structure for a wiki based on the repository's content.
 
 IMPORTANT: The wiki content will be generated in {language_name} language.
@@ -175,6 +176,7 @@ with professional descriptions instead.
 {readme}
 </readme>
 
+{additional_context}
 I want to create a wiki for this repository. Determine the most logical structure for a wiki based on the repository's content.
 
 IMPORTANT: The wiki content will be generated in {language_name} language.
@@ -279,6 +281,7 @@ def build_wiki_structure_prompt(
     repo: str,
     language: str = 'en',
     comprehensive: bool = True,
+    additional_context: str = '',
 ) -> str:
     """Build wiki structure prompt from promptstore templates.
 
@@ -292,6 +295,8 @@ def build_wiki_structure_prompt(
         repo: Repository name
         language: Language code (default 'en')
         comprehensive: True for 15-25 pages, False for 4-6
+        additional_context: Optional extra context to inject into the
+            prompt (e.g. codemap summary, architecture notes)
 
     Returns:
         Formatted prompt string ready for LLM
@@ -309,4 +314,5 @@ def build_wiki_structure_prompt(
         readme=readme or '',
         language_name=language_name,
         page_count=page_count,
+        additional_context=additional_context,
     )

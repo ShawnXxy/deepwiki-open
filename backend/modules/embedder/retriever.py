@@ -568,11 +568,18 @@ IMPORTANT FORMATTING RULES:
             ]
 
             # Step 3: Merge — file chunks first, then semantic (deduplicated)
-            seen_ids = {id(doc) for doc in file_chunks}
+            # Use (file_path, chunk_index) for dedup instead of object id()
+            # so that cloud-mode results with distinct objects are also deduped.
+            def _doc_key(doc):
+                meta = doc.meta_data or {}
+                return (meta.get('file_path', ''), meta.get('chunk_index', id(doc)))
+
+            seen_keys = {_doc_key(doc) for doc in file_chunks}
             for doc in semantic_docs:
-                if id(doc) not in seen_ids:
+                key = _doc_key(doc)
+                if key not in seen_keys:
                     file_chunks.append(doc)
-                    seen_ids.add(id(doc))
+                    seen_keys.add(key)
 
             logger.info(
                 f"[RAG] Merged result: {len(file_chunks)} total chunks"
@@ -636,12 +643,17 @@ IMPORTANT FORMATTING RULES:
                 vector=query_vector,
             )
 
-            # Step 3: Merge — file chunks first, deduplicate
-            seen_texts = {doc.text for doc in file_chunks}
+            # Step 3: Merge — file chunks first, deduplicate by content key
+            def _cloud_doc_key(doc):
+                meta = doc.meta_data or {}
+                return (meta.get('file_path', ''), meta.get('chunk_index', id(doc)))
+
+            seen_keys = {_cloud_doc_key(doc) for doc in file_chunks}
             for doc in semantic_docs:
-                if doc.text not in seen_texts:
+                key = _cloud_doc_key(doc)
+                if key not in seen_keys:
                     file_chunks.append(doc)
-                    seen_texts.add(doc.text)
+                    seen_keys.add(key)
 
             logger.info(
                 f"[RAG] Cloud merged: {len(file_chunks)} total chunks"

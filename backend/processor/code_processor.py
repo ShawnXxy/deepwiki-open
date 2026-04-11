@@ -140,12 +140,14 @@ def resolve_auth(mode: str) -> tuple:
     """Resolve an access token for the repository.
 
     Auth strategy per mode:
-        local  - PAT from env → Azure CLI identity (exclude MSI)
+        local  - PAT from env → Git Credential Manager (no token needed)
         docker - PAT from env only → error if missing
         cloud  - PAT from env → UMI from infra.json managed_identity.client_id
 
     Returns:
-        Tuple of (token, token_type) where token_type is 'pat' or 'bearer'
+        Tuple of (token, token_type) where:
+        - token_type is 'pat', 'bearer', or 'gcm'
+        - When token_type='gcm', token is None (GCM handles auth natively)
     """
     pat = (os.environ.get('REPO_ACCESS_TOKEN', '')
            or os.environ.get('ADO_PAT', '')
@@ -160,9 +162,10 @@ def resolve_auth(mode: str) -> tuple:
         logger.error("Docker mode requires REPO_ACCESS_TOKEN in .env")
         sys.exit(1)
 
-    try:
-        from azure.identity import DefaultAzureCredential
-        if mode == 'cloud':
+    if mode == 'cloud':
+        # Cloud mode (AML compute): must use managed identity
+        try:
+            from azure.identity import DefaultAzureCredential
             from backend.config import get_managed_identity_client_id
             msi_client_id = get_managed_identity_client_id()
             if not msi_client_id:
@@ -172,26 +175,24 @@ def resolve_auth(mode: str) -> tuple:
             credential = DefaultAzureCredential(
                 managed_identity_client_id=msi_client_id,
             )
-        else:
-            logger.info("Auth: Azure CLI identity (no PAT found)")
-            credential = DefaultAzureCredential(
-                exclude_managed_identity_credential=True,
+            token = credential.get_token(
+                "499b84ac-1321-427f-aa17-267ca6975798/.default"
             )
-        token = credential.get_token(
-            "499b84ac-1321-427f-aa17-267ca6975798/.default"
-        )
-        method = 'managed identity' if mode == 'cloud' else 'Azure CLI'
-        logger.info(f"Auth: token acquired via {method}")
-        return token.token, 'bearer'
-    except Exception as e:
-        logger.warning(f"Could not acquire Azure identity token: {e}")
-        logger.error("No authentication available for private repo.")
-        if mode == 'cloud':
+            logger.info("Auth: token acquired via managed identity")
+            return token.token, 'bearer'
+        except Exception as e:
+            logger.error(f"Could not acquire managed identity token: {e}")
             logger.error("Check managed identity in infra.json")
-        else:
-            logger.error("1. Set REPO_ACCESS_TOKEN in backend/.env")
-            logger.error("2. Run 'az login' first")
-        sys.exit(1)
+            sys.exit(1)
+
+    # Local mode: let Git Credential Manager handle authentication.
+    # GCM supports AAD/Azure CLI/browser SSO for Azure DevOps natively,
+    # which is more reliable than injecting bearer tokens via extraHeader.
+    logger.info(
+        "Auth: delegating to Git Credential Manager "
+        "(no PAT found, local mode)"
+    )
+    return None, 'gcm'
 
 
 def _resolve_umi_auth() -> tuple:
@@ -378,6 +379,7 @@ def step_embed_cloud(repo_url, token, branch, repo_dir=None):
 def step_generate_wiki(
     repo_url, branch, repo_path, retriever,
     commit_hash, language, comprehensive, owner, repo,
+    codemap=None,
 ):
     """Generate wiki pages. Returns wiki_data."""
     from backend.processor.wiki_generator import generate_wiki
@@ -394,6 +396,7 @@ def step_generate_wiki(
         comprehensive=comprehensive,
         owner=owner,
         repo=repo,
+        codemap=codemap,
     )
 
 
@@ -499,6 +502,7 @@ def step_push_to_search(owner, repo, branch, wait=False):
 def step_generate_wiki_cloud(
     repo_url, branch, repo_path, owner, repo,
     commit_hash, language, comprehensive,
+    codemap=None,
 ):
     """Generate wiki using Azure AI Search for retrieval (cloud mode).
 
@@ -532,6 +536,7 @@ def step_generate_wiki_cloud(
         comprehensive=comprehensive,
         owner=owner,
         repo=repo,
+        codemap=codemap,
     )
 
 
@@ -565,7 +570,7 @@ def _process(mode, repo_url, branch, language, comprehensive,
         repo_dir, commit_hash = step_clone(
             repo_url, token, branch, repo_name, token_type,
         )
-    except ValueError:
+    except ValueError as e:
         if mode == 'cloud' and token_type == 'pat':
             logger.warning(
                 "PAT clone failed in cloud mode, "
@@ -576,14 +581,16 @@ def _process(mode, repo_url, branch, language, comprehensive,
                 repo_url, token, branch, repo_name, token_type,
             )
         else:
+            logger.error(f"Clone failed: {e}")
             raise
 
     _log_rss("after clone")
 
     # Build codemap graph (all modes, unless skipped)
+    codemap = None
     if not skip_codemap:
         try:
-            step_build_codemap(
+            codemap = step_build_codemap(
                 repo_dir, owner, repo, 'azuredevops', branch,
             )
         except Exception as e:
@@ -608,6 +615,7 @@ def _process(mode, repo_url, branch, language, comprehensive,
             wiki_data = step_generate_wiki_cloud(
                 repo_url, branch, repo_dir, owner, repo,
                 commit_hash, language, comprehensive,
+                codemap=codemap,
             )
         except Exception as e:
             logger.error(
@@ -628,6 +636,7 @@ def _process(mode, repo_url, branch, language, comprehensive,
             wiki_data = step_generate_wiki(
                 repo_url, branch, repo_dir, retriever,
                 commit_hash, language, comprehensive, owner, repo,
+                codemap=codemap,
             )
         except Exception as e:
             logger.error(
@@ -749,14 +758,18 @@ def main():
         logger.info(f"Config: {_CONFIG_DEFAULT}")
 
     # --- Run processing ---
-    _process(
-        mode=args.mode,
-        repo_url=args.repo,
-        branch=args.branch,
-        language=args.language,
-        comprehensive=args.comprehensive,
-        skip_codemap=args.skip_codemap,
-    )
+    try:
+        _process(
+            mode=args.mode,
+            repo_url=args.repo,
+            branch=args.branch,
+            language=args.language,
+            comprehensive=args.comprehensive,
+            skip_codemap=args.skip_codemap,
+        )
+    except Exception as e:
+        logger.error(f"Processing failed: {e}", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == '__main__':

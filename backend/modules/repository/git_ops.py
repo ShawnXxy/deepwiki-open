@@ -5,6 +5,7 @@ Provides functions for cloning, pulling, and managing Git repositories.
 """
 
 import os
+import re
 import shutil
 import subprocess
 import logging
@@ -12,6 +13,34 @@ import time
 from urllib.parse import urlparse, urlunparse, quote
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_token_from_text(text: str, access_token: str = None) -> str:
+    """Remove tokens and credentials from text to prevent leaks in logs.
+
+    Redacts:
+    - The literal access_token (and its URL-encoded form)
+    - Any Bearer token pattern in Authorization headers
+    - Any PAT-in-URL pattern (token@host)
+    """
+    if not text:
+        return text
+    if access_token:
+        text = text.replace(access_token, '***TOKEN***')
+        text = text.replace(quote(access_token, safe=''), '***TOKEN***')
+    # Catch any Bearer token we might have missed
+    text = re.sub(
+        r'Authorization: Bearer [A-Za-z0-9_\-\.]+',
+        'Authorization: Bearer ***TOKEN***',
+        text,
+    )
+    # Catch PAT-in-URL (token@dev.azure.com)
+    text = re.sub(
+        r'://[^@/]{8,}@',
+        '://***TOKEN***@',
+        text,
+    )
+    return text
 
 
 def get_head_commit_hash(local_path: str) -> str:
@@ -171,6 +200,7 @@ def download_repo(
             # Token type is passed explicitly by the caller.
             # 'bearer' = JWT from MSI/AAD (must use Authorization header)
             # 'pat' = Personal Access Token (embeds in URL)
+            # 'gcm' = Git Credential Manager handles auth (no token needed)
             is_bearer_token = (token_type == 'bearer')
 
             parsed = urlparse(repo_url)
@@ -196,6 +226,13 @@ def download_repo(
                 logger.warning(f"Unknown repo type: {type}, token may not be embedded correctly")
 
             logger.info(f"Using access token for authentication (type={type})")
+        elif token_type == 'gcm':
+            # Git Credential Manager handles authentication natively.
+            # No token injection needed — GCM supports AAD/browser SSO
+            # for Azure DevOps out of the box on developer machines.
+            logger.info(
+                "Delegating authentication to Git Credential Manager"
+            )
         else:
             logger.warning(f"No access token provided for repo type={type}")
 
@@ -234,6 +271,8 @@ def download_repo(
 
             except subprocess.CalledProcessError as e:
                 error_msg = e.stderr.decode('utf-8')
+                # Sanitize ALL error text immediately to prevent token leaks
+                error_msg = _sanitize_token_from_text(error_msg, access_token)
                 is_network_error = any(
                     phrase in error_msg.lower()
                     for phrase in [
@@ -318,17 +357,25 @@ def download_repo(
                 # If we get here, all attempts failed
                 error_msg = e.stderr.decode('utf-8')
                 # Sanitize error message to remove any tokens
-                if access_token:
-                    error_msg = error_msg.replace(
-                        access_token, "***TOKEN***"
-                    )
-                    encoded_token = quote(access_token, safe='')
-                    error_msg = error_msg.replace(
-                        encoded_token, "***TOKEN***"
+                error_msg = _sanitize_token_from_text(error_msg, access_token)
+                logger.error(f"Git clone failed: {error_msg}")
+
+                # Provide actionable guidance for auth failures
+                if 'authentication failed' in error_msg.lower():
+                    logger.error(
+                        "Authentication failed. Possible causes:\n"
+                        "  1. Your identity may not have access to this repo\n"
+                        "  2. The token may have expired — run 'az login' again\n"
+                        "  3. Set REPO_ACCESS_TOKEN with a PAT in backend/.env"
                     )
                 raise ValueError(f"Error during cloning: {error_msg}")
+    except ValueError:
+        # Re-raise ValueError (from inner raise) without wrapping
+        raise
     except Exception as e:
-        raise ValueError(f"An unexpected error occurred: {str(e)}")
+        sanitized = _sanitize_token_from_text(str(e), access_token)
+        logger.error(f"Unexpected error during clone: {sanitized}")
+        raise ValueError(f"An unexpected error occurred: {sanitized}")
 
 
 # Alias for backward compatibility
@@ -347,7 +394,8 @@ def _pull_repo_internal(
     Called by download_repo when force_update=True and repo exists.
 
     Args:
-        token_type: 'pat' for Personal Access Tokens, 'bearer' for JWT/MSI tokens.
+        token_type: 'pat' for Personal Access Tokens, 'bearer' for JWT/MSI tokens,
+                    'gcm' for Git Credential Manager (no token injection).
     """
     git_dir = os.path.join(local_path, ".git")
     if not os.path.exists(git_dir):
@@ -358,8 +406,9 @@ def _pull_repo_internal(
     try:
         # If we have an access token and repo URL, update the remote URL for auth
         # For bearer tokens (JWT from MSI), use http.extraHeader instead of URL
+        # For gcm, let Git Credential Manager handle auth natively
         use_bearer_header = False
-        if access_token and repo_url:
+        if access_token and repo_url and token_type != 'gcm':
             is_bearer_token = (token_type == 'bearer')
 
             if repo_type == "azuredevops" and is_bearer_token:
@@ -453,11 +502,7 @@ def _pull_repo_internal(
             return "Repository reset to remote HEAD"
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr.decode('utf-8') if e.stderr else str(e)
-        # Sanitize error message to remove tokens
-        if access_token:
-            error_msg = error_msg.replace(access_token, "***TOKEN***")
-            encoded_token = quote(access_token, safe='')
-            error_msg = error_msg.replace(encoded_token, "***TOKEN***")
+        error_msg = _sanitize_token_from_text(error_msg, access_token)
         raise ValueError(f"Git pull failed: {error_msg}")
     finally:
         # Reset remote URL to original (without token) for security
