@@ -60,6 +60,8 @@ Instead of naive token-based splitting, code files are split at **logical bounda
 ┌─────────────────────────────┐
 │  split_code_at_boundaries() │  Merge lines into ~2000-token chunks
 │                             │  Never split mid-function
+│                             │  Oversized sections: split at nested block
+│                             │  boundaries (inner defs, indentation drops)
 │                             │  Falls back to blank-line groups
 └────────────┬────────────────┘
              │
@@ -117,11 +119,13 @@ The `RAG` class builds a FAISS index from loaded documents and provides two retr
 - Returns ranked list of relevant chunks
 
 **`call_with_file_filter(query, file_paths, top_k)`** — File-priority retrieval:
-1. Collect ALL chunks from declared `file_paths` (exhaustive, no limit)
+1. Collect chunks from declared `file_paths` via pre-built index (capped at 80 per call)
 2. Run FAISS semantic search for supplementary context
-3. Merge: file chunks first (priority), then semantic chunks (deduplicated)
+3. Merge: file chunks first (priority), then semantic chunks (deduplicated by `(file_path, chunk_index)` tuple)
 
 This ensures wiki pages always reference their declared source files while also discovering related context.
+The deduplication uses content-based keys rather than object identity, so it works correctly
+for both local FAISS and cloud AI Search modes.
 
 ### Conversation Memory (`memory.py`)
 
