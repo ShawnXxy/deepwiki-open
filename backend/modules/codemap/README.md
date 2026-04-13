@@ -154,17 +154,27 @@ Codemap files are stored **separately from wiki cache** — in a dedicated folde
 
 ## Pipeline Integration
 
-CodeMap is an **optional, non-blocking** step in the code processor pipeline:
+CodeMap is an **optional, non-blocking** step in the code processor pipeline.
+When available, codemap data improves wiki quality by informing structure
+decisions and expanding file retrieval via dependency edges:
 
 ```
 step_clone()
     ↓
-step_build_codemap()   ← NEW (skippable via --skip-codemap)
+step_build_codemap()   ← Skippable via --skip-codemap
     ↓                     Failure is non-fatal: logs warning, continues
-step_embed()            ← Unchanged
+    │                     Returns CodeMapData passed to downstream steps
+step_embed()            ← Unchanged (codemap not used for embedding)
     ↓
-step_generate_wiki()    ← Unchanged
-    ↓
+step_generate_wiki(codemap=...)
+    ├─ Structure: codemap summary injected into LLM prompt via
+    │  processor/codemap_generator.summarize_codemap() →
+    │  promptstore/codemap.build_codemap_prompt_section()
+    │  Helps LLM organize pages around architectural boundaries
+    ├─ Retrieval: codemap edges expand each page's file_paths
+    │  processor/codemap_generator.expand_file_paths()
+    │  Pulls chunks from imported/called files, not just declared ones
+    └─ Validation: declared file_paths checked against repo on disk
 step_save_wiki()        ← Unchanged
 ```
 

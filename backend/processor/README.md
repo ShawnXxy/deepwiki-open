@@ -8,7 +8,7 @@ Standalone CLI pipeline that generates AI wikis from code repositories.
 
 Runs as a one-shot CLI command — no server required. Transforms a code repository into a structured, AI-generated wiki saved as JSON.
 
-**Pipeline:** Clone repo → Embed documents → Generate wiki → Save cache
+**Pipeline:** Clone repo → Build codemap → Embed documents → Generate wiki → Save cache
 
 <details>
 The pipeline steps differ between local/Docker and cloud modes:
@@ -56,7 +56,9 @@ Step 5 — Save cache: Same as local.
 | `code_processor.py` | CLI entry point: argument parsing, auth, mode dispatch, step functions |
 | `aml_dispatcher.py` | Cloud entry point: copy config, setup AML resources, exit |
 | `wiki_generator.py` | LLM-based structure + content generation, XML parsing |
+| `codemap_generator.py` | Codemap processing: `expand_file_paths()`, `summarize_codemap()` |
 | `cloud_setup.py` | Config overlay writers + Azure AI Search / AML pipeline management |
+| `code_index_schema.json` | Azure AI Search index schema (fields, vectors, scoring profiles) |
 | `DESIGN.md` | Comprehensive design document (architecture, data flow, decisions) |
 
 ## Architecture: Mode as a Switch
@@ -74,8 +76,9 @@ Step 5 — Save cache: Same as local.
 ┌─────────────────────────────────────────────────────────────────────┐
 │ LOCAL MODE (--mode=local)                                           │
 │ Config: backend/config/                                             │
-│ Auth:   PAT from env → Azure CLI identity (exclude MSI)             │
-│ Steps:  clone(local) → embed(FAISS) → wiki(FAISS) → save(local)    │
+│ Auth:   PAT from env → Git Credential Manager (AAD/SSO natively)    │
+│ Steps:  clone(local) → codemap → embed(FAISS) → wiki(FAISS)          │
+│         → save(local)                                               │
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -133,17 +136,28 @@ Stage 1: Clone Repository
     git clone → local disk (all modes)
     Extract HEAD commit hash for citation URLs
 
-Stage 2: Embed Documents (RAG Preparation)
+Stage 2: Build Codemap (AST Analysis)
+    Tree-sitter AST parsing for 8+ languages (Python, JS/TS, Java, Go, C#, C/C++)
+    Extracts: symbols (functions, classes, methods), edges (imports, calls, inheritance)
+    Codemap summary injected into wiki structure prompt for architecture-aware page layout
+    Codemap edges used to expand file_paths for wiki page retrieval
+
+Stage 3: Embed Documents (RAG Preparation)
     Fused read→split→embed→save pipeline, bounded per batch (~120 MB)
     Local/Docker: save vectors to local disk, accumulate for FAISS
     Cloud: save vectors to blob (skip_accumulate=True, no FAISS)
 
-Stage 3: Generate Wiki
-    File tree + README → LLM generates XML structure (pages + sections)
-    For each page: RAG retrieval → LLM generates Markdown content
+Stage 4: Generate Wiki
+    File tree + README + codemap summary → LLM generates XML structure (pages + sections)
+    Validates page file_paths exist in repo; logs semantic-only pages
+    For each page:
+      - Expand file_paths with codemap-connected files (imports, calls)
+      - Build expanded retrieval query (title + description + related page titles)
+      - RAG retrieval with file-priority + semantic merge
+      - Full context passed to LLM (no truncation — quality is critical)
+    Optional review pass: second LLM call to verify accuracy and fix Mermaid diagrams
     Local/Docker: retrieval via FAISS (file-priority capped at 80 chunks)
     Cloud: retrieval via Azure AI Search (hybrid: text + vector)
-    Context capped at 120K chars with clean file-boundary truncation
 
 Stage 4: Save Wiki Cache
     Assemble WikiCacheData → save as JSON
@@ -162,7 +176,7 @@ Stage 5: Push to AI Search (cloud only)
 
 | Mode | Strategy |
 |------|----------|
-| **local** | `REPO_ACCESS_TOKEN` / `ADO_PAT` env → `DefaultAzureCredential(exclude_managed_identity_credential=True)` (Azure CLI) |
+| **local** | `REPO_ACCESS_TOKEN` / `ADO_PAT` env → Git Credential Manager (no token injected, GCM handles AAD/SSO natively) |
 | **docker** | `REPO_ACCESS_TOKEN` env only → error if missing |
 | **cloud** | `DefaultAzureCredential(managed_identity_client_id=...)` from `.cloud/infra.json` |
 
@@ -170,7 +184,7 @@ The Azure DevOps token scope is `499b84ac-1321-427f-aa17-267ca6975798/.default`.
 
 ## Wiki Structure Generation
 
-The LLM receives the repo's file tree and README, then outputs XML:
+The LLM receives the repo's file tree, README, and codemap summary, then outputs XML:
 
 ```xml
 <wiki_structure>
@@ -242,5 +256,5 @@ CLI args override config file values.
 
 ## Dependencies
 
-- **Invokes:** `repository/git_ops` (clone), `embedder/` (RAG), `wiki/cache` (save), `clients/azureai_client` (LLM), `clients/search_client` (AI Search), `clients/storage` (blob/local), `promptstore/` (templates)
+- **Invokes:** `repository/git_ops` (clone), `codemap/graph_builder` (AST analysis), `embedder/` (RAG), `wiki/cache` (save), `clients/azureai_client` (LLM), `clients/search_client` (AI Search), `clients/storage` (blob/local), `promptstore/` (wiki templates), `promptstore/codemap` (codemap formatting), `processor/codemap_generator` (codemap summarization)
 - **Invoked by:** CLI directly, Docker container, AML pipeline job
