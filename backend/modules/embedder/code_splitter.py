@@ -352,7 +352,9 @@ def split_code_at_boundaries(
                 'tokens': 0
             }
 
-        # If a single section exceeds max_tokens, split it at line boundaries
+        # If a single section exceeds max_tokens, split it at nested
+        # block boundaries (indentation changes, inner defs) rather than
+        # arbitrary line counts. Falls back to line splitting if needed.
         if section['tokens'] > max_tokens:
             # Finalize current chunk if it has content
             if current['text'].strip():
@@ -367,16 +369,73 @@ def split_code_at_boundaries(
                     'tokens': 0
                 }
 
-            # Split large section at line boundaries
+            # Find nested block boundaries via indentation drops
+            # and inner function/class definitions
             section_lines = section['text'].split('\n')
-            sub_lines = []
-            sub_tokens = 0
-            sub_start = section['start_line']
+            nested_boundaries = [0]
+            if len(section_lines) > 4:
+                # Get base indentation of first non-blank line
+                base_indent = 0
+                for ln in section_lines[:5]:
+                    stripped = ln.lstrip()
+                    if stripped:
+                        base_indent = len(ln) - len(stripped)
+                        break
 
-            for j, line in enumerate(section_lines):
-                line_tokens = count_tokens(line)
-                if (sub_tokens + line_tokens > target_tokens
-                        and sub_lines):
+                for j, line in enumerate(section_lines[1:], 1):
+                    stripped = line.lstrip()
+                    if not stripped:
+                        continue
+                    indent = len(line) - len(stripped)
+                    # Split at inner definitions (nested functions,
+                    # classes, methods) at deeper indentation
+                    if indent > base_indent and any(
+                        stripped.startswith(kw) for kw in (
+                            'def ', 'class ', 'async def ',
+                            'function ', 'public ', 'private ',
+                            'protected ', 'static ',
+                        )
+                    ):
+                        nested_boundaries.append(j)
+                    # Split at blank-line groups (2+ consecutive blanks)
+                    elif (j >= 2
+                          and not section_lines[j-1].strip()
+                          and not section_lines[j-2].strip()
+                          and stripped):
+                        nested_boundaries.append(j)
+
+            # If we found real nested boundaries, use them
+            if len(nested_boundaries) > 1:
+                nested_boundaries.append(len(section_lines))
+                sub_lines = []
+                sub_tokens = 0
+                sub_start = section['start_line']
+                for bi in range(len(nested_boundaries) - 1):
+                    block = section_lines[
+                        nested_boundaries[bi]:nested_boundaries[bi + 1]
+                    ]
+                    block_tokens = count_tokens('\n'.join(block))
+
+                    if (sub_tokens + block_tokens > target_tokens
+                            and sub_lines):
+                        chunk_text = '\n'.join(sub_lines)
+                        chunks.append({
+                            'text': chunk_text,
+                            'start_line': sub_start,
+                            'end_line': sub_start + len(sub_lines) - 1,
+                            'section_type': _detect_section_type(
+                                chunk_text
+                            ),
+                        })
+                        sub_lines = []
+                        sub_tokens = 0
+                        sub_start = (section['start_line']
+                                     + nested_boundaries[bi])
+
+                    sub_lines.extend(block)
+                    sub_tokens += block_tokens
+
+                if sub_lines:
                     chunk_text = '\n'.join(sub_lines)
                     chunks.append({
                         'text': chunk_text,
@@ -384,21 +443,44 @@ def split_code_at_boundaries(
                         'end_line': sub_start + len(sub_lines) - 1,
                         'section_type': _detect_section_type(chunk_text),
                     })
-                    sub_lines = []
-                    sub_tokens = 0
-                    sub_start = section['start_line'] + j
+            else:
+                # Fallback: split at line boundaries
+                sub_lines = []
+                sub_tokens = 0
+                sub_start = section['start_line']
 
-                sub_lines.append(line)
-                sub_tokens += line_tokens
+                for j, line in enumerate(section_lines):
+                    line_tokens = count_tokens(line)
+                    if (sub_tokens + line_tokens > target_tokens
+                            and sub_lines):
+                        chunk_text = '\n'.join(sub_lines)
+                        chunks.append({
+                            'text': chunk_text,
+                            'start_line': sub_start,
+                            'end_line': (sub_start
+                                         + len(sub_lines) - 1),
+                            'section_type': _detect_section_type(
+                                chunk_text
+                            ),
+                        })
+                        sub_lines = []
+                        sub_tokens = 0
+                        sub_start = section['start_line'] + j
 
-            if sub_lines:
-                chunk_text = '\n'.join(sub_lines)
-                chunks.append({
-                    'text': chunk_text,
-                    'start_line': sub_start,
-                    'end_line': sub_start + len(sub_lines) - 1,
-                    'section_type': _detect_section_type(chunk_text),
-                })
+                    sub_lines.append(line)
+                    sub_tokens += line_tokens
+
+                if sub_lines:
+                    chunk_text = '\n'.join(sub_lines)
+                    chunks.append({
+                        'text': chunk_text,
+                        'start_line': sub_start,
+                        'end_line': (sub_start
+                                     + len(sub_lines) - 1),
+                        'section_type': _detect_section_type(
+                            chunk_text
+                        ),
+                    })
             continue
 
         # Add section to current chunk

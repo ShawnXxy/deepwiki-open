@@ -3,7 +3,6 @@
 import os
 import time
 import re
-import uuid
 import asyncio
 from typing import (
     Dict,
@@ -101,11 +100,6 @@ def _extract_request_id(error_or_response) -> str:
     if sdk_req_id:
         return sdk_req_id
 
-    # Fallback: client-generated request ID attached by call()/acall()
-    # This covers APITimeoutError / APIConnectionError where no response exists
-    client_id = getattr(error_or_response, '_client_request_id', None)
-    if client_id:
-        return f"client:{client_id}"
     return 'unknown'
 
 
@@ -657,7 +651,6 @@ class AzureAIClient(ModelClient):
         Should be called in ``Embedder``.
         """
         try:
-            log.debug(f"Parsing embedding response type: {type(response)}")
             # Manual parsing to ensure compatibility with OpenAI v1+ response objects
             if hasattr(response, 'data'):
                 embeddings = []
@@ -680,7 +673,6 @@ class AzureAIClient(ModelClient):
                     # Wrap in Embedding dataclass as expected by adalflow
                     embeddings.append(Embedding(embedding=embedding_vector, index=embedding_index))
                 
-                log.debug(f"Extracted {len(embeddings)} embeddings. First embedding length: {len(embeddings[0].embedding) if embeddings else 0}")
                 return EmbedderOutput(data=embeddings, error=None, raw_response=response)
             
             # Fallback to adalflow's parser if it's not a standard object
@@ -746,39 +738,11 @@ class AzureAIClient(ModelClient):
         """
         kwargs is the combined input and model_kwargs.  Support streaming call.
         """
-        # Generate a client-side request ID so timeouts/connection errors
-        # can still be correlated with Azure APIM server-side logs.
-        client_req_id = str(uuid.uuid4())
-        api_kwargs.setdefault('extra_headers', {})
-        api_kwargs['extra_headers']['x-ms-client-request-id'] = client_req_id
-
-        # Log api_kwargs summary without full message/input content
-        try:
-            debug_kwargs = {}
-            for k, v in api_kwargs.items():
-                if k == 'messages':
-                    debug_kwargs[k] = f"[{len(v)} messages]"
-                elif k == 'input':
-                    if isinstance(v, list):
-                        debug_kwargs[k] = f"[{len(v)} texts]"
-                    else:
-                        debug_kwargs[k] = f"[{len(str(v))} chars]"
-                elif k == 'extra_headers':
-                    continue
-                else:
-                    debug_kwargs[k] = v
-            log.debug(f"api_kwargs: {debug_kwargs} (client_req_id={client_req_id})")
-        except Exception as e:
-            log.debug(f"api_kwargs logging failed: {str(e)}")
-        
         if model_type == ModelType.EMBEDDER:
             try:
                 result = self.sync_client.embeddings.create(**api_kwargs)
-                req_id = _extract_request_id(result)
-                log.debug(f"Embedding call succeeded (req_id={req_id})")
                 return result
             except Exception as e:
-                e._client_request_id = client_req_id
                 req_id = _extract_request_id(e)
                 log.critical(
                     _mask_secrets(f"CRITICAL: Azure Embedding Failed (req_id={req_id}): {e}")
@@ -786,13 +750,11 @@ class AzureAIClient(ModelClient):
                 raise e
         elif model_type == ModelType.LLM:
             if "stream" in api_kwargs and api_kwargs.get("stream", False):
-                log.debug(f"streaming call (client_req_id={client_req_id})")
                 self.chat_completion_parser = handle_streaming_response
                 return self.sync_client.chat.completions.create(**api_kwargs)
             result = self.sync_client.chat.completions.create(**api_kwargs)
             req_id = _extract_request_id(result)
-            completion_id = getattr(result, 'id', 'unknown')
-            log.debug(f"LLM call succeeded (completion_id={completion_id}, req_id={req_id})")
+            log.debug(f"LLM call succeeded (req_id={req_id})")
             return result
         else:
             raise ValueError(f"model_type {model_type} is not supported")
@@ -807,18 +769,9 @@ class AzureAIClient(ModelClient):
             self.async_client = self.init_async_client()
             log.info(f"Async client initialized: endpoint={self._azure_endpoint}")
 
-        # Generate a client-side request ID for correlation
-        client_req_id = str(uuid.uuid4())
-        api_kwargs.setdefault('extra_headers', {})
-        api_kwargs['extra_headers']['x-ms-client-request-id'] = client_req_id
-
         if model_type == ModelType.EMBEDDER:
             return await self.async_client.embeddings.create(**api_kwargs)
         elif model_type == ModelType.LLM:
-            debug_kwargs = {k: v for k, v in api_kwargs.items()
-                           if k not in ('messages', 'extra_headers')}
-            debug_kwargs['messages'] = f"[{len(api_kwargs.get('messages', []))} messages]"
-            log.debug(f"LLM async api_kwargs: {debug_kwargs} (client_req_id={client_req_id})")
             return await self.async_client.chat.completions.create(
                 **api_kwargs
             )

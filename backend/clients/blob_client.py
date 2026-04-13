@@ -556,6 +556,9 @@ def get_blob_storage_client() -> Optional[AzureBlobStorageClient]:
         raise ConnectionError(f"Blob storage connection failed: {e}")
 
 
+_blob_configured: Optional[bool] = None
+
+
 def is_blob_storage_configured() -> bool:
     """
     Check if Azure Blob Storage is enabled in infra.json config.
@@ -564,28 +567,31 @@ def is_blob_storage_configured() -> bool:
         - True  → Use Azure Blob Storage
         - False → Use local storage (~/.adalflow/)
     
-    The 'enabled' flag in config controls this behavior:
-        - enabled: true  → blob storage mode
-        - enabled: false → local storage mode (for Docker/testing)
+    Result is cached after first call since storage mode never changes
+    during a run.
 
     Returns:
         bool: True if blob storage should be used, False for local storage
     """
+    global _blob_configured
+    if _blob_configured is not None:
+        return _blob_configured
+
     infra = get_infra_config()
     blob_config = infra.azure_blob_storage
     
-    # Check if enabled
     enabled = blob_config.enabled
     if not enabled:
-        logger.debug("📦 [Storage] Mode: LOCAL (blob disabled in config)")
+        logger.info("📦 [Storage] Mode: LOCAL (blob disabled in config)")
+        _blob_configured = False
         return False
     
-    # Check if account_name is configured
     has_account = bool(blob_config.account_name)
     if has_account:
-        logger.debug("📦 [Storage] Mode: BLOB (enabled and configured)")
+        logger.info("📦 [Storage] Mode: BLOB (enabled and configured)")
     else:
-        logger.debug("📦 [Storage] Mode: LOCAL (no account_name)")
+        logger.info("📦 [Storage] Mode: LOCAL (no account_name)")
+    _blob_configured = has_account
     return has_account
 
 

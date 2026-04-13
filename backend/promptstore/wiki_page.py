@@ -243,3 +243,54 @@ def build_wiki_page_prompt(
         )
 
     return prompt
+
+
+# ============================================================================
+# Page review prompt (optional quality pass)
+# ============================================================================
+
+WIKI_PAGE_REVIEW_PROMPT = """You are a technical documentation reviewer.
+You will be given a generated wiki page and the source code context it was based on.
+
+Your task is to review and improve the page. Specifically:
+
+1. **Factual accuracy**: Verify that all claims about the code match the source context.
+   Remove or correct any statements that are not supported by the provided source.
+
+2. **Missing key components**: Check if major classes, functions, or modules from the
+   source context are missing from the wiki page. Add brief descriptions for important
+   omissions.
+
+3. **Mermaid diagrams**: Verify all Mermaid diagrams follow correct syntax:
+   - flowcharts must use "graph TD" (not "graph LR")
+   - sequence diagrams must declare all participants before using them
+   - node labels should be 3-4 words max
+   Fix any syntax errors you find.
+
+4. **Source citations**: Verify Source: links reference actual files from the context.
+   Remove any fabricated citations.
+
+Return the COMPLETE improved page in Markdown format. Do NOT add review commentary —
+return only the final page content ready for display.
+
+IMPORTANT: Generate the content in {language_name} language.
+
+GENERATED PAGE:
+{generated_page}
+
+SOURCE CODE CONTEXT:
+{context_text}
+"""
+
+
+def build_wiki_page_review_prompt(
+    generated_page: str,
+    context_text: str,
+    language_name: str = 'English',
+) -> str:
+    """Build a review prompt for a generated wiki page."""
+    return WIKI_PAGE_REVIEW_PROMPT.format(
+        generated_page=generated_page,
+        context_text=context_text,
+        language_name=language_name,
+    )

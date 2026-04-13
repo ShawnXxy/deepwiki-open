@@ -98,6 +98,18 @@
             "field_type": "SearchableField"
         },
         {
+            "name": "section_type",
+            "type": "Edm.String",
+            "key": false,
+            "searchable": false,
+            "filterable": true,
+            "sortable": false,
+            "facetable": true,
+            "retrievable": true,
+            "source_field_name": "section_type",
+            "field_type": "SimpleField"
+        },
+        {
             "name": "title_vector",
             "key": false,
             "type": "SearchFieldDataType.Collection(SearchFieldDataType.Single)",
@@ -138,6 +150,20 @@
             "vector_search_dimensions": 3072,
             "vector_search_configuration": "myHnswProfile",
             "field_type": "SearchField"
+        }
+    ],
+    "scoringProfiles": [
+        {
+            "name": "wikiBoost",
+            "text": {
+                "weights": {
+                    "content": 3.0,
+                    "code_description": 2.0,
+                    "title": 1.5,
+                    "filepath": 1.0,
+                    "key_external_objects": 0.5
+                }
+            }
         }
     ],
     "semanticConfiguration": "my-semantic-config",

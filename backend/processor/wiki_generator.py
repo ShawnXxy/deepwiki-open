@@ -14,19 +14,26 @@ import os
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from adalflow.core.types import ModelType
 
 from backend.config import get_azure_deployment_name
 from backend.clients.azureai_client import AzureAIClient
 from backend.modules.chat.service import format_context_text, get_language_info
+from backend.modules.codemap.models import CodeMapData
+from backend.processor.codemap_generator import (
+    expand_file_paths as _expand_file_paths_with_codemap,
+    summarize_codemap as _summarize_codemap,
+)
+from backend.promptstore.codemap import build_codemap_prompt_section
 from backend.modules.wiki.models import (
     WikiCacheData, WikiPage, WikiSection,
     WikiStructureModel, RepoInfo,
 )
 from backend.promptstore.wiki_page import (
-    build_wiki_page_prompt, format_page_catalog,
+    build_wiki_page_prompt, build_wiki_page_review_prompt,
+    format_page_catalog,
 )
 from backend.promptstore.wiki_structure import (
     build_wiki_structure_prompt as _build_structure_prompt,
@@ -101,8 +108,13 @@ def read_readme(repo_path: str) -> str:
 
 def _call_llm(prompt: str, model_client: AzureAIClient,
               deployment: str, temperature: float = 1.0,
-              max_tokens: int = 16384) -> str:
-    """Make a direct (non-streaming) LLM call and return the full text."""
+              max_tokens: int = 16384) -> Tuple[str, str]:
+    """Make a direct (non-streaming) LLM call.
+
+    Returns:
+        Tuple of (content, req_id) where req_id is the Azure OpenAI
+        server request ID for support ticket correlation.
+    """
     api_kwargs = {
         'model': deployment,
         'messages': [{'role': 'user', 'content': f'/no_think {prompt}'}],
@@ -112,9 +124,10 @@ def _call_llm(prompt: str, model_client: AzureAIClient,
     response = model_client.call(
         api_kwargs=api_kwargs, model_type=ModelType.LLM
     )
+    req_id = getattr(response, '_request_id', 'unknown')
     if hasattr(response, 'choices') and response.choices:
-        return response.choices[0].message.content or ''
-    return ''
+        return response.choices[0].message.content or '', req_id
+    return '', req_id
 
 
 def _parse_structure_xml(xml_text: str) -> Tuple[
@@ -176,6 +189,7 @@ def _parse_structure_xml(xml_text: str) -> Tuple[
         seen_ids.add(pid)
 
         page_title = (page_el.findtext('title') or '').strip()
+        page_description = (page_el.findtext('description') or '').strip()
         importance = (page_el.findtext('importance') or 'medium').strip()
         if importance not in ('high', 'medium', 'low'):
             importance = 'medium'
@@ -190,6 +204,7 @@ def _parse_structure_xml(xml_text: str) -> Tuple[
         ]
         pages.append({
             'id': pid, 'title': page_title, 'content': '',
+            'description': page_description,
             'filePaths': file_paths, 'importance': importance,
             'relatedPages': related,
         })
@@ -257,6 +272,8 @@ def generate_wiki(
     comprehensive: bool = True,
     owner: str = '',
     repo: str = '',
+    codemap: Optional[CodeMapData] = None,
+    enable_review_pass: bool = False,
 ) -> WikiCacheData:
     """Generate a complete wiki for a repository.
 
@@ -273,6 +290,9 @@ def generate_wiki(
         comprehensive: True for 15-25 pages, False for 4-6
         owner: Repo owner (derived from URL if empty)
         repo: Repo name (derived from URL if empty)
+        codemap: Optional CodeMapData for structure-aware generation
+        enable_review_pass: If True, run a second LLM pass to verify
+            factual accuracy and fix Mermaid diagrams (~50% more cost)
 
     Returns:
         WikiCacheData with structure + all generated pages
@@ -282,7 +302,7 @@ def generate_wiki(
     _, language_name = get_language_info(language)
 
     # Step 1: Build file tree + read README
-    logger.info(f"GENERATING WIKI: {owner}/{repo} ({branch})")
+    logger.info(f"Building file tree for: {owner}/{repo} ({branch})")
 
     file_tree = build_file_tree(repo_path)
     readme = read_readme(repo_path)
@@ -297,13 +317,29 @@ def generate_wiki(
     # Step 3: Generate wiki structure via LLM
     logger.info("Generating wiki structure")
 
+    # Build codemap summary for structure-aware page organization
+    codemap_summary = _summarize_codemap(codemap) if codemap else ''
+    additional_context = build_codemap_prompt_section(codemap_summary)
+    if additional_context:
+        logger.info(
+            f"Codemap summary: {len(codemap_summary)} chars "
+            f"injected into structure prompt"
+        )
+
     structure_prompt = _build_structure_prompt(
         file_tree=file_tree, readme=readme,
         owner=owner, repo=repo,
         language=language, comprehensive=comprehensive,
+        additional_context=additional_context,
     )
 
-    structure_xml = _call_llm(structure_prompt, model_client, deployment)
+    structure_xml, structure_req_id = _call_llm(
+        structure_prompt, model_client, deployment
+    )
+    logger.info(
+        f"Structure generated by {deployment} "
+        f"(req_id={structure_req_id})"
+    )
 
     # Content filter retry: if response is too short, retry with dir-only tree
     if len(structure_xml) < 200 or '<wiki_structure>' not in structure_xml:
@@ -317,8 +353,15 @@ def generate_wiki(
             readme='(README omitted for content safety)',
             owner=owner, repo=repo,
             language=language, comprehensive=comprehensive,
+            additional_context=additional_context,
         )
-        structure_xml = _call_llm(structure_prompt, model_client, deployment)
+        structure_xml, structure_req_id = _call_llm(
+            structure_prompt, model_client, deployment
+        )
+        logger.info(
+            f"Structure retry generated by {deployment} "
+            f"(req_id={structure_req_id})"
+        )
 
     # Parse XML structure
     title, description, pages_data, sections_data, root_sections = (
@@ -331,6 +374,26 @@ def generate_wiki(
         f"Structure: title={title}, pages={len(pages_data)}, "
         f"sections={len(sections_data)}, root_sections={root_sections}"
     )
+
+    # Step 3b: Validate pages have declared files that exist in repo
+    _validated_pages = []
+    for page in pages_data:
+        valid_files = [
+            fp for fp in page.get('filePaths', [])
+            if os.path.isfile(os.path.join(repo_path, fp))
+        ]
+        page['filePaths'] = valid_files
+        _validated_pages.append(page)
+    # Log pages with no valid files (they'll rely on semantic search)
+    no_file_pages = [
+        p['id'] for p in _validated_pages if not p['filePaths']
+    ]
+    if no_file_pages:
+        logger.info(
+            f"Pages with no matching files (semantic-only): "
+            f"{no_file_pages}"
+        )
+    pages_data = _validated_pages
 
     # Build page catalog for cross-page links
     page_catalog = format_page_catalog(
@@ -347,11 +410,31 @@ def generate_wiki(
         page_title = page_data['title']
         page_file_paths = page_data.get('filePaths', [])
 
+        # Expand file_paths with codemap-connected files (imports, calls)
+        retrieval_file_paths = _expand_file_paths_with_codemap(
+            page_file_paths, codemap
+        )
+
+        # Build expanded query: title + description + related page titles
+        # instead of bare title, for dramatically better retrieval.
+        query_parts = [page_title]
+        page_desc = page_data.get('description', '')
+        if page_desc:
+            query_parts.append(page_desc)
+        # Add titles of related pages for cross-cutting context
+        for rel_id in page_data.get('relatedPages', []):
+            rel_page = next(
+                (p for p in pages_data if p['id'] == rel_id), None
+            )
+            if rel_page:
+                query_parts.append(rel_page['title'])
+        expanded_query = ' — '.join(query_parts)
+
         # RAG retrieval with file-path priority
         try:
             retrieved_docs = retriever.call_with_file_filter(
-                query=page_title,
-                file_paths=page_file_paths,
+                query=expanded_query,
+                file_paths=retrieval_file_paths,
                 top_k=wiki_top_k,
                 language=language,
             )
@@ -367,22 +450,13 @@ def generate_wiki(
             repo_type=repo_type,
         )
 
-        # Cap context to avoid oversized prompts and memory spikes.
-        # Truncate at a clean file-path boundary so partial files
-        # are not sent to the LLM.
-        _MAX_CONTEXT_CHARS = 120000
-        if len(context_text) > _MAX_CONTEXT_CHARS:
-            truncated = context_text[:_MAX_CONTEXT_CHARS]
-            # Find last complete file section boundary
-            boundary = truncated.rfind('\n## File Path:')
-            if boundary > 0:
-                context_text = truncated[:boundary]
-            else:
-                context_text = truncated
-            logger.info(
-                f"Context truncated to {len(context_text)} chars "
-                f"(was {len(context_text)})"
-            )
+        # Log context size for the page prompt (no truncation —
+        # quality is critical; let the model handle its full context).
+        logger.info(
+            f"Page [{i}/{len(pages_data)}] {page_id}: {page_title} — "
+            f"context={len(context_text)} chars, "
+            f"files={len(page_file_paths)} declared"
+        )
 
         # Build page prompt
         wiki_prompt = build_wiki_page_prompt(
@@ -399,10 +473,39 @@ def generate_wiki(
 
         # Generate page content
         try:
-            content = _call_llm(wiki_prompt, model_client, deployment)
+            content, page_req_id = _call_llm(
+                wiki_prompt, model_client, deployment
+            )
         except Exception as e:
             logger.error(f"LLM call failed for page {page_id}: {e}")
             content = f"Error generating page: {e}"
+            page_req_id = 'failed'
+
+        # Optional review pass: verify accuracy and fix diagrams
+        if enable_review_pass and not content.startswith('Error'):
+            try:
+                review_prompt = build_wiki_page_review_prompt(
+                    generated_page=content,
+                    context_text=context_text,
+                    language_name=language_name,
+                )
+                reviewed, review_req_id = _call_llm(
+                    review_prompt, model_client, deployment
+                )
+                if reviewed and len(reviewed) > len(content) * 0.5:
+                    content = reviewed
+                    logger.info(
+                        f"  Review pass applied for {page_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"  Review pass returned short content for "
+                        f"{page_id}, keeping original"
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"  Review pass failed for {page_id}: {e}"
+                )
 
         generated_pages[page_id] = WikiPage(
             id=page_id,
@@ -413,8 +516,10 @@ def generate_wiki(
             relatedPages=page_data.get('relatedPages', []),
         )
         logger.info(
+            f"Generated page -> "
             f"[{i}/{len(pages_data)}] {page_id}: {page_title} "
-            f"({len(content)} chars)"
+            f"({len(content)} chars, model={deployment}, "
+            f"req_id={page_req_id})"
         )
 
     # Step 5: Assemble WikiCacheData
