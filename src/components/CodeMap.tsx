@@ -292,6 +292,37 @@ const LOD_TIERS: { zoomThreshold: number; tier: LodTier }[] = [
   { zoomThreshold: Infinity, tier: { label: 'Detail',     maxNodes: 400 } },
 ];
 
+// Number of high-importance nodes to focus on for the initial "hero" view.
+// Keeps the initial zoom readable instead of shrinking to fit everything.
+const FIT_HERO_COUNT = 15;
+const FIT_MIN_ZOOM = 0.35;
+
+/**
+ * Pick the IDs of the top-N most important nodes currently on screen.
+ * Used by fitView to focus on the "hero" cluster instead of fitting everything.
+ * Falls back to empty array if no importance scores are available.
+ */
+function getHeroNodeIds(flowNodes: Node[], data: CodeMapData): string[] {
+  // Build a lookup from node ID → importanceScore
+  const scoreMap = new Map<string, number>();
+  for (const n of data.nodes) {
+    if (n.importanceScore && n.importanceScore > 0) {
+      scoreMap.set(n.id, n.importanceScore);
+    }
+  }
+  if (scoreMap.size === 0) return [];  // no scores available (old cache)
+
+  // Only consider nodes actually in the current flow
+  const visible = flowNodes
+    .map(n => ({ id: n.id, score: scoreMap.get(n.id) ?? 0 }))
+    .filter(n => n.score > 0);
+
+  if (visible.length <= FIT_HERO_COUNT) return [];  // few enough to fit all
+
+  visible.sort((a, b) => b.score - a.score);
+  return visible.slice(0, FIT_HERO_COUNT).map(n => n.id);
+}
+
 function getLodTier(zoom: number): LodTier {
   for (const t of LOD_TIERS) {
     if (zoom < t.zoomThreshold) return t.tier;
@@ -636,14 +667,21 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
       setIsLayouting(false);
       if (doFit) {
         setTimeout(() => {
-          fitView({ padding: 0.15, duration: 200 });
-          setTimeout(() => { isFitting.current = false; }, 300);
+          // Smart fit: if many nodes, fit only to the top-N important ones
+          // so the initial view is readable. Otherwise fit all.
+          const heroIds = getHeroNodeIds(finalNodes, data);
+          if (heroIds.length > 0 && heroIds.length < finalNodes.length) {
+            fitView({ nodes: heroIds.map(id => ({ id })), padding: 0.2, duration: 250, minZoom: FIT_MIN_ZOOM, maxZoom: 1 });
+          } else {
+            fitView({ padding: 0.15, duration: 200, minZoom: FIT_MIN_ZOOM, maxZoom: 1 });
+          }
+          setTimeout(() => { isFitting.current = false; }, 350);
         }, 50);
       }
       shouldFitView.current = true;
     });
     return () => cancelAnimationFrame(frame);
-  }, [lnodes, ledges, setNodes, setEdges, fitView]);
+  }, [lnodes, ledges, setNodes, setEdges, fitView, data]);
 
   // Deselect if the selected node is no longer visible after LOD change
   React.useEffect(() => {
@@ -681,6 +719,25 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
 
   const onPaneClick = useCallback(() => setSelectedId(null), []);
 
+  // Fit All: zoom out to show every node
+  const handleFitAll = useCallback(() => {
+    isFitting.current = true;
+    fitView({ padding: 0.1, duration: 250, maxZoom: 1 });
+    setTimeout(() => { isFitting.current = false; }, 350);
+  }, [fitView]);
+
+  // Fit Core: zoom to top-N important nodes
+  const handleFitCore = useCallback(() => {
+    const heroIds = getHeroNodeIds(lnodes, data);
+    isFitting.current = true;
+    if (heroIds.length > 0) {
+      fitView({ nodes: heroIds.map(id => ({ id })), padding: 0.2, duration: 250, minZoom: FIT_MIN_ZOOM, maxZoom: 1 });
+    } else {
+      fitView({ padding: 0.15, duration: 250, minZoom: FIT_MIN_ZOOM, maxZoom: 1 });
+    }
+    setTimeout(() => { isFitting.current = false; }, 350);
+  }, [fitView, lnodes, data]);
+
   const stats = data.metadata;
 
   return (
@@ -711,6 +768,18 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
             <input type="text" placeholder="Search..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
               className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 outline-none focus:border-blue-400" />
             <div className="text-[10px] text-gray-400">{lodTier.label} · {lnodes.length} nodes</div>
+            <div className="flex gap-1">
+              <button onClick={handleFitCore}
+                className="px-1.5 py-0.5 text-[10px] rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                title="Zoom to the most important nodes">
+                Fit Core
+              </button>
+              <button onClick={handleFitAll}
+                className="px-1.5 py-0.5 text-[10px] rounded bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                title="Zoom out to show all nodes">
+                Fit All
+              </button>
+            </div>
             {truncated && <div className="text-[10px] text-amber-600">Showing {lodTier.maxNodes} of {data.nodes.length}. Zoom in or search to see more.</div>}
             {isLayouting && <div className="text-[10px] text-blue-500 animate-pulse">Computing layout...</div>}
             <div className="text-[10px] text-gray-400 leading-tight">Click: select & highlight connections<br/>Click again: expand node<br/>Click canvas: deselect</div>
