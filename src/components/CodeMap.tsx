@@ -184,12 +184,18 @@ function computeLayout(flowNodes: Node[], flowEdges: Edge[], direction: 'TB' | '
  * Incremental layout: reuse existing positions for nodes already on screen,
  * only position truly new nodes near their neighbours.
  * Avoids the full dagre re-layout that shifts everything on LOD changes.
+ * Uses collision avoidance so new nodes don't overlap existing ones.
  */
 function incrementalLayout(
   flowNodes: Node[], flowEdges: Edge[],
   prevPositions: Map<string, { x: number; y: number }>,
 ): Node[] {
   if (flowNodes.length === 0) return [];
+
+  const NODE_W = 240;    // approximate node width for overlap check
+  const NODE_H = 65;     // approximate node height
+  const PAD_X = 30;      // horizontal gap between nodes
+  const PAD_Y = 20;      // vertical gap between nodes
 
   const positioned: Node[] = [];
   const newNodes: Node[] = [];
@@ -213,6 +219,34 @@ function incrementalLayout(
       edgeIndex.get(e.target)!.push(e.source);
     });
 
+    // Collision check: does a candidate position overlap any placed node?
+    const overlaps = (cx: number, cy: number): boolean => {
+      for (const [, p] of posMap) {
+        if (Math.abs(cx - p.x) < NODE_W + PAD_X && Math.abs(cy - p.y) < NODE_H + PAD_Y) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Find a non-overlapping position near a target point using spiral search
+    const findFreeSpot = (baseX: number, baseY: number): { x: number; y: number } => {
+      if (!overlaps(baseX, baseY)) return { x: baseX, y: baseY };
+      const stepX = NODE_W + PAD_X;
+      const stepY = NODE_H + PAD_Y;
+      for (let ring = 1; ring <= 8; ring++) {
+        for (let dx = -ring; dx <= ring; dx++) {
+          for (let dy = -ring; dy <= ring; dy++) {
+            if (Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
+            const cx = baseX + dx * stepX;
+            const cy = baseY + dy * stepY;
+            if (!overlaps(cx, cy)) return { x: cx, y: cy };
+          }
+        }
+      }
+      return { x: baseX + (NODE_W + PAD_X) * 9, y: baseY };
+    };
+
     let gridIdx = 0;
     let maxY = 0;
     positioned.forEach(n => { maxY = Math.max(maxY, n.position.y + 80); });
@@ -225,8 +259,7 @@ function incrementalLayout(
       for (const nid of neighbours) {
         const np = posMap.get(nid);
         if (np) {
-          const jitter = (Math.random() - 0.5) * 120;
-          const pos = { x: np.x + 200 + jitter, y: np.y + jitter };
+          const pos = findFreeSpot(np.x + NODE_W + PAD_X, np.y);
           positioned.push({ ...node, position: pos });
           posMap.set(node.id, pos);
           placed = true;
@@ -236,7 +269,8 @@ function incrementalLayout(
       if (!placed) {
         const col = gridIdx % cols;
         const row = Math.floor(gridIdx / cols);
-        const pos = { x: col * 250, y: gridTop + row * 75 };
+        const base = { x: col * (NODE_W + PAD_X), y: gridTop + row * (NODE_H + PAD_Y) };
+        const pos = findFreeSpot(base.x, base.y);
         positioned.push({ ...node, position: pos });
         posMap.set(node.id, pos);
         gridIdx++;
