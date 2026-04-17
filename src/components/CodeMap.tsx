@@ -180,6 +180,73 @@ function computeLayout(flowNodes: Node[], flowEdges: Edge[], direction: 'TB' | '
   return positioned;
 }
 
+/**
+ * Incremental layout: reuse existing positions for nodes already on screen,
+ * only position truly new nodes near their neighbours.
+ * Avoids the full dagre re-layout that shifts everything on LOD changes.
+ */
+function incrementalLayout(
+  flowNodes: Node[], flowEdges: Edge[],
+  prevPositions: Map<string, { x: number; y: number }>,
+): Node[] {
+  if (flowNodes.length === 0) return [];
+
+  const positioned: Node[] = [];
+  const newNodes: Node[] = [];
+
+  for (const node of flowNodes) {
+    const prev = prevPositions.get(node.id);
+    if (prev) {
+      positioned.push({ ...node, position: { ...prev } });
+    } else {
+      newNodes.push(node);
+    }
+  }
+
+  if (newNodes.length > 0) {
+    const posMap = new Map(positioned.map(n => [n.id, n.position]));
+    const edgeIndex = new Map<string, string[]>();
+    flowEdges.forEach(e => {
+      if (!edgeIndex.has(e.source)) edgeIndex.set(e.source, []);
+      edgeIndex.get(e.source)!.push(e.target);
+      if (!edgeIndex.has(e.target)) edgeIndex.set(e.target, []);
+      edgeIndex.get(e.target)!.push(e.source);
+    });
+
+    let gridIdx = 0;
+    let maxY = 0;
+    positioned.forEach(n => { maxY = Math.max(maxY, n.position.y + 80); });
+    const gridTop = maxY + 60;
+    const cols = Math.max(Math.ceil(Math.sqrt(newNodes.length)), 1);
+
+    for (const node of newNodes) {
+      const neighbours = edgeIndex.get(node.id) || [];
+      let placed = false;
+      for (const nid of neighbours) {
+        const np = posMap.get(nid);
+        if (np) {
+          const jitter = (Math.random() - 0.5) * 120;
+          const pos = { x: np.x + 200 + jitter, y: np.y + jitter };
+          positioned.push({ ...node, position: pos });
+          posMap.set(node.id, pos);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        const col = gridIdx % cols;
+        const row = Math.floor(gridIdx / cols);
+        const pos = { x: col * 250, y: gridTop + row * 75 };
+        positioned.push({ ...node, position: pos });
+        posMap.set(node.id, pos);
+        gridIdx++;
+      }
+    }
+  }
+
+  return positioned;
+}
+
 // ============================================================================
 // LOD (Level-of-Detail) tiers — map-like zoom behaviour
 // ============================================================================
@@ -514,14 +581,24 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const prevNodePositions = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   React.useEffect(() => {
     setIsLayouting(true);
     const doFit = shouldFitView.current;
     if (doFit) isFitting.current = true;
     const frame = requestAnimationFrame(() => {
-      setNodes(lnodes);
+      // For LOD zoom changes (doFit=false), use incremental layout to keep positions stable.
+      // For intentional changes (view switch, search, initial load), do full dagre layout.
+      let finalNodes: Node[];
+      if (!doFit && prevNodePositions.current.size > 0) {
+        finalNodes = incrementalLayout(lnodes, ledges, prevNodePositions.current);
+      } else {
+        finalNodes = lnodes;
+      }
+      setNodes(finalNodes);
       setEdges(ledges);
+      prevNodePositions.current = new Map(finalNodes.map(n => [n.id, n.position]));
       setIsLayouting(false);
       if (doFit) {
         setTimeout(() => {
@@ -529,7 +606,7 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
           setTimeout(() => { isFitting.current = false; }, 300);
         }, 50);
       }
-      shouldFitView.current = true;            // reset for next non-zoom trigger
+      shouldFitView.current = true;
     });
     return () => cancelAnimationFrame(frame);
   }, [lnodes, ledges, setNodes, setEdges, fitView]);
