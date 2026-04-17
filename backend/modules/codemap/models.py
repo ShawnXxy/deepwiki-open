@@ -19,6 +19,7 @@ class SymbolNode(BaseModel):
     parent_id: Optional[str] = None
     language: Optional[str] = None
     signature: Optional[str] = None
+    importance_score: float = 0.0
 
 
 class SymbolEdge(BaseModel):

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useRef } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -11,6 +11,7 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  useOnViewportChange,
   Handle,
   Position,
   type Node,
@@ -179,15 +180,164 @@ function computeLayout(flowNodes: Node[], flowEdges: Edge[], direction: 'TB' | '
   return positioned;
 }
 
+/**
+ * Incremental layout: reuse existing positions for nodes already on screen,
+ * only position truly new nodes near their neighbours.
+ * Avoids the full dagre re-layout that shifts everything on LOD changes.
+ * Uses collision avoidance so new nodes don't overlap existing ones.
+ */
+function incrementalLayout(
+  flowNodes: Node[], flowEdges: Edge[],
+  prevPositions: Map<string, { x: number; y: number }>,
+): Node[] {
+  if (flowNodes.length === 0) return [];
+
+  const NODE_W = 240;    // approximate node width for overlap check
+  const NODE_H = 65;     // approximate node height
+  const PAD_X = 30;      // horizontal gap between nodes
+  const PAD_Y = 20;      // vertical gap between nodes
+
+  const positioned: Node[] = [];
+  const newNodes: Node[] = [];
+
+  for (const node of flowNodes) {
+    const prev = prevPositions.get(node.id);
+    if (prev) {
+      positioned.push({ ...node, position: { ...prev } });
+    } else {
+      newNodes.push(node);
+    }
+  }
+
+  if (newNodes.length > 0) {
+    const posMap = new Map(positioned.map(n => [n.id, n.position]));
+    const edgeIndex = new Map<string, string[]>();
+    flowEdges.forEach(e => {
+      if (!edgeIndex.has(e.source)) edgeIndex.set(e.source, []);
+      edgeIndex.get(e.source)!.push(e.target);
+      if (!edgeIndex.has(e.target)) edgeIndex.set(e.target, []);
+      edgeIndex.get(e.target)!.push(e.source);
+    });
+
+    // Collision check: does a candidate position overlap any placed node?
+    const overlaps = (cx: number, cy: number): boolean => {
+      for (const [, p] of posMap) {
+        if (Math.abs(cx - p.x) < NODE_W + PAD_X && Math.abs(cy - p.y) < NODE_H + PAD_Y) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Find a non-overlapping position near a target point using spiral search
+    const findFreeSpot = (baseX: number, baseY: number): { x: number; y: number } => {
+      if (!overlaps(baseX, baseY)) return { x: baseX, y: baseY };
+      const stepX = NODE_W + PAD_X;
+      const stepY = NODE_H + PAD_Y;
+      for (let ring = 1; ring <= 8; ring++) {
+        for (let dx = -ring; dx <= ring; dx++) {
+          for (let dy = -ring; dy <= ring; dy++) {
+            if (Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
+            const cx = baseX + dx * stepX;
+            const cy = baseY + dy * stepY;
+            if (!overlaps(cx, cy)) return { x: cx, y: cy };
+          }
+        }
+      }
+      return { x: baseX + (NODE_W + PAD_X) * 9, y: baseY };
+    };
+
+    let gridIdx = 0;
+    let maxY = 0;
+    positioned.forEach(n => { maxY = Math.max(maxY, n.position.y + 80); });
+    const gridTop = maxY + 60;
+    const cols = Math.max(Math.ceil(Math.sqrt(newNodes.length)), 1);
+
+    for (const node of newNodes) {
+      const neighbours = edgeIndex.get(node.id) || [];
+      let placed = false;
+      for (const nid of neighbours) {
+        const np = posMap.get(nid);
+        if (np) {
+          const pos = findFreeSpot(np.x + NODE_W + PAD_X, np.y);
+          positioned.push({ ...node, position: pos });
+          posMap.set(node.id, pos);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        const col = gridIdx % cols;
+        const row = Math.floor(gridIdx / cols);
+        const base = { x: col * (NODE_W + PAD_X), y: gridTop + row * (NODE_H + PAD_Y) };
+        const pos = findFreeSpot(base.x, base.y);
+        positioned.push({ ...node, position: pos });
+        posMap.set(node.id, pos);
+        gridIdx++;
+      }
+    }
+  }
+
+  return positioned;
+}
+
+// ============================================================================
+// LOD (Level-of-Detail) tiers — map-like zoom behaviour
+// ============================================================================
+
+interface LodTier { label: string; maxNodes: number; }
+const LOD_TIERS: { zoomThreshold: number; tier: LodTier }[] = [
+  { zoomThreshold: 0.15, tier: { label: 'Overview',       maxNodes: 30  } },
+  { zoomThreshold: 0.50, tier: { label: 'Intermediate',   maxNodes: 150 } },
+  { zoomThreshold: Infinity, tier: { label: 'Detail',     maxNodes: 400 } },
+];
+
+// Number of high-importance nodes to focus on for the initial "hero" view.
+// Keeps the initial zoom readable instead of shrinking to fit everything.
+const FIT_HERO_COUNT = 15;
+const FIT_MIN_ZOOM = 0.35;
+
+/**
+ * Pick the IDs of the top-N most important nodes currently on screen.
+ * Used by fitView to focus on the "hero" cluster instead of fitting everything.
+ * Falls back to empty array if no importance scores are available.
+ */
+function getHeroNodeIds(flowNodes: Node[], data: CodeMapData): string[] {
+  // Build a lookup from node ID → importanceScore
+  const scoreMap = new Map<string, number>();
+  for (const n of data.nodes) {
+    if (n.importanceScore && n.importanceScore > 0) {
+      scoreMap.set(n.id, n.importanceScore);
+    }
+  }
+  if (scoreMap.size === 0) return [];  // no scores available (old cache)
+
+  // Only consider nodes actually in the current flow
+  const visible = flowNodes
+    .map(n => ({ id: n.id, score: scoreMap.get(n.id) ?? 0 }))
+    .filter(n => n.score > 0);
+
+  if (visible.length <= FIT_HERO_COUNT) return [];  // few enough to fit all
+
+  visible.sort((a, b) => b.score - a.score);
+  return visible.slice(0, FIT_HERO_COUNT).map(n => n.id);
+}
+
+function getLodTier(zoom: number): LodTier {
+  for (const t of LOD_TIERS) {
+    if (zoom < t.zoomThreshold) return t.tier;
+  }
+  return LOD_TIERS[LOD_TIERS.length - 1].tier;
+}
+
 // ============================================================================
 // Graph builder
 // ============================================================================
 
-const MAX_NODES = 400;
-
 function buildGraph(
   data: CodeMapData, viewMode: ViewMode, query: string,
   expandedIds: Set<string>, selectedId: string | null,
+  maxNodes: number,
 ) {
   const raw = data.nodes;
   const rawEdges = data.edges;
@@ -220,8 +370,17 @@ function buildGraph(
   }
 
   if (q) filtered = filtered.filter(n => n.name.toLowerCase().includes(q) || n.filePath.toLowerCase().includes(q));
-  const truncated = filtered.length > MAX_NODES;
-  if (truncated) filtered = filtered.slice(0, MAX_NODES);
+
+  // LOD: when importance scores are available, sort by score so the most
+  // critical nodes survive truncation at lower zoom levels.
+  const hasScores = filtered.some(n => (n.importanceScore ?? 0) > 0);
+  if (hasScores) {
+    filtered.sort((a, b) => (b.importanceScore ?? 0) - (a.importanceScore ?? 0));
+  }
+
+  const budget = q ? 400 : maxNodes;           // search overrides LOD
+  const truncated = filtered.length > budget;
+  if (truncated) filtered = filtered.slice(0, budget);
 
   // When expanded, inject children as real graph nodes
   const expandedChildren: CodeMapNode[] = [];
@@ -434,13 +593,32 @@ interface CodeMapProps {
 }
 
 function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
-  const [viewMode, setViewMode] = useState<ViewMode>('files');
+  const [viewMode, setViewMode] = useState<ViewMode>('classes');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isLayouting, setIsLayouting] = useState(false);
   const { fitView } = useReactFlow();
+
+  // LOD zoom tracking — only react to USER-initiated zoom, not programmatic fitView.
+  // isFitting suppresses viewport events during layout/fitView transitions to break
+  // the loop: fitView→zoom change→tier change→rebuild→fitView.
+  const [currentZoom, setCurrentZoom] = useState(1);
+  const isFitting = useRef(false);
+  const shouldFitView = useRef(true);
+  const zoomTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useOnViewportChange({
+    onChange: ({ zoom }) => {
+      if (isFitting.current) return;
+      if (zoomTimer.current) clearTimeout(zoomTimer.current);
+      zoomTimer.current = setTimeout(() => {
+        shouldFitView.current = false;         // LOD change from user zoom — don't reset viewport
+        setCurrentZoom(zoom);
+      }, 150);
+    },
+  });
+  const lodTier = useMemo(() => getLodTier(currentZoom), [currentZoom]);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(searchQuery), 300);
@@ -450,26 +628,67 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
   React.useEffect(() => {
     setExpandedIds(new Set());
     setSelectedId(null);
+    shouldFitView.current = true;
   }, [viewMode]);
 
+  const prevQuery = useRef(debouncedQuery);
+  React.useEffect(() => {
+    if (prevQuery.current !== debouncedQuery) {
+      shouldFitView.current = true;
+      prevQuery.current = debouncedQuery;
+    }
+  }, [debouncedQuery]);
+
   const { nodes: lnodes, edges: ledges, truncated } = useMemo(
-    () => buildGraph(data, viewMode, debouncedQuery, expandedIds, selectedId),
-    [data, viewMode, debouncedQuery, expandedIds, selectedId]
+    () => buildGraph(data, viewMode, debouncedQuery, expandedIds, selectedId, lodTier.maxNodes),
+    [data, viewMode, debouncedQuery, expandedIds, selectedId, lodTier.maxNodes]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const prevNodePositions = useRef<Map<string, { x: number; y: number }>>(new Map());
 
   React.useEffect(() => {
     setIsLayouting(true);
+    const doFit = shouldFitView.current;
+    if (doFit) isFitting.current = true;
     const frame = requestAnimationFrame(() => {
-      setNodes(lnodes);
+      // For LOD zoom changes (doFit=false), use incremental layout to keep positions stable.
+      // For intentional changes (view switch, search, initial load), do full dagre layout.
+      let finalNodes: Node[];
+      if (!doFit && prevNodePositions.current.size > 0) {
+        finalNodes = incrementalLayout(lnodes, ledges, prevNodePositions.current);
+      } else {
+        finalNodes = lnodes;
+      }
+      setNodes(finalNodes);
       setEdges(ledges);
+      prevNodePositions.current = new Map(finalNodes.map(n => [n.id, n.position]));
       setIsLayouting(false);
-      setTimeout(() => fitView({ padding: 0.15, duration: 200 }), 50);
+      if (doFit) {
+        setTimeout(() => {
+          // Smart fit: if many nodes, fit only to the top-N important ones
+          // so the initial view is readable. Otherwise fit all.
+          const heroIds = getHeroNodeIds(finalNodes, data);
+          if (heroIds.length > 0 && heroIds.length < finalNodes.length) {
+            fitView({ nodes: heroIds.map(id => ({ id })), padding: 0.2, duration: 250, minZoom: FIT_MIN_ZOOM, maxZoom: 1 });
+          } else {
+            fitView({ padding: 0.15, duration: 200, minZoom: FIT_MIN_ZOOM, maxZoom: 1 });
+          }
+          setTimeout(() => { isFitting.current = false; }, 350);
+        }, 50);
+      }
+      shouldFitView.current = true;
     });
     return () => cancelAnimationFrame(frame);
-  }, [lnodes, ledges, setNodes, setEdges, fitView]);
+  }, [lnodes, ledges, setNodes, setEdges, fitView, data]);
+
+  // Deselect if the selected node is no longer visible after LOD change
+  React.useEffect(() => {
+    if (selectedId && !lnodes.some(n => n.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [lnodes, selectedId]);
 
   const selectedInfo = useMemo<SelectedInfo | null>(() => {
     if (!selectedId) return null;
@@ -500,6 +719,25 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
 
   const onPaneClick = useCallback(() => setSelectedId(null), []);
 
+  // Fit All: zoom out to show every node
+  const handleFitAll = useCallback(() => {
+    isFitting.current = true;
+    fitView({ padding: 0.1, duration: 250, maxZoom: 1 });
+    setTimeout(() => { isFitting.current = false; }, 350);
+  }, [fitView]);
+
+  // Fit Core: zoom to top-N important nodes
+  const handleFitCore = useCallback(() => {
+    const heroIds = getHeroNodeIds(lnodes, data);
+    isFitting.current = true;
+    if (heroIds.length > 0) {
+      fitView({ nodes: heroIds.map(id => ({ id })), padding: 0.2, duration: 250, minZoom: FIT_MIN_ZOOM, maxZoom: 1 });
+    } else {
+      fitView({ padding: 0.15, duration: 250, minZoom: FIT_MIN_ZOOM, maxZoom: 1 });
+    }
+    setTimeout(() => { isFitting.current = false; }, 350);
+  }, [fitView, lnodes, data]);
+
   const stats = data.metadata;
 
   return (
@@ -520,7 +758,7 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
         <Panel position="top-left">
           <div className="flex flex-col gap-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 shadow-lg" style={{ maxWidth: 210 }}>
             <div className="flex gap-1">
-              {(['files', 'symbols', 'classes'] as ViewMode[]).map(m => (
+              {(['classes', 'symbols', 'files'] as ViewMode[]).map(m => (
                 <button key={m} onClick={() => setViewMode(m)}
                   className={`px-2 py-1 text-[11px] rounded transition-colors ${viewMode === m ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
                   {m.charAt(0).toUpperCase() + m.slice(1)}
@@ -529,7 +767,20 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
             </div>
             <input type="text" placeholder="Search..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
               className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 outline-none focus:border-blue-400" />
-            {truncated && <div className="text-[10px] text-amber-600">Showing {MAX_NODES} of {data.nodes.length}. Search to filter.</div>}
+            <div className="text-[10px] text-gray-400">{lodTier.label} · {lnodes.length} nodes</div>
+            <div className="flex gap-1">
+              <button onClick={handleFitCore}
+                className="px-1.5 py-0.5 text-[10px] rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                title="Zoom to the most important nodes">
+                Fit Core
+              </button>
+              <button onClick={handleFitAll}
+                className="px-1.5 py-0.5 text-[10px] rounded bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors"
+                title="Zoom out to show all nodes">
+                Fit All
+              </button>
+            </div>
+            {truncated && <div className="text-[10px] text-amber-600">Showing {lodTier.maxNodes} of {data.nodes.length}. Zoom in or search to see more.</div>}
             {isLayouting && <div className="text-[10px] text-blue-500 animate-pulse">Computing layout...</div>}
             <div className="text-[10px] text-gray-400 leading-tight">Click: select & highlight connections<br/>Click again: expand node<br/>Click canvas: deselect</div>
           </div>
