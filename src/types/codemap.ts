@@ -8,6 +8,7 @@ export interface CodeMapNode {
   parentId?: string;
   language?: string;
   signature?: string;
+  importanceScore?: number;
 }
 
 export interface CodeMapEdge {

@@ -141,6 +141,9 @@ def build_codemap(
     del resolved_edges
     del seen_edges
 
+    # Phase 5: Compute importance scores for LOD
+    _compute_importance_scores(all_nodes, unique_edges)
+
     # Build metadata
     commit_hash = _read_commit_hash(repo_path)
     symbol_count = sum(
@@ -403,3 +406,56 @@ def _read_commit_hash(repo_path: str) -> Optional[str]:
         return content
     except (OSError, IOError, IndexError):
         return None
+
+
+def _compute_importance_scores(
+    nodes: List[SymbolNode],
+    edges: List[SymbolEdge],
+) -> None:
+    """Compute importance scores for all nodes in-place.
+
+    Scoring formula (normalised 0.0–1.0):
+        0.4 * indegree   — heavily referenced = core utility
+        0.2 * outdegree   — many outgoing refs = orchestrator / entry point
+        0.2 * kind_bonus  — structural weight by symbol kind
+        0.2 * inheritance — base classes / interfaces with many subclasses
+
+    Nodes with higher scores are shown first when the frontend applies
+    level-of-detail (LOD) zoom filtering.
+    """
+    if not nodes:
+        return
+
+    # Count degrees
+    indegree: Dict[str, int] = defaultdict(int)
+    outdegree: Dict[str, int] = defaultdict(int)
+    inherit_indegree: Dict[str, int] = defaultdict(int)
+
+    for edge in edges:
+        indegree[edge.target_id] += 1
+        outdegree[edge.source_id] += 1
+        if edge.kind in ('inherits', 'implements'):
+            inherit_indegree[edge.target_id] += 1
+
+    max_in = max(indegree.values()) if indegree else 1
+    max_out = max(outdegree.values()) if outdegree else 1
+    max_inh = max(inherit_indegree.values()) if inherit_indegree else 1
+
+    kind_bonus: Dict[str, float] = {
+        'class': 1.0,
+        'file': 0.6,
+        'function': 0.3,
+        'method': 0.1,
+        'module': 0.5,
+    }
+
+    for node in nodes:
+        in_norm = indegree.get(node.id, 0) / max_in
+        out_norm = outdegree.get(node.id, 0) / max_out
+        k_bonus = kind_bonus.get(node.kind, 0.1)
+        inh_norm = inherit_indegree.get(node.id, 0) / max_inh
+
+        node.importance_score = round(
+            0.4 * in_norm + 0.2 * out_norm + 0.2 * k_bonus + 0.2 * inh_norm,
+            4,
+        )

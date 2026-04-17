@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useRef } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -11,6 +11,7 @@ import {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  useOnViewportChange,
   Handle,
   Position,
   type Node,
@@ -180,14 +181,31 @@ function computeLayout(flowNodes: Node[], flowEdges: Edge[], direction: 'TB' | '
 }
 
 // ============================================================================
-// Graph builder
+// LOD (Level-of-Detail) tiers — map-like zoom behaviour
 // ============================================================================
 
-const MAX_NODES = 400;
+interface LodTier { label: string; maxNodes: number; }
+const LOD_TIERS: { zoomThreshold: number; tier: LodTier }[] = [
+  { zoomThreshold: 0.15, tier: { label: 'Overview',       maxNodes: 30  } },
+  { zoomThreshold: 0.50, tier: { label: 'Intermediate',   maxNodes: 150 } },
+  { zoomThreshold: Infinity, tier: { label: 'Detail',     maxNodes: 400 } },
+];
+
+function getLodTier(zoom: number): LodTier {
+  for (const t of LOD_TIERS) {
+    if (zoom < t.zoomThreshold) return t.tier;
+  }
+  return LOD_TIERS[LOD_TIERS.length - 1].tier;
+}
+
+// ============================================================================
+// Graph builder
+// ============================================================================
 
 function buildGraph(
   data: CodeMapData, viewMode: ViewMode, query: string,
   expandedIds: Set<string>, selectedId: string | null,
+  maxNodes: number,
 ) {
   const raw = data.nodes;
   const rawEdges = data.edges;
@@ -220,8 +238,17 @@ function buildGraph(
   }
 
   if (q) filtered = filtered.filter(n => n.name.toLowerCase().includes(q) || n.filePath.toLowerCase().includes(q));
-  const truncated = filtered.length > MAX_NODES;
-  if (truncated) filtered = filtered.slice(0, MAX_NODES);
+
+  // LOD: when importance scores are available, sort by score so the most
+  // critical nodes survive truncation at lower zoom levels.
+  const hasScores = filtered.some(n => (n.importanceScore ?? 0) > 0);
+  if (hasScores) {
+    filtered.sort((a, b) => (b.importanceScore ?? 0) - (a.importanceScore ?? 0));
+  }
+
+  const budget = q ? 400 : maxNodes;           // search overrides LOD
+  const truncated = filtered.length > budget;
+  if (truncated) filtered = filtered.slice(0, budget);
 
   // When expanded, inject children as real graph nodes
   const expandedChildren: CodeMapNode[] = [];
@@ -434,13 +461,32 @@ interface CodeMapProps {
 }
 
 function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
-  const [viewMode, setViewMode] = useState<ViewMode>('files');
+  const [viewMode, setViewMode] = useState<ViewMode>('classes');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isLayouting, setIsLayouting] = useState(false);
   const { fitView } = useReactFlow();
+
+  // LOD zoom tracking — only react to USER-initiated zoom, not programmatic fitView.
+  // isFitting suppresses viewport events during layout/fitView transitions to break
+  // the loop: fitView→zoom change→tier change→rebuild→fitView.
+  const [currentZoom, setCurrentZoom] = useState(1);
+  const isFitting = useRef(false);
+  const shouldFitView = useRef(true);
+  const zoomTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useOnViewportChange({
+    onChange: ({ zoom }) => {
+      if (isFitting.current) return;
+      if (zoomTimer.current) clearTimeout(zoomTimer.current);
+      zoomTimer.current = setTimeout(() => {
+        shouldFitView.current = false;         // LOD change from user zoom — don't reset viewport
+        setCurrentZoom(zoom);
+      }, 150);
+    },
+  });
+  const lodTier = useMemo(() => getLodTier(currentZoom), [currentZoom]);
 
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(searchQuery), 300);
@@ -450,11 +496,20 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
   React.useEffect(() => {
     setExpandedIds(new Set());
     setSelectedId(null);
+    shouldFitView.current = true;
   }, [viewMode]);
 
+  const prevQuery = useRef(debouncedQuery);
+  React.useEffect(() => {
+    if (prevQuery.current !== debouncedQuery) {
+      shouldFitView.current = true;
+      prevQuery.current = debouncedQuery;
+    }
+  }, [debouncedQuery]);
+
   const { nodes: lnodes, edges: ledges, truncated } = useMemo(
-    () => buildGraph(data, viewMode, debouncedQuery, expandedIds, selectedId),
-    [data, viewMode, debouncedQuery, expandedIds, selectedId]
+    () => buildGraph(data, viewMode, debouncedQuery, expandedIds, selectedId, lodTier.maxNodes),
+    [data, viewMode, debouncedQuery, expandedIds, selectedId, lodTier.maxNodes]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -462,14 +517,29 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
 
   React.useEffect(() => {
     setIsLayouting(true);
+    const doFit = shouldFitView.current;
+    if (doFit) isFitting.current = true;
     const frame = requestAnimationFrame(() => {
       setNodes(lnodes);
       setEdges(ledges);
       setIsLayouting(false);
-      setTimeout(() => fitView({ padding: 0.15, duration: 200 }), 50);
+      if (doFit) {
+        setTimeout(() => {
+          fitView({ padding: 0.15, duration: 200 });
+          setTimeout(() => { isFitting.current = false; }, 300);
+        }, 50);
+      }
+      shouldFitView.current = true;            // reset for next non-zoom trigger
     });
     return () => cancelAnimationFrame(frame);
   }, [lnodes, ledges, setNodes, setEdges, fitView]);
+
+  // Deselect if the selected node is no longer visible after LOD change
+  React.useEffect(() => {
+    if (selectedId && !lnodes.some(n => n.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [lnodes, selectedId]);
 
   const selectedInfo = useMemo<SelectedInfo | null>(() => {
     if (!selectedId) return null;
@@ -520,7 +590,7 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
         <Panel position="top-left">
           <div className="flex flex-col gap-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 shadow-lg" style={{ maxWidth: 210 }}>
             <div className="flex gap-1">
-              {(['files', 'symbols', 'classes'] as ViewMode[]).map(m => (
+              {(['classes', 'symbols', 'files'] as ViewMode[]).map(m => (
                 <button key={m} onClick={() => setViewMode(m)}
                   className={`px-2 py-1 text-[11px] rounded transition-colors ${viewMode === m ? 'bg-blue-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
                   {m.charAt(0).toUpperCase() + m.slice(1)}
@@ -529,7 +599,8 @@ function CodeMapInner({ data, onNavigateToFile }: CodeMapProps) {
             </div>
             <input type="text" placeholder="Search..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
               className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 outline-none focus:border-blue-400" />
-            {truncated && <div className="text-[10px] text-amber-600">Showing {MAX_NODES} of {data.nodes.length}. Search to filter.</div>}
+            <div className="text-[10px] text-gray-400">{lodTier.label} · {lnodes.length} nodes</div>
+            {truncated && <div className="text-[10px] text-amber-600">Showing {lodTier.maxNodes} of {data.nodes.length}. Zoom in or search to see more.</div>}
             {isLayouting && <div className="text-[10px] text-blue-500 animate-pulse">Computing layout...</div>}
             <div className="text-[10px] text-gray-400 leading-tight">Click: select & highlight connections<br/>Click again: expand node<br/>Click canvas: deselect</div>
           </div>
