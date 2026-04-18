@@ -131,6 +131,39 @@ def _mask_secrets(text: str) -> str:
     return text
 
 
+def _log_content_filter_messages(kwargs: dict, req_id: str) -> None:
+    """Dump LLM messages to the content-filter diagnostic log.
+
+    Called from the retry decorators when a content filter error is
+    detected.  Writes the full messages payload so we can inspect
+    exactly what triggered the filter.
+    """
+    try:
+        from backend.logger import get_content_filter_logger
+        api_kwargs = kwargs.get('api_kwargs', {})
+        messages = api_kwargs.get('messages', [])
+        if not messages:
+            return
+        deployment = api_kwargs.get('model', 'unknown')
+        # Concatenate message contents for the dump
+        parts = []
+        for msg in messages:
+            role = msg.get('role', '?')
+            content = msg.get('content', '')
+            parts.append(f"[{role}] {content}")
+        prompt_text = '\n'.join(parts)
+        cf_logger = get_content_filter_logger()
+        cf_logger.error(
+            "=== CONTENT FILTER PROMPT DUMP (decorator) ===\n"
+            "deployment=%s | req_id=%s | prompt_length=%d\n"
+            "--- MESSAGES START ---\n%s\n--- MESSAGES END ---",
+            deployment, req_id, len(prompt_text), prompt_text,
+        )
+    except Exception:
+        # Never let diagnostic logging break the main flow
+        pass
+
+
 __all__ = ["AzureAIClient"]
 
 # TODO: this overlaps with openai client largely, might need to refactor to subclass openai client to simplify the code
@@ -234,6 +267,7 @@ def azure_openai_retry_with_delay(func):
                         "Content filter error (non-retryable), "
                         f"raising immediately (req_id={req_id}): {e}"
                     )
+                    _log_content_filter_messages(kwargs, req_id)
                     raise
                 # For other errors, use simple exponential backoff
                 if retry_count < max_retries - 1:
@@ -312,6 +346,7 @@ def azure_openai_async_retry_with_delay(func):
                         "Content filter error (non-retryable), "
                         f"raising immediately (req_id={req_id}): {e}"
                     )
+                    _log_content_filter_messages(kwargs, req_id)
                     raise
                 # For other errors, use simple exponential backoff
                 if retry_count < max_retries - 1:

@@ -17,9 +17,11 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from adalflow.core.types import ModelType
+from openai import BadRequestError
 
 from backend.config import get_azure_deployment_name
 from backend.clients.azureai_client import AzureAIClient
+from backend.logger import get_content_filter_logger
 from backend.modules.chat.service import format_context_text, get_language_info
 from backend.modules.codemap.models import CodeMapData
 from backend.processor.codemap_generator import (
@@ -41,6 +43,7 @@ from backend.promptstore.wiki_structure import (
     LANGUAGE_DISPLAY_NAMES,
 )
 from backend.modules.wiki.xml_repair import close_open_tags
+from backend.utils.sanitizer import sanitize_for_content_filter
 
 logger = logging.getLogger(__name__)
 
@@ -121,13 +124,61 @@ def _call_llm(prompt: str, model_client: AzureAIClient,
         'temperature': temperature,
         'max_completion_tokens': max_tokens,
     }
-    response = model_client.call(
-        api_kwargs=api_kwargs, model_type=ModelType.LLM
-    )
+    try:
+        response = model_client.call(
+            api_kwargs=api_kwargs, model_type=ModelType.LLM
+        )
+    except BadRequestError as e:
+        error_msg = str(e).lower()
+        if any(kw in error_msg for kw in [
+            "content_filter", "content management policy",
+            "content filtering", "responsibleaipolicy",
+        ]):
+            _log_content_filter_prompt(
+                prompt=prompt,
+                deployment=deployment,
+                error=e,
+            )
+        raise
     req_id = getattr(response, '_request_id', 'unknown')
     if hasattr(response, 'choices') and response.choices:
         return response.choices[0].message.content or '', req_id
     return '', req_id
+
+
+# ---- content-filter diagnostic helpers ----
+
+_CONTENT_FILTER_KEYWORDS = frozenset([
+    "content_filter", "content management policy",
+    "content filtering", "responsibleaipolicy",
+])
+
+
+def _log_content_filter_prompt(
+    prompt: str,
+    deployment: str,
+    error: Exception,
+) -> None:
+    """Dump the full prompt to the diagnostic log on content filter errors."""
+    cf_logger = get_content_filter_logger()
+    req_id = getattr(error, '_request_id', None)
+    if req_id is None:
+        # Try extracting from response headers
+        try:
+            resp = getattr(error, 'response', None)
+            if resp and hasattr(resp, 'headers'):
+                req_id = (resp.headers.get('apim-request-id')
+                          or resp.headers.get('x-request-id')
+                          or 'unknown')
+        except Exception:
+            req_id = 'unknown'
+    cf_logger.error(
+        "=== CONTENT FILTER PROMPT DUMP ===\n"
+        "deployment=%s | req_id=%s | prompt_length=%d\n"
+        "error=%s\n"
+        "--- PROMPT START ---\n%s\n--- PROMPT END ---",
+        deployment, req_id, len(prompt), error, prompt,
+    )
 
 
 def _parse_structure_xml(xml_text: str) -> Tuple[
@@ -326,8 +377,9 @@ def generate_wiki(
             f"injected into structure prompt"
         )
 
+    readme_safe = sanitize_for_content_filter(readme)
     structure_prompt = _build_structure_prompt(
-        file_tree=file_tree, readme=readme,
+        file_tree=file_tree, readme=readme_safe,
         owner=owner, repo=repo,
         language=language, comprehensive=comprehensive,
         additional_context=additional_context,
@@ -449,6 +501,10 @@ def generate_wiki(
             commit_hash=commit_hash,
             repo_type=repo_type,
         )
+
+        # Sanitize context to avoid content-filter triggers from
+        # credentials, GUIDs, or internal URLs in source code.
+        context_text = sanitize_for_content_filter(context_text)
 
         # Log context size for the page prompt (no truncation —
         # quality is critical; let the model handle its full context).

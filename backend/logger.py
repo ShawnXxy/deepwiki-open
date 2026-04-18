@@ -12,7 +12,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from logging.handlers import TimedRotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler, RotatingFileHandler
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 
@@ -434,3 +434,43 @@ def log_frontend_message(level: str, message: str, context: dict = None):
         logger.error(full_msg)
     else:
         logger.info(full_msg)
+
+
+# Content filter diagnostic logger
+_content_filter_logger = None
+
+
+def get_content_filter_logger() -> logging.Logger:
+    """Get or create a dedicated logger for content filter diagnostics.
+
+    Writes to ``logs/content_filter_prompts.log`` (10 MB rotating, 3 backups).
+    Only used when a content filter error occurs — zero overhead otherwise.
+    The logger does **not** propagate to the root logger so prompts never
+    appear in the main application log or Application Insights.
+    """
+    global _content_filter_logger
+
+    if _content_filter_logger is not None:
+        return _content_filter_logger
+
+    _content_filter_logger = logging.getLogger("content_filter_diagnostics")
+    _content_filter_logger.setLevel(logging.ERROR)
+    _content_filter_logger.propagate = False  # keep out of main log
+
+    base_dir = Path(__file__).parent.parent
+    log_dir = base_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    handler = RotatingFileHandler(
+        log_dir / "content_filter_prompts.log",
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=3,
+        encoding="utf-8",
+    )
+    formatter = logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s"
+    )
+    handler.setFormatter(formatter)
+    _content_filter_logger.addHandler(handler)
+
+    return _content_filter_logger
