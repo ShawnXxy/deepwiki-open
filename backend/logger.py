@@ -338,6 +338,7 @@ def setup_logging(
     noisy_loggers = [
         "azure", "azure.core", "azure.identity",
         "openai", "openai._base_client",  # Suppress request_id spam
+        "msal",  # MSAL token_cache logs full token events at DEBUG
         "httpx", "httpcore",
         "urllib3", "urllib3.connectionpool",  # Very verbose connection logs
         "watchfiles", "watchfiles.main",
