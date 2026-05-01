@@ -234,6 +234,7 @@ def push_documents(
     documents: list,
     repo_name: str,
     branch: str,
+    id_offset: int = 0,
 ) -> int:
     """Push vector documents to AI Search index.
 
@@ -245,6 +246,12 @@ def push_documents(
         documents: List of adalflow Document objects (with text, vector, meta_data)
         repo_name: Repository identifier (owner_repo)
         branch: Branch name
+        id_offset: Global chunk-index offset for the document keys. When this
+            function is called in a loop with a separate batch each time, each
+            call must pass the cumulative count of previously-pushed documents
+            so that keys are globally unique. Default 0 preserves the
+            single-batch behaviour. AI Search ``upload_documents`` is
+            upsert-by-key, so duplicate keys silently overwrite earlier docs.
 
     Returns:
         Number of documents pushed
@@ -255,8 +262,9 @@ def push_documents(
     search_docs = []
     for i, doc in enumerate(documents):
         meta = doc.meta_data or {}
+        global_id = id_offset + i
         search_doc = {
-            "id": _sanitize_document_key(f"{repo_name}_{branch}_{i}"),
+            "id": _sanitize_document_key(f"{repo_name}_{branch}_{global_id}"),
             "title": meta.get('file_path', ''),
             "filepath": meta.get('file_path', ''),
             "content": doc.text or '',

@@ -172,6 +172,34 @@ class AzureBlobStorageClient:
             logger.error(f"Failed to upload text to blob {blob_name}: {e}")
             return False
 
+    def upload_bytes(self, blob_name: str, content: bytes) -> bool:
+        """
+        Upload raw bytes to blob storage.
+
+        Use this instead of ``upload_text`` when the caller has already
+        produced a UTF-8 byte buffer (e.g. from ``model_dump_json().encode()``)
+        to avoid an extra encode step and intermediate string copy. This
+        keeps peak memory at ``2\u00d7`` payload size during upload of large
+        codemap JSON instead of the ``3\u00d7`` peak of ``upload_text``.
+
+        Args:
+            blob_name: Name of the blob (e.g., "wikicache/file.json")
+            content: Raw byte payload to upload
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            blob_client = self.get_container_client().get_blob_client(blob_name)
+            blob_client.upload_blob(content, overwrite=True)
+            logger.debug(
+                f"Uploaded bytes to blob: {blob_name} ({len(content)} bytes)"
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to upload bytes to blob {blob_name}: {e}")
+            return False
+
     def download_text(self, blob_name: str) -> Optional[str]:
         """
         Download text content from blob storage.

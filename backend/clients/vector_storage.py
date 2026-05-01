@@ -37,7 +37,7 @@ import os
 import json
 import logging
 import re
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Iterator
 
 try:
     import orjson as _json_fast
@@ -417,7 +417,15 @@ class VectorStorage:
         vectors_path: str,
         progress_callback: Optional[callable]
     ) -> List[Document]:
-        """Load documents from local filesystem using parallel I/O."""
+        """Load documents from local filesystem using parallel I/O.
+
+        Memory note: dicts returned by `_read_json_file` are dropped as soon
+        as the corresponding `Document` is built (per-iteration scope), so peak
+        memory is bounded at ~1.5× the final document set instead of 2×. The
+        streaming `iter_documents` is preferred when only batched access is
+        needed; this method is kept for the FAISS path which needs the full
+        list to build an in-memory index.
+        """
         import time
         from concurrent.futures import ThreadPoolExecutor
 
@@ -442,17 +450,20 @@ class VectorStorage:
         logger.info(f"[Vec] Found {total} chunk files, loading with parallel I/O...")
         load_start = time.time()
 
-        # Parallel read: I/O-bound, so many workers help
+        # Parallel read: I/O-bound, so many workers help.
+        # Stream pool.map() results so each dict is dropped as soon as the
+        # Document is built — avoids holding raw_results + documents at once.
         workers = min(32, max(8, total // 200))
+        documents: List[Document] = []
+        failed = 0
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            raw_results = list(pool.map(self._read_json_file, json_files))
+            for chunk_data in pool.map(self._read_json_file, json_files):
+                if chunk_data is not None:
+                    documents.append(self._dict_to_document(chunk_data))
+                else:
+                    failed += 1
+                # chunk_data goes out of scope on next iteration
 
-        documents = []
-        for chunk_data in raw_results:
-            if chunk_data is not None:
-                documents.append(self._dict_to_document(chunk_data))
-
-        failed = total - len(documents)
         elapsed = time.time() - load_start
         if failed > 0:
             logger.warning(
@@ -469,7 +480,14 @@ class VectorStorage:
         vectors_path: str,
         progress_callback: Optional[callable]
     ) -> List[Document]:
-        """Load documents from Azure Blob Storage using parallel downloads."""
+        """Load documents from Azure Blob Storage using parallel downloads.
+
+        Memory note: dicts returned by the per-blob downloader are dropped
+        as soon as the corresponding `Document` is built (per-iteration
+        scope), so peak memory is bounded at ~1.5× the final document set
+        instead of 2×. Streaming `iter_documents` is preferred for the
+        push-to-search path; this method remains for FAISS use only.
+        """
         import time
         from concurrent.futures import ThreadPoolExecutor
 
@@ -506,17 +524,20 @@ class VectorStorage:
                 pass
             return None
 
-        # Parallel download: network-bound, more workers help
+        # Parallel download: network-bound, more workers help.
+        # Stream pool.map() results so each dict is dropped as soon as the
+        # Document is built — avoids holding raw_results + documents at once.
         workers = min(64, max(8, total // 100))
+        documents: List[Document] = []
+        failed = 0
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            raw_results = list(pool.map(_download_one, json_blobs))
+            for chunk_data in pool.map(_download_one, json_blobs):
+                if chunk_data is not None:
+                    documents.append(self._dict_to_document(chunk_data))
+                else:
+                    failed += 1
+                # chunk_data goes out of scope on next iteration
 
-        documents = []
-        for chunk_data in raw_results:
-            if chunk_data is not None:
-                documents.append(self._dict_to_document(chunk_data))
-
-        failed = total - len(documents)
         elapsed = time.time() - load_start
         if failed > 0:
             logger.warning(
@@ -527,6 +548,173 @@ class VectorStorage:
             f"in {elapsed:.1f}s ({workers} workers)"
         )
         return documents
+
+    # ------------------------------------------------------------------
+    # Streaming load (Phase 1.1)
+    # ------------------------------------------------------------------
+    def iter_documents(
+        self,
+        repo_name: str,
+        branch: str,
+        batch_size: int = 1000,
+    ) -> Iterator[List[Document]]:
+        """Yield Documents in batches of `batch_size`.
+
+        Memory-efficient alternative to ``load_documents``: never materialises
+        the entire dataset. Peak memory per batch is
+        ``2 × batch_size × chunk_size`` (raw dicts during download +
+        Document objects post-conversion). Both are released between batches.
+
+        Used by ``step_push_to_search`` to bound peak RSS during AI Search
+        upload regardless of repo size.
+
+        Yields:
+            List[Document] of up to ``batch_size`` documents per batch.
+            Empty/skipped chunks are silently filtered.
+        """
+        vectors_path = self._get_vectors_base_path(repo_name, branch)
+        try:
+            if is_blob_storage_configured():
+                yield from self._iter_from_blob(vectors_path, batch_size)
+            else:
+                yield from self._iter_from_local(vectors_path, batch_size)
+        except Exception as e:
+            logger.error(f"[Vec] Error iterating vectors: {e}")
+
+    def _iter_from_local(
+        self,
+        vectors_path: str,
+        batch_size: int,
+    ) -> Iterator[List[Document]]:
+        """Yield batches of Documents from local filesystem."""
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
+        local_base = os.path.join(self._root_path, vectors_path)
+        if not os.path.exists(local_base):
+            logger.info(
+                f"[Vec] Vectors directory does not exist: {local_base}"
+            )
+            return
+
+        json_files: List[str] = []
+        for root, _, files in os.walk(local_base):
+            for f in files:
+                if f.endswith('.json'):
+                    json_files.append(os.path.join(root, f))
+
+        if not json_files:
+            logger.info("[Vec] No JSON files found")
+            return
+
+        total = len(json_files)
+        logger.info(
+            f"[Vec] Streaming {total} chunk files from local in batches of {batch_size}"
+        )
+        load_start = time.time()
+        loaded = 0
+        failed = 0
+
+        # Process file list in batch_size slices; each slice's downloads run
+        # in parallel, but never more than batch_size files in flight at a time.
+        for start in range(0, total, batch_size):
+            chunk_files = json_files[start:start + batch_size]
+            workers = min(32, max(8, len(chunk_files) // 50 or 8))
+            batch_docs: List[Document] = []
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for chunk_data in pool.map(self._read_json_file, chunk_files):
+                    if chunk_data is not None:
+                        batch_docs.append(self._dict_to_document(chunk_data))
+                    else:
+                        failed += 1
+            loaded += len(batch_docs)
+            if batch_docs:
+                yield batch_docs
+            del batch_docs  # explicit drop; helps gc on tight memory
+
+        elapsed = time.time() - load_start
+        if failed > 0:
+            logger.warning(
+                f"[Vec] {failed}/{total} chunk files failed to load from local"
+            )
+        logger.info(
+            f"[Vec] Streamed {loaded}/{total} chunks from local storage "
+            f"in {elapsed:.1f}s"
+        )
+
+    def _iter_from_blob(
+        self,
+        vectors_path: str,
+        batch_size: int,
+    ) -> Iterator[List[Document]]:
+        """Yield batches of Documents from Azure Blob Storage."""
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+
+        blob_client = get_blob_storage_client()
+        if not blob_client:
+            logger.error("[Vec] Blob client not available")
+            return
+
+        try:
+            blobs = blob_client.list_blobs(vectors_path + "/")
+            json_blobs = [b for b in blobs if b.endswith('.json')]
+        except Exception as e:
+            logger.error(f"[Vec] Failed to list blobs: {e}")
+            return
+
+        if not json_blobs:
+            logger.info("[Vec] No JSON blobs found")
+            return
+
+        total = len(json_blobs)
+        logger.info(
+            f"[Vec] Streaming {total} chunk blobs in batches of {batch_size}"
+        )
+        load_start = time.time()
+        loaded = 0
+        failed = 0
+
+        def _download_one(blob_name: str) -> Optional[Dict[str, Any]]:
+            try:
+                content = blob_client.download_text(blob_name)
+                if content:
+                    if _USE_ORJSON:
+                        return _json_fast.loads(
+                            content.encode('utf-8')
+                            if isinstance(content, str) else content
+                        )
+                    return json.loads(content)
+            except Exception:
+                pass
+            return None
+
+        # Submit downloads only for the current batch — caps in-flight
+        # network buffers at batch_size regardless of total chunk count.
+        for start in range(0, total, batch_size):
+            chunk_names = json_blobs[start:start + batch_size]
+            workers = min(64, max(8, len(chunk_names) // 50 or 8))
+            batch_docs: List[Document] = []
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for chunk_data in pool.map(_download_one, chunk_names):
+                    if chunk_data is not None:
+                        batch_docs.append(self._dict_to_document(chunk_data))
+                    else:
+                        failed += 1
+            loaded += len(batch_docs)
+            if batch_docs:
+                yield batch_docs
+            del batch_docs
+
+        elapsed = time.time() - load_start
+        if failed > 0:
+            logger.warning(
+                f"[Vec] {failed}/{total} chunk blobs failed to load"
+            )
+        logger.info(
+            f"[Vec] Streamed {loaded}/{total} chunks from blob storage "
+            f"in {elapsed:.1f}s"
+        )
     
     def list_files(self, repo_name: str, branch: str) -> set:
         """List all vector JSON file paths (relative to vectors base) for a repo.

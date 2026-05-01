@@ -40,6 +40,19 @@ _SKIP_DIRS = {
 # Prevents unbounded memory growth for very large repos.
 MAX_SYMBOLS = 200_000
 
+# Maximum file size eligible for AST extraction. Files above this threshold
+# get a file-level node but no symbol/edge extraction. This caps the
+# transient native memory footprint of tree-sitter (which can be 10–50× the
+# source size) and prevents a single huge file (vendored bundles, generated
+# parsers, minified output) from blowing the parallel-analysis peak past
+# the AML node ceiling.
+#
+# Quality impact: hand-written source > 1 MB is rare; skipped files remain
+# discoverable in the codemap (file node retained) and citable in the wiki.
+# Wiki retrieval works on chunk vectors, not codemap edges, so it is
+# unaffected.
+MAX_AST_FILE_BYTES = 1_000_000
+
 
 def build_codemap(
     repo_path: str,
@@ -75,6 +88,7 @@ def build_codemap(
     current_symbol_count = 0
 
     workers = max_workers or min(os.cpu_count() or 4, len(files))
+    skipped_large_files: List[Tuple[str, int]] = []  # (rel_path, size)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {}
         for rel_path, ext, abs_path in files:
@@ -85,15 +99,18 @@ def build_codemap(
         for future in as_completed(futures):
             rel_path, ext = futures[future]
             try:
-                nodes, edges = future.result()
+                nodes, edges, skipped_size = future.result()
             except Exception as e:
                 logger.debug(f"[CodeMap] Error analyzing {rel_path}: {e}")
-                nodes, edges = [], []
+                nodes, edges, skipped_size = [], [], None
+
+            if skipped_size is not None:
+                skipped_large_files.append((rel_path, skipped_size))
 
             lang_name = LANGUAGE_DISPLAY.get(ext, ext)
             language_stats[lang_name] += 1
 
-            # Create file-level node (always kept)
+            # Create file-level node (always kept, even when AST was skipped)
             file_node = SymbolNode(
                 id=rel_path,
                 name=os.path.basename(rel_path),
@@ -117,6 +134,18 @@ def build_codemap(
                         f"{current_symbol_count} symbols. "
                         f"Remaining files will be file-level only."
                     )
+
+    if skipped_large_files:
+        sample = [
+            f"{p} ({sz // 1024} KB)"
+            for p, sz in skipped_large_files[:5]
+        ]
+        more = "" if len(skipped_large_files) <= 5 else " ..."
+        logger.info(
+            f"[CodeMap] Skipped AST extraction for {len(skipped_large_files)} "
+            f"file(s) > {MAX_AST_FILE_BYTES // 1024} KB "
+            f"(file-level nodes retained): {sample}{more}"
+        )
 
     all_nodes = file_nodes + all_nodes
 
@@ -214,15 +243,31 @@ def _collect_files(
 
 def _analyze_one_file(
     abs_path: str, rel_path: str, ext: str,
-) -> Tuple[List[SymbolNode], List[SymbolEdge]]:
-    """Read and analyze a single file. Thread-safe."""
+) -> Tuple[List[SymbolNode], List[SymbolEdge], Optional[int]]:
+    """Read and analyze a single file. Thread-safe.
+
+    Returns ``(nodes, edges, skipped_size)`` where ``skipped_size`` is the
+    file size in bytes when the file was skipped due to ``MAX_AST_FILE_BYTES``,
+    else ``None``. Skipped files still get a file-level node in the caller;
+    only AST-derived symbol/edge extraction is bypassed.
+    """
+    try:
+        size = os.path.getsize(abs_path)
+    except OSError:
+        return [], [], None
+
+    if size > MAX_AST_FILE_BYTES:
+        # Caller adds the file-level node regardless; only AST work is skipped.
+        return [], [], size
+
     try:
         with open(abs_path, 'rb') as f:
             content = f.read()
     except (OSError, IOError):
-        return [], []
+        return [], [], None
 
-    return analyze_file(rel_path, content, ext)
+    nodes, edges = analyze_file(rel_path, content, ext)
+    return nodes, edges, None
 
 
 def _resolve_references(

@@ -250,12 +250,17 @@ def step_clone(repo_url, token, branch, repo_name, token_type='pat'):
     return save_dir, commit
 
 
-def _log_rss(label: str):
-    """Log current process RSS for memory debugging."""
+def _log_rss(label: str, level: int = logging.INFO):
+    """Log current process RSS for memory debugging.
+
+    Default level is INFO so that breadcrumbs survive an OOM crash and
+    appear in AML compute logs without raising the global log level.
+    Pass `level=logging.DEBUG` for very-frequent call sites.
+    """
     try:
         import psutil
         rss_mb = psutil.Process().memory_info().rss / (1024 * 1024)
-        logger.debug(f"[MEM] {label}: {rss_mb:.0f} MB RSS")
+        logger.log(level, f"[MEM] {label}: {rss_mb:.0f} MB RSS")
     except ImportError:
         pass
 
@@ -456,26 +461,36 @@ def step_push_to_search(owner, repo, branch, wait=False):
     repo_name = f"{owner}_{repo}"
     vector_storage = get_vector_storage()
 
-    # Load all doc paths first (lightweight — just file listing)
-    docs = vector_storage.load_documents(repo_name, branch)
+    # Stream chunks in batches \u2014 never materialise the full vector set in
+    # memory. Each batch is converted to upload payload, pushed, and freed
+    # before the next batch is fetched. Bounds peak RSS at
+    # O(PUSH_BATCH_SIZE \u00d7 vector_size) regardless of total chunk count.
+    PUSH_BATCH_SIZE = 1000
+    pushed = 0
+    _log_rss("before push_to_search load")
+    for batch in vector_storage.iter_documents(
+        repo_name, branch, batch_size=PUSH_BATCH_SIZE,
+    ):
+        if not batch:
+            continue
+        # `id_offset=pushed` ensures each chunk gets a globally unique key
+        # of the form `{repo}_{branch}_{global_index}`. Without this, keys
+        # would collide across batches and AI Search would silently keep
+        # only the LAST batch (upsert-by-key semantics).
+        push_documents(
+            idx_name, batch, repo_name, branch, id_offset=pushed,
+        )
+        pushed += len(batch)
+        # Release vectors before fetching the next batch.
+        for doc in batch:
+            doc.vector = None
+        del batch
+    _log_rss("after push_to_search load")
 
-    if not docs:
+    if pushed == 0:
         logger.info("No vector documents found to push")
         return
 
-    # Push in batches to limit memory during upload
-    PUSH_BATCH_SIZE = 1000
-    total = len(docs)
-    pushed = 0
-    for i in range(0, total, PUSH_BATCH_SIZE):
-        batch = docs[i:i + PUSH_BATCH_SIZE]
-        push_documents(idx_name, batch, repo_name, branch)
-        pushed += len(batch)
-        # Release batch vectors after push
-        for doc in batch:
-            doc.vector = None
-
-    del docs
     import gc
     gc.collect()
 
@@ -623,7 +638,13 @@ def _process(mode, repo_url, branch, language, comprehensive,
             )
             sys.exit(1)
 
-        _log_rss("after generate_wiki")
+        # Codemap is no longer needed after wiki generation; release it
+        # before save_wiki so the JSON-write phase runs at minimum RSS.
+        # (generate_wiki internally already drops its reference; this is
+        # the outer-scope drop.)
+        codemap = None
+        gc.collect()
+        _log_rss("after generate_wiki (codemap freed)")
         step_save_wiki(wiki_data, language, comprehensive)
     else:
         # ============================================================
@@ -644,10 +665,11 @@ def _process(mode, repo_url, branch, language, comprehensive,
             )
             sys.exit(1)
 
-        # Free FAISS index + transformed_docs before save/push
+        # Free FAISS index + transformed_docs + codemap before save
         del retriever
+        codemap = None
         gc.collect()
-        _log_rss("after generate_wiki (FAISS freed)")
+        _log_rss("after generate_wiki (FAISS + codemap freed)")
 
         step_save_wiki(wiki_data, language, comprehensive)
 
