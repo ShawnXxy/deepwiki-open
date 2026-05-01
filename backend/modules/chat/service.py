@@ -7,6 +7,7 @@ Provides shared logic for building system prompts and formatting conversations.
 import logging
 
 from backend.config import configs
+from backend.utils.sanitizer import sanitize_for_content_filter
 from backend.promptstore import (
     DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
     DEEP_RESEARCH_FINAL_ITERATION_PROMPT,
@@ -113,30 +114,6 @@ def format_conversation_history(memory_dict: dict) -> str:
                 f"</assistant>\n</turn>\n"
             )
     return conversation_history
-
-
-def _sanitize_for_content_filter(text: str) -> str:
-    """Strip patterns from code that commonly trigger Azure content filters.
-
-    Replaces sensitive-looking content (credentials, security rules,
-    IP/firewall patterns) with safe placeholders so the LLM call
-    is less likely to be truncated by the content management policy.
-    """
-    import re
-    # Password / secret / key assignments
-    text = re.sub(
-        r'(["\']?(?:password|secret|api_key|token|credential|auth_token'
-        r'|private_key|client_secret)["\']?\s*[:=]\s*)["\'][^"\']{4,}["\']',
-        r'\1"<REDACTED>"',
-        text, flags=re.IGNORECASE
-    )
-    # Connection strings
-    text = re.sub(
-        r'((?:Server|Data Source|Host)=[^;\n]{10,})',
-        '<CONNECTION_STRING_REDACTED>',
-        text, flags=re.IGNORECASE
-    )
-    return text
 
 
 def format_context_text(
@@ -256,4 +233,4 @@ def format_context_text(
         context_parts.append(f"{header}\n{content}")
 
     full_context = "\n\n" + "-" * 10 + "\n\n".join(context_parts)
-    return _sanitize_for_content_filter(full_context)
+    return sanitize_for_content_filter(full_context)
