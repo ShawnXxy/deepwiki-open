@@ -7,6 +7,8 @@ from typing import Optional, Literal
 from pydantic import BaseModel, Field, validator
 from urllib.parse import urlparse
 
+from backend.utils.filter import sanitize_branch_for_path
+
 
 # Supported repository types
 RepoType = Literal["github", "gitlab", "bitbucket", "azuredevops"]
@@ -143,9 +145,13 @@ class WikiCacheIdentifier(BaseModel):
         Generate cache filename following the naming convention.
         
         Format: deepwiki_cache_{repo_type}_{owner}_{repo}_{language}_{mode}_{branch}.json
+
+        ``branch`` is sanitised so refs containing ``/`` (e.g. ``rel/latest``)
+        do not leak path separators into the filename and create unintended
+        sub-folders in blob storage.
         """
         mode = "comprehensive" if self.comprehensive else "concise"
-        branch_suffix = self.branch if self.branch else "default"
+        branch_suffix = sanitize_branch_for_path(self.branch, default="default")
         return f"deepwiki_cache_{self.repo_type}_{self.owner}_{self.repo}_{self.language}_{mode}_{branch_suffix}.json"
     
     def get_cache_filename_legacy(self) -> str:

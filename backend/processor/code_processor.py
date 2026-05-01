@@ -461,10 +461,10 @@ def step_push_to_search(owner, repo, branch, wait=False):
     repo_name = f"{owner}_{repo}"
     vector_storage = get_vector_storage()
 
-    # Stream chunks in batches \u2014 never materialise the full vector set in
+    # Stream chunks in batches -- never materialise the full vector set in
     # memory. Each batch is converted to upload payload, pushed, and freed
     # before the next batch is fetched. Bounds peak RSS at
-    # O(PUSH_BATCH_SIZE \u00d7 vector_size) regardless of total chunk count.
+    # O(PUSH_BATCH_SIZE x vector_size) regardless of total chunk count.
     PUSH_BATCH_SIZE = 1000
     pushed = 0
     _log_rss("before push_to_search load")

@@ -438,7 +438,11 @@ def create_data_source(
 
     infra = get_infra_config()
     ds_name = f"{index_name}-datasource"
-    branch_suffix = branch.strip() if branch and branch.strip() else 'main'
+    # Sanitise branch so refs like ``rel/latest`` do not split the blob
+    # folder query into a sub-path that no longer matches the actual
+    # vectors location written by VectorStorage.
+    from backend.utils.filter import sanitize_branch_for_path
+    branch_suffix = sanitize_branch_for_path(branch, default='main')
     blob_folder = f"vectors/{repo_name}_{branch_suffix}"
 
     container = SearchIndexerDataContainer(

@@ -75,8 +75,13 @@ class VectorStorage:
         self._root_path = get_adalflow_root_path()
     
     def _get_vectors_base_path(self, repo_name: str, branch: str) -> str:
-        """Get the base path for vectors storage."""
-        branch_suffix = branch.strip() if branch and branch.strip() else 'main'
+        """Get the base path for vectors storage.
+
+        Sanitises ``branch`` so refs containing ``/`` (e.g. ``rel/latest``)
+        do not introduce unintended sub-folders in the blob virtual path.
+        """
+        from backend.utils.filter import sanitize_branch_for_path
+        branch_suffix = sanitize_branch_for_path(branch, default='main')
         return f"{self.VECTORS_DIR}/{repo_name}_{branch_suffix}"
     
     def _get_local_vectors_path(self, repo_name: str, branch: str) -> str:

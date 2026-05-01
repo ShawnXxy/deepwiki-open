@@ -14,21 +14,41 @@ import pathspec
 logger = logging.getLogger(__name__)
 
 
-def sanitize_branch_for_path(branch: str) -> str:
+def sanitize_branch_for_path(
+    branch: Optional[str],
+    default: str = 'main',
+) -> str:
     """Sanitize a branch name for use in filesystem paths and blob prefixes.
 
     Replaces characters that are problematic in paths (dots, slashes,
-    spaces, etc.) with dashes. Result is safe for local paths and blob keys.
+    backslashes, colons, spaces, etc.) with dashes. Result is safe for
+    local paths, blob keys, and storage filenames.
+
+    This is the single source of truth for branch sanitisation across
+    the project; all path/filename construction sites that include the
+    branch must funnel through this helper so that:
+
+    * paths produced by different components (repo folder, vectors
+      blob, codemap blob, wikicache blob, AI Search data source) stay
+      consistent for the same branch, and
+    * branch refs containing ``/`` (e.g. ``rel/latest``) cannot leak a
+      separator into a path and create unintended sub-folders.
 
     Args:
-        branch: Raw branch name (e.g., 'mysql_8.4', 'feature/my-branch')
+        branch: Raw branch name (e.g., ``mysql_8.4``, ``rel/latest``).
+            ``None`` / empty / whitespace-only inputs return ``default``.
+        default: Fallback value used when ``branch`` is empty after
+            stripping/sanitising. Defaults to ``'main'``.
 
     Returns:
-        Sanitized string safe for paths (e.g., 'mysql_8-4', 'feature-my-branch')
+        Sanitised string safe for paths
+        (e.g., ``mysql_8-4``, ``rel-latest``).
     """
-    sanitized = re.sub(r'[^a-zA-Z0-9_\-]', '-', branch)
+    if not branch or not str(branch).strip():
+        return default
+    sanitized = re.sub(r'[^a-zA-Z0-9_\-]', '-', branch.strip())
     sanitized = re.sub(r'-+', '-', sanitized).strip('-')
-    return sanitized or 'main'
+    return sanitized or default
 
 
 def load_gitignore(repo_path: str) -> Optional[pathspec.PathSpec]:

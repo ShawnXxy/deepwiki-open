@@ -17,9 +17,9 @@ MAX_INPUT_TOKENS = 7500  # Safe threshold below 8192 token limit
 
 # Above this size (in characters), skip the tiktoken BPE encode and use a
 # coarse 4 chars/token approximation. tiktoken creates a Python list of
-# token IDs proportional to text length \u2014 a 50 MB file produces a list
+# token IDs proportional to text length -- a 50 MB file produces a list
 # with ~12.5M ints (~400 MB on 64-bit Python) which can OOM on AML
-# STANDARD_D2_V2 (~5 GB usable). The threshold (5 MB \u2248 1.25M tokens)
+# STANDARD_D2_V2 (~5 GB usable). The threshold (5 MB ~= 1.25M tokens)
 # leaves comfortable headroom.
 #
 # Quality impact: ``count_tokens`` is used to decide whether a chunk fits

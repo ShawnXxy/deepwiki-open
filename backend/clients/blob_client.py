@@ -179,8 +179,8 @@ class AzureBlobStorageClient:
         Use this instead of ``upload_text`` when the caller has already
         produced a UTF-8 byte buffer (e.g. from ``model_dump_json().encode()``)
         to avoid an extra encode step and intermediate string copy. This
-        keeps peak memory at ``2\u00d7`` payload size during upload of large
-        codemap JSON instead of the ``3\u00d7`` peak of ``upload_text``.
+        keeps peak memory at ``2x`` payload size during upload of large
+        codemap JSON instead of the ``3x`` peak of ``upload_text``.
 
         Args:
             blob_name: Name of the blob (e.g., "wikicache/file.json")

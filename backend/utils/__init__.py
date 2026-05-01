@@ -2,14 +2,20 @@
 Backend utilities module.
 
 - url_builder: commit-pinned source file URL builder
-- filter: centralized file filtering (.gitignore parsing)
+- filter: centralized file filtering (.gitignore parsing) and
+  path-safe sanitization of git branch names
 """
 
 from backend.utils.url_builder import build_source_url
-from backend.utils.filter import load_gitignore, is_gitignored
+from backend.utils.filter import (
+    load_gitignore,
+    is_gitignored,
+    sanitize_branch_for_path,
+)
 
 __all__ = [
     "build_source_url",
     "load_gitignore",
     "is_gitignored",
+    "sanitize_branch_for_path",
 ]

@@ -70,7 +70,7 @@ def expand_file_paths(
 def build_file_edge_index(
     codemap: Optional[CodeMapData],
 ) -> Dict[str, Counter]:
-    """Build a compact ``file_path \u2192 Counter(connected_file_path \u2192 edge_count)``
+    """Build a compact ``file_path -> Counter(connected_file_path -> edge_count)``
     map from codemap edges.
 
     Bidirectional: every edge contributes to both endpoints' counters, mirroring
@@ -79,10 +79,10 @@ def build_file_edge_index(
     Why this exists: ``expand_file_paths`` traverses every edge and rebuilds
     ``node_to_file`` on each call. With the ``codemap`` reference held through
     the entire wiki generation loop (one call per page), the full
-    ``CodeMapData`` (~100\u2013300 MB on a large repo) is alive for minutes.
+    ``CodeMapData`` (~100-300 MB on a large repo) is alive for minutes.
     Pre-building this index up-front lets the caller drop the codemap
     reference before the page loop starts. The resulting index is typically
-    1\u20132 orders of magnitude smaller than the codemap itself.
+    1-2 orders of magnitude smaller than the codemap itself.
 
     Returns:
         Dict mapping file_path to a ``Counter`` of connected files. Empty
