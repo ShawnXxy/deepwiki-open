@@ -21,23 +21,27 @@ backend/
 │   ├── repository/     # Git operations (clone, pull, commit hash)
 │   ├── embedder/       # Chunking, embedding, FAISS retrieval
 │   ├── wiki/           # Wiki cache management + export
-│   └── chat/           # Ask/Chat Q&A (WebSocket + HTTP streaming)
+│   ├── chat/           # Ask/Chat Q&A (WebSocket + HTTP streaming)
+│   ├── codemap/        # Static AST symbol/dependency graph (tree-sitter)
+│   └── codetrace/      # LLM-powered query-driven code flow trace
 │
 ├── clients/            # Azure service clients
-│   ├── azureai_client.py   # Azure OpenAI (LLM + embeddings)
-│   ├── embedder.py         # Embedding client factory (SafeEmbedder)
-│   ├── search_client.py    # Azure AI Search (create/query/push)
-│   ├── blob_client.py      # Azure Blob Storage
-│   ├── storage.py          # Unified storage abstraction
-│   └── vector_storage.py   # JSON vector file storage
+│   ├── azureai_client.py     # Azure OpenAI (LLM)
+│   ├── embedding_client.py   # Embedding client factory (SafeEmbedder)
+│   ├── search_client.py      # Azure AI Search (create/query/push)
+│   ├── blob_client.py        # Azure Blob Storage
+│   ├── storage.py            # Unified storage abstraction
+│   └── vector_storage.py     # JSON vector file storage
 │
 ├── promptstore/        # LLM prompt templates + builders
-│   ├── wiki_structure.py   # Wiki structure templates + builder
-│   ├── wiki_page.py        # Page content template + builder
-│   ├── chat_system.py      # Chat system prompt builder
-│   ├── deep_research.py    # Multi-turn research templates
-│   ├── simple_chat.py      # Single-turn Q&A template
-│   └── rag.py              # RAG system prompt + context template
+│   ├── wiki_structure.py     # Wiki structure templates + builder
+│   ├── wiki_page.py          # Page content template + builder
+│   ├── chat_system.py        # Chat system prompt builder
+│   ├── deep_research.py      # Multi-turn research templates
+│   ├── simple_chat.py        # Single-turn Q&A template
+│   ├── rag.py                # RAG system prompt + context template
+│   ├── codemap.py            # Codemap summary prompt section
+│   └── code_trace.py         # CodeTrace system + user prompt
 │
 ├── types/              # Pydantic models
 │   ├── config_types.py     # InfraConfig, AzureMLConfig, etc.
@@ -45,7 +49,9 @@ backend/
 │   └── processor_types.py  # FileFilter, ProcessorConfig
 │
 ├── utils/              # Utilities
-│   └── url_builder.py      # Commit-pinned source file URL builder
+│   ├── url_builder.py      # Commit-pinned source file URL builder
+│   ├── filter.py           # Branch / path sanitization
+│   └── sanitizer.py        # Content-filter redaction (secrets / keys)
 │
 └── config/             # JSON configuration files
     ├── infra.json          # Azure endpoints, MSI, blob, search, AML
@@ -81,7 +87,7 @@ Only needed if you want the Ask/Chat Q&A feature.
 python -m backend.main
 ```
 
-**Endpoints (7 total):**
+**Endpoints (10 total):**
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -91,7 +97,10 @@ python -m backend.main
 | `/filters/config` | GET | Default file exclusion patterns |
 | `/api/wiki_cache` | GET | Read wiki cache (blob or local) |
 | `/api/processed_projects` | GET | List processed wiki projects |
+| `/api/codemap` | GET | Static AST symbol/dependency graph (codemap module) |
+| `/api/codetrace` | POST | LLM-powered code flow trace (codetrace module) |
 | `/health` | GET | Deployment health check |
+| `/health/openai` | GET | Azure OpenAI connectivity probe |
 
 ## Module Dependency Graph
 
@@ -101,10 +110,14 @@ repository/  ← foundation (zero module deps)
 embedder/    ← depends on repository (clone for indexing)
      ↑
 chat/        ← depends on embedder (RAG retrieval for Q&A)
+     ↑
+codetrace/   ← depends on embedder (RAG) + chat/service (context formatting)
 
 wiki/        ← standalone (cache read/write, no module deps)
 
-processor/   ← orchestrator (invokes repository + embedder + wiki)
+codemap/     ← standalone (tree-sitter AST, zero module deps)
+
+processor/   ← orchestrator (invokes repository + embedder + wiki + codemap)
 ```
 
 ## Storage Layout

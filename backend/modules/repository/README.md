@@ -90,7 +90,8 @@ Used throughout the system to pass repository context between modules.
 ## Usage
 
 ```python
-from backend.modules.repository import download_repo, get_head_commit_hash
+from backend.modules.repository import download_repo, get_file_content
+from backend.modules.repository.git_ops import get_head_commit_hash
 
 # Clone a repo
 download_repo(
@@ -106,7 +107,6 @@ download_repo(
 commit_hash = get_head_commit_hash("/tmp/repos/org_repo")
 
 # Read a specific file from remote
-from backend.modules.repository import get_file_content
 content = get_file_content(
     repo_url="https://github.com/owner/repo",
     file_path="src/main.py",
@@ -114,6 +114,13 @@ content = get_file_content(
     access_token="ghp_token",
 )
 ```
+
+> The package's `__init__.py` re-exports the most common helpers
+> (`download_repo`, `detect_default_branch`, `download_github_repo`,
+> `get_file_content`, and the per-platform `get_*_file_content` functions,
+> plus an alias `get_ado_file_content`). Lower-level helpers like
+> `get_head_commit_hash` live in `git_ops.py` and must be imported
+> from the submodule.
 
 ## Dependencies
 

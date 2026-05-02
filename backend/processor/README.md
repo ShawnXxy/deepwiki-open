@@ -2,8 +2,6 @@
 
 Standalone CLI pipeline that generates AI wikis from code repositories.
 
-> For the full architecture deep-dive, see [DESIGN.md](DESIGN.md).
-
 ## Responsibility
 
 Runs as a one-shot CLI command — no server required. Transforms a code repository into a structured, AI-generated wiki saved as JSON.
@@ -59,7 +57,6 @@ Step 5 — Save cache: Same as local.
 | `codemap_generator.py` | Codemap processing: `expand_file_paths()`, `summarize_codemap()` |
 | `cloud_setup.py` | Config overlay writers + Azure AI Search / AML pipeline management |
 | `code_index_schema.json` | Azure AI Search index schema (fields, vectors, scoring profiles) |
-| `DESIGN.md` | Comprehensive design document (architecture, data flow, decisions) |
 
 ## Architecture: Mode as a Switch
 
@@ -147,6 +144,11 @@ Stage 3: Embed Documents (RAG Preparation)
     Local/Docker: save vectors to local disk, accumulate for FAISS
     Cloud: save vectors to blob (skip_accumulate=True, no FAISS)
 
+Stage 3.5: Push to AI Search (cloud only)
+    Cloud-mode only — runs after Stage 3 and before Stage 4:
+    Load vectors → push to AI Search index → trigger indexer →
+    wait for completion (poll with timeout)
+
 Stage 4: Generate Wiki
     File tree + README + codemap summary → LLM generates XML structure (pages + sections)
     Validates page file_paths exist in repo; logs semantic-only pages
@@ -159,15 +161,10 @@ Stage 4: Generate Wiki
     Local/Docker: retrieval via FAISS (file-priority capped at 80 chunks)
     Cloud: retrieval via Azure AI Search (hybrid: text + vector)
 
-Stage 4: Save Wiki Cache
+Stage 5: Save Wiki Cache
     Assemble WikiCacheData → save as JSON
     Local/Docker: ~/.adalflow/wikicache/*.json
     Cloud: blob deepwiki-data/wikicache/
-
-Stage 5: Push to AI Search (cloud only)
-    In cloud mode, this runs BEFORE wiki generation:
-    Load vectors → push to AI Search index → trigger indexer →
-    wait for completion (poll with timeout)
 ```
 
 ## Authentication

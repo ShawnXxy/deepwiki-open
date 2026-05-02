@@ -55,10 +55,10 @@ Frontend (Ask.tsx)
 
 2. **File-priority retrieval** — When the request specifies `filePaths`, uses `RAG.call_with_file_filter()` to prioritize chunks from those files.
 
-3. **Deep Research mode** — When `deepResearch=True`, the handler runs 5 LLM iterations:
-   - Iteration 1: Research plan (selected prompt: `DEEP_RESEARCH_SYSTEM_PROMPT`)
-   - Iterations 2-4: Progressive investigation (prompt: `DEEP_RESEARCH_UPDATE_PROMPT`)
-   - Iteration 5: Final synthesis (prompt: `DEEP_RESEARCH_CONCLUSION_PROMPT`)
+3. **Deep Research mode** — When `deepResearch=True`, the handler runs up to 5 LLM iterations. The iteration number is derived from the assistant message count in the conversation history, and `service.build_system_prompt()` selects the prompt template:
+   - Iteration 1 → `DEEP_RESEARCH_FIRST_ITERATION_PROMPT` (research plan)
+   - Iterations 2 – 4 → `DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT` (progressive investigation)
+   - Iteration ≥ 5 → `DEEP_RESEARCH_FINAL_ITERATION_PROMPT` (final synthesis)
    - Each iteration's output is prefixed with `<deep_research_iteration N>` tags.
 
 4. **Wiki generation support** — The handler also processes `wiki_structure_request` and `wiki_page_request` messages, building server-side prompts and streaming wiki content back. This is the WebSocket path (alternative to the CLI processor).
@@ -73,22 +73,25 @@ Frontend (Ask.tsx)
 
 Utility functions used by both handlers:
 
-- **`build_system_prompt(mode, iteration)`** — Selects the right prompt template:
+- **`build_system_prompt(is_deep_research, research_iteration, repo_type, repo_url, repo_name, language_name)`** — Selects the right prompt template:
   - Simple chat → `SIMPLE_CHAT_SYSTEM_PROMPT`
-  - Deep research iteration 1 → `DEEP_RESEARCH_SYSTEM_PROMPT`
-  - Deep research iterations 2-4 → `DEEP_RESEARCH_UPDATE_PROMPT`
-  - Deep research iteration 5 → `DEEP_RESEARCH_CONCLUSION_PROMPT`
+  - Deep research iteration 1 → `DEEP_RESEARCH_FIRST_ITERATION_PROMPT`
+  - Deep research iterations 2 – 4 → `DEEP_RESEARCH_INTERMEDIATE_ITERATION_PROMPT`
+  - Deep research iteration ≥ 5 → `DEEP_RESEARCH_FINAL_ITERATION_PROMPT`
 
-- **`format_context_text(docs, repo_url, commit_hash, repo_type)`** — Formats retrieved chunks for the LLM:
+- **`format_context_text(docs, repo_url, commit_hash, repo_type)`** — Formats retrieved chunks for the LLM, grouped by file with structural metadata and a per-chunk commit-pinned source URL:
   ```
   ## File Path: src/auth/handler.py
-  **Source:** [View in repository](https://dev.azure.com/org/proj/_git/repo?path=/src/auth/handler.py&version=GCabc123)
-  **Language:** Python | **Section:** function | **Functions:** authenticate, validate_token
-  
-  [chunk content]
-  ```
+  (Type: py | Classes: AuthHandler | Functions: authenticate, validate_token)
 
-- **`format_conversation_history(messages)`** — Formats prior dialog turns as XML:
+  ### [function] (lines 42-67)
+  def authenticate(...):
+      ...
+  Source: [src/auth/handler.py L42-L67](https://dev.azure.com/org/proj/_git/repo?path=/src/auth/handler.py&version=GCabc123&line=42&lineEnd=67)
+  ```
+  The output is then run through `sanitize_for_content_filter()` to redact connection strings, API keys, and other credentials before being sent to Azure OpenAI.
+
+- **`format_conversation_history(memory_dict)`** — Formats prior dialog turns as XML:
   ```xml
   <previous_messages>
   <message role="user">How does auth work?</message>
@@ -96,9 +99,9 @@ Utility functions used by both handlers:
   </previous_messages>
   ```
 
-- **`get_language_info(code)`** — Resolves language code (`en`, `zh`, `ja`) to display name
+- **`get_language_info(language_code)`** — Resolves language code (`en`, `zh`, `ja`) to display name
 
-- **`_sanitize_for_content_filter(text)`** — Redacts connection strings, API keys, and credentials from context before sending to Azure OpenAI
+Content-filter redaction lives in [`backend/utils/sanitizer.py`](../../utils/sanitizer.py) as `sanitize_for_content_filter(text)`. Chat imports it; the wiki processor (`backend/processor/wiki_generator.py`) uses the same helper for README + retrieval context.
 
 ### Request Model (`models.py`)
 
