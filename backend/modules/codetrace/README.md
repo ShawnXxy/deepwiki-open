@@ -77,11 +77,10 @@ User asks: "How does authentication work?"
 
 | File | Purpose |
 |------|---------|
-| `__init__.py` | Module init |
+| `__init__.py` | Module docstring (no re-exports — import from submodules directly) |
 | `models.py` | Pydantic models: `CodeTraceResult`, `CodeTraceSection`, `CodeReference`, `SourceChunk`, `CodeTraceRequest` |
 | `service.py` | Core logic: RAG retrieval → LLM call → XML parsing → source extraction |
 | `routes.py` | FastAPI `POST /api/codetrace` endpoint |
-| `PLAN.md` | Full implementation plan with design decisions and future roadmap |
 
 ### Prompt template
 
@@ -328,8 +327,9 @@ When "Code Trace" is selected and user submits, the browser navigates to:
 
 6. **No vector schema changes for MVP** — Existing chunk metadata already has
    `file_path`, `start_line`, `end_line`, `functions`, `classes`. Text search on
-   AI Search `content` field works for cloud mode. See PLAN.md for future
-   roadmap on adding dedicated index fields.
+   AI Search `content` field works for cloud mode. See the
+   [Phase 4 — AI Search Index Enhancement](#phase-4--ai-search-index-enhancement-cloud-mode)
+   roadmap below for adding dedicated index fields.
 
 ---
 
@@ -437,6 +437,6 @@ When "Code Trace" is selected and user submits, the browser navigates to:
   do not build on previous traces.
 - **Cloud mode symbol lookup** — AI Search index lacks dedicated metadata
   fields. Text search on `content` works but is less precise than filtered
-  queries. See Phase 4 roadmap.
+  queries. See [Phase 4 roadmap](#phase-4--ai-search-index-enhancement-cloud-mode) below.
 - **No caching** — Traces are not persisted. Refreshing the page re-generates
   the trace (costs LLM tokens).

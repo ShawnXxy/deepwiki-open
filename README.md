@@ -1,6 +1,6 @@
 # Orcas CodeWiki
 
-> **Inspired by [Orcas CodeWiki-Open](https://github.com/AsyncFuncAI/Orcas CodeWiki-open)** — Fork optimized for **Azure OpenAI** with Managed Identity authentication.
+> **Inspired by [deepwiki-open](https://github.com/AsyncFuncAI/deepwiki-open)** — Fork optimized for **Azure OpenAI** with Managed Identity authentication.
 
 **Orcas CodeWiki** automatically generates interactive wikis for Azure DevOps repositories. Enter a repo URL and CodeWiki will analyze the code structure, generate comprehensive documentation with visual diagrams, and organize it into a navigable wiki.
 
@@ -122,11 +122,15 @@ backend/
 │   ├── repository/     # Git clone, pull, commit hash
 │   ├── embedder/       # Chunking, embedding, FAISS/AI Search retrieval
 │   ├── wiki/           # Wiki cache read/write/export
-│   └── chat/           # Ask/Chat Q&A (WebSocket + HTTP streaming)
+│   ├── chat/           # Ask/Chat Q&A (WebSocket + HTTP streaming)
+│   ├── codemap/        # Static AST symbol/dependency graph (tree-sitter)
+│   └── codetrace/      # LLM-powered query-driven code flow trace
 ├── clients/            # Azure OpenAI, Blob, AI Search, Storage abstraction
 ├── promptstore/        # LLM prompt templates
+├── utils/              # url_builder, filter, sanitizer
 ├── config/             # JSON config files (infra.json, embedder.json, etc.)
-└── app.py              # FastAPI server (7 endpoints for chat + wiki API)
+├── app.py              # FastAPI app object (10 endpoints: chat + wiki + codemap + codetrace + health)
+└── main.py             # uvicorn launcher (imports `app` from app.py)
 
 src/                    # Next.js frontend (wiki viewer + Ask/Chat UI)
 Deployments/            # ARM templates for Azure resource provisioning
@@ -316,6 +320,203 @@ python -m backend.processor.aml_dispatcher --config=backend/run.json
 # AML pipeline runs code_processor --mode=cloud automatically on schedule
 ```
 
+## Architecture V0 (Upstream Origin)
+
+> Snapshot of the architecture inherited from the upstream [`AsyncFuncAI/deepwiki-open`](https://github.com/AsyncFuncAI/deepwiki-open) `main` branch — the fork point for this project. Captured for historical reference; the live `main` branch in this repo still reflects this design and **must not be modified**.
+
+<details>
+
+### Topology
+
+A **two-tier monolith** with browser-side orchestration:
+
+- **Frontend** — Next.js 15 (App Router) + React 19 + Tailwind CSS, served on port `3000`. Pages drive the wiki generation pipeline directly (fetch repo trees, fan out per-page LLM calls, persist cache).
+- **Backend** — FastAPI + `uvicorn` on port `8001`, built on the [`adalflow`](https://github.com/SylphAI-Inc/AdalFlow) framework. Handles RAG ingestion/retrieval, multi-provider LLM streaming, and wiki cache I/O.
+- **Storage** — Local filesystem under `~/.adalflow/`: `repos/` (shallow git clones), `databases/` (`LocalDB` pickles with FAISS embeddings), `wikicache/` (final wiki JSON per repo+lang+type).
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  Browser (Next.js client)                                               │
+│    src/app/page.tsx          ── home / repo URL input                   │
+│    src/app/[owner]/[repo]    ── wiki orchestrator (concurrency = 1)     │
+│    src/components/Ask.tsx    ── chat widget (Deep Research toggle)      │
+│             │                                                            │
+│             │ 1. fetch tree+README directly from GitHub/GitLab/Bitbucket │
+│             │ 2. WebSocket /ws/chat   (primary)                          │
+│             │ 3. POST  /api/chat/stream  (HTTP fallback)                 │
+│             │ 4. GET/POST/DELETE /api/wiki_cache                         │
+│             ▼                                                            │
+│  Next.js API routes + next.config.ts rewrites  ──▶  FastAPI :8001        │
+│             │                                                            │
+│             ▼                                                            │
+│  FastAPI (api/main.py → api/api.py)                                      │
+│    ├─ websocket_wiki.handle_websocket_chat   (streaming RAG)             │
+│    ├─ simple_chat.chat_completions_stream    (HTTP streaming)            │
+│    ├─ rag.RAG  +  data_pipeline.DatabaseManager                          │
+│    └─ config.py  ── JSON-driven provider registry                        │
+│             │                                                            │
+│             ▼                                                            │
+│  ~/.adalflow/{repos, databases, wikicache}     ◀──▶ LLM / Embedder APIs  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key modules
+
+| Layer | File | Responsibility |
+|------|------|----------------|
+| Backend entry | [api/main.py](api/main.py) | uvicorn launcher; `watchfiles` patch to exclude logs from reload |
+| HTTP surface | [api/api.py](api/api.py) | FastAPI app, wiki cache CRUD, model/lang/auth/export endpoints |
+| WS streaming | [api/websocket_wiki.py](api/websocket_wiki.py) | `/ws/chat` handler, per-provider chunk dispatch, Deep Research loop |
+| HTTP fallback | [api/simple_chat.py](api/simple_chat.py) | `/chat/completions/stream` for non-WS clients |
+| RAG core | [api/rag.py](api/rag.py) | `RAG` class, `Memory`, FAISS retriever wiring, embedding-size filter |
+| Ingestion | [api/data_pipeline.py](api/data_pipeline.py) | `download_repo` (`--depth=1`), glob walk, `DatabaseManager`, chunking |
+| Embedders | [api/tools/embedder.py](api/tools/embedder.py) | Factory selecting OpenAI / Google AI / Ollama / Bedrock embedder |
+| Config | [api/config.py](api/config.py) | `${ENV_VAR}` substitution, `CLIENT_CLASSES` registry, generator/embedder loaders |
+| Prompts | [api/prompts.py](api/prompts.py) | RAG template + 3 Deep Research iteration prompts |
+| Frontend home | [src/app/page.tsx](src/app/page.tsx) | URL parsing, `localStorage` config cache (`deepwikiRepoConfigCache`) |
+| Wiki orchestrator | [src/app/\[owner\]/\[repo\]/page.tsx](src/app/[owner]/[repo]/page.tsx) | Tree fetch → `determineWikiStructure` → per-page generation → cache persist |
+| Ask widget | [src/components/Ask.tsx](src/components/Ask.tsx) | Chat UI; Deep Research mode |
+| WS client | [src/utils/websocketClient.ts](src/utils/websocketClient.ts) | `createChatWebSocket` to `ws://<host>:8001/ws/chat` |
+| Proxy | [next.config.ts](next.config.ts) | Rewrites `/api/wiki_cache`, `/local_repo/structure`, `/lang/config`, `/auth/*`, `/export/wiki` to backend |
+
+### RAG pipeline (three stages)
+
+The official upstream framing is **Ingestion → Indexing → Retrieval & Generation**, bridging "natural-language space" (questions, wiki prose) with "code-entity space" (files, chunks, embeddings).
+
+```mermaid
+flowchart LR
+    subgraph Ingestion
+        A[Git provider] -->|download_repo --depth=1| B[~/.adalflow/repos/owner_repo/]
+        B -->|read_all_documents| C[Documents w/ filters]
+    end
+    subgraph Indexing
+        C -->|TextSplitter word/350/100| D[Chunks]
+        D -->|ToEmbeddings or OllamaDocumentProcessor| E[Embeddings]
+        E -->|LocalDB.pkl| F[~/.adalflow/databases/]
+    end
+    subgraph "Retrieval & Generation"
+        Q[User query] -->|FAISSRetriever top_k=20| F
+        F -->|grouped context by file| G[LLM provider]
+        G -->|streaming chunks| H[Browser]
+    end
+```
+
+- **Chunking** — `TextSplitter(split_by="word", chunk_size=350, chunk_overlap=100)`.
+- **Embedding-size safeguard** — `RAG._validate_and_filter_embeddings` runs a majority vote on vector dimensions to drop drift caused by mid-run model swaps.
+- **Default embedder** — OpenAI `text-embedding-3-small` (256 dims). Switchable via `DEEPWIKI_EMBEDDER_TYPE` to `google` / `ollama` / `bedrock`.
+- **Retriever** — FAISS, `top_k = 20` ([api/config/embedder.json](api/config/embedder.json)).
+
+### Wiki generation flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant H as Home page<br/>(src/app/page.tsx)
+    participant W as Wiki page<br/>([owner]/[repo])
+    participant G as Git provider
+    participant WS as FastAPI /ws/chat
+    participant R as RAG + FAISS
+    participant C as wikicache/
+
+    U->>H: enter repo URL
+    H->>W: router.push('/{owner}/{repo}')
+    W->>C: GET /api/wiki_cache (hit? render → done)
+    W->>G: fetch file_tree + README (browser-side)
+    W->>WS: WS open + determineWikiStructure prompt
+    WS->>R: prepare_retriever (clone if needed, build/load LocalDB)
+    R-->>WS: top-k chunks
+    WS-->>W: stream XML wiki structure
+    loop For each page (MAX_CONCURRENT = 1)
+        W->>WS: WS open + page-content prompt
+        WS->>R: retrieve relevant chunks
+        WS-->>W: stream Markdown + Mermaid
+    end
+    W->>C: POST /api/wiki_cache (persist final wiki)
+```
+
+### Provider abstraction
+
+All providers conform to the `adalflow` `ModelClient` interface (`convert_inputs_to_api_kwargs`, `call`, `acall`). The WebSocket handler dispatches a per-provider streaming chunk handler.
+
+| Kind | Providers | Default model |
+|------|-----------|---------------|
+| **LLM (7)** | Google Gemini, OpenAI, OpenRouter, Azure OpenAI, Ollama, AWS Bedrock, DashScope | Google `gemini-2.5-flash` |
+| **Embedder (4)** | OpenAI, Google AI, Ollama, AWS Bedrock | OpenAI `text-embedding-3-small` |
+
+- **Bedrock** — `AWS_ROLE_ARN` triggers `sts.assume_role()`; client overrides `__getstate__` so non-picklable boto3 handles survive `LocalDB` serialization.
+- **Ollama** — `OllamaDocumentProcessor` patch handles per-document embedding when batch endpoints aren't available.
+- **HTTP fallback** — When WebSocket fails, [src/app/api/chat/stream/route.ts](src/app/api/chat/stream/route.ts) proxies to `/chat/completions/stream`.
+
+### Deep Research loop
+
+Triggered by a `[DEEP RESEARCH]` tag in the user message. Iteration count is derived from assistant message count and capped at 5. Three prompt templates in [api/prompts.py](api/prompts.py): first iteration, intermediate, and final (at iteration ≥ 5).
+
+### API surface
+
+**FastAPI** (port `8001`):
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| WS | `/ws/chat` | Streaming RAG chat (primary path for wiki generation) |
+| POST | `/chat/completions/stream` | HTTP streaming fallback |
+| GET / POST / DELETE | `/api/wiki_cache` | Wiki cache lifecycle |
+| GET | `/api/processed_projects` | List cached repos |
+| GET | `/local_repo/structure` | File-tree introspection |
+| POST | `/export/wiki` | Export wiki as Markdown/JSON |
+| GET | `/lang/config`, `/models/config` | Frontend bootstrap config |
+| GET / POST | `/auth/status`, `/auth/validate` | Optional auth gating |
+| GET | `/health`, `/` | Liveness |
+
+**Next.js** (port `3000`): `/api/chat/stream`, `/api/wiki/projects`, `/api/auth/*`, `/api/models/config` (own routes); plus `next.config.ts` rewrites that proxy `/api/wiki_cache`, `/local_repo/structure`, `/export/wiki`, `/lang/config`, `/auth/*` to the backend.
+
+### Configuration model
+
+JSON-driven provider registration with environment-variable interpolation:
+
+- [api/config/generator.json](api/config/generator.json) — 7 LLM providers, default models, per-model `temperature` / `top_p` / `top_k`.
+- [api/config/embedder.json](api/config/embedder.json) — `embedder` (OpenAI), `embedder_google`, `embedder_ollama`, `embedder_bedrock`, `retriever`, `text_splitter`.
+- [api/config/repo.json](api/config/repo.json) — file/dir filters for ingestion.
+- [api/config/lang.json](api/config/lang.json) — supported wiki languages (10 locales total in `messages/*.json`).
+
+`config.py::replace_env_placeholders` substitutes `${ENV_VAR}` tokens at load time. `DEEPWIKI_EMBEDDER_TYPE` selects the active embedder; `DEEPWIKI_AUTH_MODE` + `DEEPWIKI_AUTH_CODE` gate frontend initiation.
+
+### Storage layout
+
+```
+~/.adalflow/
+├── repos/
+│   └── {owner}_{repo}/                                  # shallow clone (--depth=1)
+├── databases/
+│   └── {owner}_{repo}.pkl                               # LocalDB w/ embeddings
+└── wikicache/
+    └── deepwiki_cache_{type}_{owner}_{repo}_{lang}.json # final wiki cache
+```
+
+Browser-side state persists in `localStorage` under `deepwikiRepoConfigCache` (recent repo URLs, model selections).
+
+### Frontend orchestration notes
+
+- `MAX_CONCURRENT = 1` — page generation is serialized to avoid hammering provider rate limits.
+- Wiki structure is a single LLM call returning XML, parsed with `DOMParser` into sections + pages.
+- Mermaid rendering uses an `originalMarkdown` map for retry-on-failure; optimistic UI tracked via a `pagesInProgress` `Set`.
+- Theme — "Japanese aesthetic" (washi `--background: #f8f4e6`) defined in [src/app/globals.css](src/app/globals.css).
+- Derivative routes `/[owner]/[repo]/workshop` and `/[owner]/[repo]/slides` re-render the cached wiki in alternative formats.
+
+### Known quirks
+
+- The `backend/` directory is **empty on upstream `main`** — it's a stub for an in-progress refactor that never landed in V0. Our V2 architecture lives there.
+- WebSocket scheme rewrite uses `replace(/^http/, 'ws')` and effectively always produces `ws://` — `wss://` is not reached even on HTTPS hosts.
+- [api/simple_chat.py](api/simple_chat.py) defines its own `FastAPI()` instance that is unused; only its `chat_completions_stream` symbol is mounted onto the main `app` in `api.py`.
+- Auth gating restricts the **frontend** entry point and cache deletion, but does **not** prevent direct backend invocation if the FastAPI port is reachable.
+- `LOG_FILE_PATH` is enforced to live within `api/logs/` to defend against path traversal.
+- Multi-arch images (`linux/amd64` + `linux/arm64`) are published to `ghcr.io/asyncfuncai/deepwiki-open:latest` via GitHub Actions Buildx.
+
+### Runtime
+
+- Python **3.11** + Poetry **2.0.1** for the backend; Node.js **20** for the frontend.
+- The container's `start.sh` concurrently launches `uvicorn api.main:app` and the Next.js `server.js`.
+
+</details>
 
 ## Architecture V1 (Deprecated)
 
@@ -495,10 +696,27 @@ All configuration is centralized in `backend/config/infra.json`.
 | `azure_application_insights.enabled` | Enable Application Insights for centralized logging (`true`/`false`) |
 | `azure_application_insights.name` | Application Insights resource name |
 | `azure_application_insights.connection_string` | Application Insights connection string |
+| `azure_ai_search.enabled` | Enable Azure AI Search for cloud-mode retrieval (`true`/`false`) |
+| `azure_ai_search.endpoint` | AI Search service endpoint |
+| `azure_ai_search.api_version` | AI Search REST API version (e.g., `2024-07-01`) |
+| `azure_ai_search.recreate_index` | Drop and recreate the index on next dispatcher run |
+| `azure_ai_search.indexer_interval` | ISO-8601 indexer schedule (e.g., `PT24H`) |
+| `azure_ml.enabled` | Enable AML pipeline / scheduled cloud processing (`true`/`false`) |
+| `azure_ml.workspace_name` | AML workspace name |
+| `azure_ml.compute_name` | AML compute cluster name |
+| `azure_ml.compute_size` | VM SKU for the compute cluster (e.g., `STANDARD_D11_V2`) |
+| `azure_ml.compute_min_instances` / `compute_max_instances` | Cluster autoscale bounds |
+| `azure_ml.schedule_interval_hours` | How often the AML pipeline runs |
+| `azure_ml.environment_name` | AML environment name used by the processor job |
+| `azure_ml.idle_time_before_scale_down` | Seconds before idle nodes scale down |
 
 ### Other Configuration Files
 
-- **`backend/config/embedder.json`**: Embedding batch size, chunk size, retriever top_k settings
+- **`backend/config/embedder.json`** — embedding batch size, chunk size, retriever top_k
+- **`backend/config/excluded.json`** — excluded directories and files for ingestion
+- **`backend/config/included.json`** — supported file extensions (code + doc) for chunking
+- **`backend/config/lang.json`** — supported wiki languages
+- **`backend/config/.cloud/`** — cloud-mode config overlays auto-generated by `aml_dispatcher` / `publish-web.ps1`
 
 ## 💾 Storage Architecture
 
@@ -536,8 +754,9 @@ CodeWiki supports two **mutually exclusive** storage modes:
 ```
 
 **Authentication:**
-- In Azure (VMs, Container Apps): Uses Managed Identity from `infra.json`
-- Locally: Uses Azure CLI credentials (`az login`)
+- In Azure Web App / AML Compute: Uses User-Assigned Managed Identity (`managed_identity.client_id` from `infra.json`)
+- Local terminal: Uses Azure CLI credentials (`az login`) via `DefaultAzureCredential`
+- Local Docker: Uses `AZURE_OPENAI_API_KEY` env var (no credential manager available inside the container)
 
 ## 🤖 Ask & DeepResearch Features
 
