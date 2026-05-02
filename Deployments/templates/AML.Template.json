@@ -798,6 +798,57 @@
                 "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
                 "principalType": "ServicePrincipal"
             }
+        },
+        {
+            "comments": "Azure AI Enterprise Network Connection Approver on the AML workspace itself. Required for the workspace managed identity to read/approve private endpoint connections when managed VNet is enabled. See https://aka.ms/azureaipeapproval",
+            "condition": "[parameters('isCreatingVnetForAzureML')]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, parameters('machineLearningWorkspaceName'), parameters('deepWikiIdentityName'), variables('azureAiEnterpriseNetworkConnectionApproverRoleId')))]",
+            "scope": "[variables('machineLearningWorkspaceId')]",
+            "dependsOn": [
+                "[variables('deepWikiIdentityId')]",
+                "[variables('machineLearningWorkspaceId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('azureAiEnterpriseNetworkConnectionApproverRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "comments": "Azure AI Enterprise Network Connection Approver on the Key Vault. Required for the workspace managed identity to approve private endpoints to KV when managed VNet is enabled.",
+            "condition": "[and(variables('createKeyVault'), parameters('isCreatingVnetForAzureML'))]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('keyVaultName'), parameters('deepWikiIdentityName'), variables('azureAiEnterpriseNetworkConnectionApproverRoleId')))]",
+            "scope": "[variables('keyVaultId')]",
+            "dependsOn": [
+                "[variables('deepWikiIdentityId')]",
+                "[variables('keyVaultId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('azureAiEnterpriseNetworkConnectionApproverRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "comments": "Azure AI Enterprise Network Connection Approver on the Container Registry. Required for the workspace managed identity to approve private endpoints to ACR when managed VNet is enabled.",
+            "condition": "[parameters('isCreatingVnetForAzureML')]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, variables('containerRegistryName'), parameters('deepWikiIdentityName'), variables('azureAiEnterpriseNetworkConnectionApproverRoleId')))]",
+            "scope": "[variables('containerRegistryId')]",
+            "dependsOn": [
+                "[variables('deepWikiIdentityId')]",
+                "[variables('containerRegistryId')]"
+            ],
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('azureAiEnterpriseNetworkConnectionApproverRoleId'))]",
+                "principalId": "[reference(variables('deepWikiIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
         }
     ],
     "outputs": {
