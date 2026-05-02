@@ -223,7 +223,8 @@ class DatabaseManager:
                     branch = 'main'
                     logger.info("Repo not cloned yet, defaulting to 'main' branch")
             
-            branch_suffix = branch.strip() if branch and branch.strip() else 'main'
+            from backend.utils.filter import sanitize_branch_for_path
+            branch_suffix = sanitize_branch_for_path(branch, default='main')
             
             os.makedirs(save_repo_dir, exist_ok=True)
 

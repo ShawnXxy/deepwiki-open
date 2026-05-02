@@ -267,8 +267,9 @@ IMPORTANT FORMATTING RULES:
             )
             # Derive index name from repo URL
             from backend.processor.code_processor import _extract_owner_repo
+            from backend.utils.filter import sanitize_branch_for_path
             owner, repo = _extract_owner_repo(repo_url_or_path)
-            branch_suffix = branch.strip() if branch and branch.strip() else 'main'
+            branch_suffix = sanitize_branch_for_path(branch, default='main')
             idx_name = get_index_name(owner, repo, branch_suffix)
 
             if index_exists(idx_name):
@@ -288,7 +289,8 @@ IMPORTANT FORMATTING RULES:
 
         # Derive cache key from repo URL and branch
         repo_name = repo_url_or_path.rstrip('/').split('/')[-1].replace('.git', '')
-        branch_suffix = branch.strip() if branch and branch.strip() else 'main'
+        from backend.utils.filter import sanitize_branch_for_path
+        branch_suffix = sanitize_branch_for_path(branch, default='main')
         cache_key = f"{repo_name}_{branch_suffix}"
 
         # Check the in-memory cache (fast path)

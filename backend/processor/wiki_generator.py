@@ -25,8 +25,9 @@ from backend.logger import get_content_filter_logger
 from backend.modules.chat.service import format_context_text, get_language_info
 from backend.modules.codemap.models import CodeMapData
 from backend.processor.codemap_generator import (
-    expand_file_paths as _expand_file_paths_with_codemap,
     summarize_codemap as _summarize_codemap,
+    build_file_edge_index as _build_file_edge_index,
+    expand_file_paths_from_index as _expand_file_paths_from_index,
 )
 from backend.promptstore.codemap import build_codemap_prompt_section
 from backend.modules.wiki.models import (
@@ -377,6 +378,19 @@ def generate_wiki(
             f"injected into structure prompt"
         )
 
+    # Build a compact file-edge index up-front so we can release the
+    # bulky CodeMapData reference before the per-page loop starts.
+    # Without this, the full codemap (~100–300 MB on large repos) stays
+    # alive for the entire wiki generation window.
+    edge_index = _build_file_edge_index(codemap)
+    codemap = None  # Allow garbage collection of the full graph
+    gc.collect()
+    if edge_index:
+        logger.info(
+            f"Codemap edge index: {len(edge_index)} files "
+            f"(full codemap released)"
+        )
+
     readme_safe = sanitize_for_content_filter(readme)
     structure_prompt = _build_structure_prompt(
         file_tree=file_tree, readme=readme_safe,
@@ -462,9 +476,11 @@ def generate_wiki(
         page_title = page_data['title']
         page_file_paths = page_data.get('filePaths', [])
 
-        # Expand file_paths with codemap-connected files (imports, calls)
-        retrieval_file_paths = _expand_file_paths_with_codemap(
-            page_file_paths, codemap
+        # Expand file_paths with codemap-connected files (imports, calls).
+        # Uses the pre-built edge index rather than the full CodeMapData,
+        # which has already been released for memory.
+        retrieval_file_paths = _expand_file_paths_from_index(
+            page_file_paths, edge_index
         )
 
         # Build expanded query: title + description + related page titles

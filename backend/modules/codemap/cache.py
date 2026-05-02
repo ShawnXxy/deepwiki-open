@@ -16,6 +16,7 @@ from backend.clients.blob_client import (
 )
 from backend.modules.codemap.models import CodeMapData
 from backend.paths import get_codemap_path
+from backend.utils.filter import sanitize_branch_for_path
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +30,13 @@ def get_codemap_filename(
     repo_type: str,
     branch: Optional[str] = None,
 ) -> str:
-    """Generate the filename for a codemap cache file."""
-    branch_suffix = f"_{branch}" if branch else "_default"
+    """Generate the filename for a codemap cache file.
+
+    Branch names may contain ``/`` (e.g. ``rel/latest``); we sanitize them
+    so the filename stays a single component and does not leak into a
+    sub-folder under the blob prefix.
+    """
+    branch_suffix = f"_{sanitize_branch_for_path(branch, default='default')}"
     return f"codemap_{repo_type}_{owner}_{repo}{branch_suffix}.json"
 
 
@@ -111,10 +117,14 @@ def save_codemap_cache(
     repo_type: str,
     branch: Optional[str] = None,
 ) -> bool:
-    """Save codemap data to storage (blob or local disk)."""
-    payload = data.model_dump()
-    del data  # Free Pydantic object before building JSON string
+    """Save codemap data to storage (blob or local disk).
 
+    Memory note: this used to peak at ``3x`` JSON size on the blob path
+    (``model_dump()`` dict + ``json.dumps()`` string + SDK upload buffer).
+    Pydantic v2's ``model_dump_json()`` skips the intermediate dict, so the
+    blob path now peaks at ``2x`` size. The local path streams via
+    ``json.dump(..., f)`` and is unchanged.
+    """
     if is_blob_storage_configured():
         blob_path = get_codemap_blob_path(
             owner, repo, repo_type, branch,
@@ -126,11 +136,15 @@ def save_codemap_cache(
                     "Blob storage configured but client unavailable"
                 )
                 return False
-            content = json.dumps(payload, separators=(',', ':'))
-            del payload  # Free dict before upload
-            if blob_client.upload_text(blob_path, content):
+            # Single-step Pydantic -> bytes; skips the intermediate dict copy
+            # that ``data.model_dump()`` would create. For 200 MB codemaps
+            # this saves ~200 MB at peak.
+            content_bytes = data.model_dump_json().encode('utf-8')
+            del data  # safe: data already serialised
+            if blob_client.upload_bytes(blob_path, content_bytes):
                 logger.info(
-                    f"Codemap saved to blob: {blob_path}"
+                    f"Codemap saved to blob: {blob_path} "
+                    f"({len(content_bytes)} bytes)"
                 )
                 return True
             return False
@@ -138,7 +152,10 @@ def save_codemap_cache(
             logger.error(f"Failed to save codemap to blob: {e}")
             return False
 
-    # Local storage
+    # Local storage -- already streaming via json.dump(payload, f, ...)
+    payload = data.model_dump()
+    del data  # Free Pydantic object before building JSON string
+
     cache_path = get_codemap_cache_path(
         owner, repo, repo_type, branch,
     )

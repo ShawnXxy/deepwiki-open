@@ -5,10 +5,14 @@ Provides functions that leverage codemap graph data during the wiki
 generation pipeline:
 - expand_file_paths: Expand page file paths using codemap edges
 - summarize_codemap: Build a compact summary for LLM prompts
+- build_file_edge_index / expand_file_paths_from_index: memory-efficient
+  pre-built index that lets the bulky CodeMapData be released before
+  per-page expansion runs.
 """
 
 import logging
-from typing import Dict, List, Set
+from collections import Counter
+from typing import Dict, List, Optional, Set
 
 from backend.modules.codemap.models import CodeMapData
 
@@ -61,6 +65,79 @@ def expand_file_paths(
     extra = extra[:max_extra]
 
     return file_paths + extra
+
+
+def build_file_edge_index(
+    codemap: Optional[CodeMapData],
+) -> Dict[str, Counter]:
+    """Build a compact ``file_path -> Counter(connected_file_path -> edge_count)``
+    map from codemap edges.
+
+    Bidirectional: every edge contributes to both endpoints' counters, mirroring
+    the symmetric traversal in ``expand_file_paths``.
+
+    Why this exists: ``expand_file_paths`` traverses every edge and rebuilds
+    ``node_to_file`` on each call. With the ``codemap`` reference held through
+    the entire wiki generation loop (one call per page), the full
+    ``CodeMapData`` (~100-300 MB on a large repo) is alive for minutes.
+    Pre-building this index up-front lets the caller drop the codemap
+    reference before the page loop starts. The resulting index is typically
+    1-2 orders of magnitude smaller than the codemap itself.
+
+    Returns:
+        Dict mapping file_path to a ``Counter`` of connected files. Empty
+        ``Counter`` semantics are preserved: missing keys yield empty results
+        in ``expand_file_paths_from_index``.
+    """
+    if not codemap or not codemap.edges:
+        return {}
+
+    node_to_file: Dict[str, str] = {n.id: n.file_path for n in codemap.nodes}
+    index: Dict[str, Counter] = {}
+    for edge in codemap.edges:
+        sf = node_to_file.get(edge.source_id)
+        tf = node_to_file.get(edge.target_id)
+        if not sf or not tf or sf == tf:
+            continue
+        index.setdefault(sf, Counter())[tf] += 1
+        index.setdefault(tf, Counter())[sf] += 1
+    return index
+
+
+def expand_file_paths_from_index(
+    file_paths: List[str],
+    edge_index: Dict[str, Counter],
+    max_extra: int = 10,
+) -> List[str]:
+    """Memory-efficient counterpart of ``expand_file_paths`` that reads from
+    a pre-built file-edge index instead of a full ``CodeMapData``.
+
+    Behaviour mirrors ``expand_file_paths`` exactly:
+        - Returns ``file_paths`` (verbatim, in the original order) followed by
+          up to ``max_extra`` additional connected files, ranked by edge count
+          (most-connected first).
+        - When the index is empty or no related files exist, returns the
+          original list unchanged.
+
+    Tie-handling note: when two candidate files have the same edge count,
+    ``Counter.most_common`` may return them in a different order than the
+    original ``sorted(... reverse=True)``. Both downstream retrieval paths
+    (FAISS and Azure AI Search) collapse the file-path list to a set before
+    use, so order on ties is not observable. See ``test_expand_file_paths_parity``
+    for the parity guarantee.
+    """
+    if not edge_index or not file_paths:
+        return list(file_paths)
+
+    file_set: Set[str] = set(file_paths)
+    related: Counter = Counter()
+    for fp in file_paths:
+        for other, count in edge_index.get(fp, Counter()).items():
+            if other not in file_set:
+                related[other] += count
+
+    extra = [f for f, _ in related.most_common(max_extra)]
+    return list(file_paths) + extra
 
 
 def summarize_codemap(codemap: CodeMapData, max_lines: int = 80) -> str:

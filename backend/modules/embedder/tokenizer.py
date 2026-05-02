@@ -15,6 +15,19 @@ MAX_EMBEDDING_TOKENS = 8192
 # Alias for backward compatibility (used in rag.py)
 MAX_INPUT_TOKENS = 7500  # Safe threshold below 8192 token limit
 
+# Above this size (in characters), skip the tiktoken BPE encode and use a
+# coarse 4 chars/token approximation. tiktoken creates a Python list of
+# token IDs proportional to text length -- a 50 MB file produces a list
+# with ~12.5M ints (~400 MB on 64-bit Python) which can OOM on AML
+# STANDARD_D2_V2 (~5 GB usable). The threshold (5 MB ~= 1.25M tokens)
+# leaves comfortable headroom.
+#
+# Quality impact: ``count_tokens`` is used to decide whether a chunk fits
+# in the 8192-token embedding budget. Anything past 5 MB is far above
+# that limit either way, so the approximation only changes a *yes/no*
+# answer that is already \"no\".
+_HUGE_TEXT_THRESHOLD = 5_000_000
+
 
 def safe_read_file(file_path: str) -> str:
     """
@@ -62,6 +75,13 @@ def count_tokens(text: str, embedder_type: str = None, is_ollama_embedder: bool 
     Returns:
         int: The number of tokens in the text.
     """
+    # Memory guard: tiktoken's encode() materialises a Python list of every
+    # token in the input. For multi-megabyte text this can balloon to
+    # hundreds of MB and OOM on small workers. Anything past the threshold
+    # is comfortably above the 8192-token embedding limit, so the coarse
+    # approximation answers the only relevant question (does it fit?).
+    if len(text) > _HUGE_TEXT_THRESHOLD:
+        return len(text) // 4
     try:
         # Use OpenAI embedding model encoding for Azure OpenAI
         encoding = tiktoken.encoding_for_model("text-embedding-3-small")
