@@ -64,7 +64,11 @@ import requests
 from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import DefaultAzureCredential
 
-from backend.config import get_account_config, get_infra_config
+# NOTE: ``backend.config`` is imported lazily inside each function that
+# needs it. Eager import would create a circular dependency at module
+# load: ``backend.config`` runs ``get_configs_dict()`` at top level,
+# which imports ``backend.clients.azureai_client``, which now imports
+# this module for ``is_content_filter_error``.
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +159,21 @@ def _arm_get(
 
     ``path`` must start with ``/subscriptions/...``.
     """
+    body, _etag = _arm_get_with_etag(credential, path, api_version)
+    return body
+
+
+def _arm_get_with_etag(
+    credential: DefaultAzureCredential,
+    path: str,
+    api_version: str = _ARM_API_VERSION,
+) -> tuple[Dict[str, Any], Optional[str]]:
+    """Perform a GET against ARM and return ``(body, etag)``.
+
+    The ETag is read from the HTTP ``ETag`` response header first and
+    falls back to the ``etag`` field in the response body when the
+    header is absent. Returns ``None`` when neither is available.
+    """
     token = credential.get_token(_ARM_SCOPE).token
     url = f"{_ARM_HOST}{path}"
     params = {"api-version": api_version}
@@ -165,7 +184,9 @@ def _arm_get(
         raise RuntimeError(
             f"ARM GET {path} failed: {resp.status_code} {resp.text[:300]}"
         )
-    return resp.json()
+    body = resp.json() if resp.content else {}
+    etag = resp.headers.get("ETag") or (body.get("etag") if isinstance(body, dict) else None)
+    return body, etag
 
 
 def _arm_put(
@@ -173,12 +194,22 @@ def _arm_put(
     path: str,
     body: Dict[str, Any],
     api_version: str = _ARM_API_VERSION,
+    *,
+    if_match: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Perform a PUT against ARM and return the JSON body.
 
     ``path`` must start with ``/subscriptions/...``. ARM may answer with
     202 Accepted for long-running ops; for RAI policies the response is
     typically synchronous (200/201) so we only handle that here.
+
+    Args:
+        if_match: Optional ETag for optimistic concurrency control.
+            When provided, sent as the ``If-Match`` HTTP header. ARM
+            answers HTTP 412 (Precondition Failed) if the resource has
+            been modified since the snapshot — that surface as a
+            ``RuntimeError`` containing ``412`` so callers can detect
+            a concurrent edit and back off.
     """
     token = credential.get_token(_ARM_SCOPE).token
     url = f"{_ARM_HOST}{path}"
@@ -187,6 +218,8 @@ def _arm_put(
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+    if if_match:
+        headers["If-Match"] = if_match
 
     resp = requests.put(
         url, headers=headers, params=params,
@@ -303,6 +336,8 @@ def check_content_filters(
         logger.info("[GuardChecker] Skipped (disabled)")
         return None
 
+    from backend.config import get_account_config, get_infra_config
+
     infra = get_infra_config()
     account_cfg = get_account_config()
     sub_id = (account_cfg.subscription_id or "").strip()
@@ -396,6 +431,305 @@ def format_filter_report(report: Optional[Dict[str, Any]]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Content-filter error detection & classifier (consumed by GuardSession)
+# ---------------------------------------------------------------------------
+
+# Substrings that identify a BadRequestError as a content-filter trip.
+# The list is intentionally small and case-insensitive to avoid drift —
+# kept here so the AzureAIClient retry decorator and the wiki/codemap
+# diagnostics dump share one source of truth.
+_CONTENT_FILTER_KEYWORDS: frozenset = frozenset({
+    "content_filter",
+    "content management policy",
+    "content filtering",
+    "responsibleaipolicy",
+})
+
+
+def is_content_filter_error(exc: BaseException) -> bool:
+    """Return True iff *exc* looks like an Azure content-filter trip.
+
+    Matches the exception message against
+    :data:`_CONTENT_FILTER_KEYWORDS` (case-insensitive). Safe to call
+    on any exception type — non-string conversions are coerced via
+    ``str(exc)``.
+    """
+    if exc is None:
+        return False
+    msg = str(exc).lower()
+    return any(kw in msg for kw in _CONTENT_FILTER_KEYWORDS)
+
+
+# Mapping from Azure's content_filter_result API keys to the display
+# names accepted by ``update_content_filter`` (which matches the
+# ``name`` field on each filter row in the policy body).
+_API_KEY_TO_DISPLAY_NAME: Dict[str, str] = {
+    "hate": "Hate",
+    "sexual": "Sexual",
+    "violence": "Violence",
+    "self_harm": "Selfharm",
+    "selfharm": "Selfharm",
+    "jailbreak": "Jailbreak",
+    "indirect_attack": "Indirect Attack",
+    "profanity": "Profanity",
+    "protected_material_text": "Protected Material Text",
+    "protected_material_code": "Protected Material Code",
+}
+
+# Categories that the GuardSession is allowed to flip off automatically
+# without operator review. Anything in :data:`_GATED_CATEGORIES` is
+# excluded by construction (Azure will reject the PUT anyway), and the
+# "core safety four" (Hate/Sexual/Violence/Selfharm) are deliberately
+# kept on this allow-list-by-policy-only — meaning the session will
+# never auto-relax them. Custom blocklists (any non-built-in name)
+# are matched at runtime against the snapshotted policy.
+_SAFE_TO_AUTO_DISABLE: frozenset = frozenset({
+    "Profanity",
+    "Protected Material Text",
+    "Protected Material Code",
+    "Indirect Attack Spotlighting",
+})
+
+
+# Tier-2 fallback ordering, used when the server's body is Shape B
+# (no key reports ``filtered: true``) or the body is missing entirely.
+# Profanity comes first because that is the empirical default trigger
+# observed on this resource.
+_TIER2_FALLBACK_NAMES: tuple = ("Profanity",)
+
+
+# Confidence labels for classifier output.
+_CONF_EXPLICIT = "explicit"   # body shows {"filtered": true} for this key
+_CONF_FALLBACK = "fallback"   # Shape B / no body → priority guess
+_CONF_BLOCKLIST = "blocklist"  # custom blocklist named on the policy
+
+
+class FilterCandidate:
+    """One classifier candidate returned by :func:`extract_content_filter_categories`.
+
+    Attributes:
+        name: Display name (matches ``name`` on a filter row, e.g.
+            ``"Profanity"`` or a custom blocklist name).
+        source: ``"Prompt"`` or ``"Completion"``.
+        confidence: One of ``"explicit"``, ``"fallback"``, ``"blocklist"``.
+    """
+    __slots__ = ("name", "source", "confidence")
+
+    def __init__(self, name: str, source: str, confidence: str) -> None:
+        self.name = name
+        self.source = source
+        self.confidence = confidence
+
+    def __repr__(self) -> str:  # pragma: no cover - trivial
+        return (
+            f"FilterCandidate(name={self.name!r}, source={self.source!r}, "
+            f"confidence={self.confidence!r})"
+        )
+
+
+def _extract_error_body(exc: BaseException) -> Dict[str, Any]:
+    """Best-effort extraction of the structured error body from *exc*.
+
+    OpenAI's ``BadRequestError`` exposes ``.body`` as a dict. As a
+    fallback, parse the first JSON object found in ``str(exc)``.
+    Returns an empty dict when neither path yields a dict.
+    """
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        return body
+
+    s = str(exc)
+    start = s.find("{")
+    if start < 0:
+        return {}
+    depth = 0
+    for i in range(start, len(s)):
+        ch = s[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    parsed = json.loads(s[start:i + 1])
+                    return parsed if isinstance(parsed, dict) else {}
+                except Exception:
+                    return {}
+    return {}
+
+
+def extract_content_filter_categories(
+    exc: BaseException,
+    *,
+    policy_filters: Optional[List[Dict[str, Any]]] = None,
+) -> List[FilterCandidate]:
+    """Classify a content-filter exception into ranked relax candidates.
+
+    The classifier walks two tiers:
+
+    * **Tier 1 (explicit).** If the error body contains
+      ``content_filter_result`` with at least one key whose
+      ``filtered`` value is truthy, emit those keys (mapped via
+      :data:`_API_KEY_TO_DISPLAY_NAME`) as
+      :attr:`FilterCandidate.confidence` ``"explicit"``.
+    * **Tier 2 (fallback).** If the error code is ``content_filter``
+      but Tier 1 yields nothing — the empirically common Shape B
+      where every standard key reports ``safe`` — emit the names in
+      :data:`_TIER2_FALLBACK_NAMES` (today: ``Profanity``) followed
+      by any custom-blocklist names that appear in *policy_filters*.
+
+    Args:
+        exc: A ``BadRequestError`` (or any exception). Non-content-filter
+            errors return an empty list.
+        policy_filters: Optional list as returned by
+            :func:`_normalise_filters` for the snapshotted policy.
+            Used to enumerate custom-blocklist names for Tier 2.
+
+    Returns:
+        A list of :class:`FilterCandidate`, in attempt order. May be
+        empty when *exc* is not a content-filter error.
+    """
+    if not is_content_filter_error(exc):
+        return []
+
+    body = _extract_error_body(exc)
+    err = body.get("error") if isinstance(body, dict) else None
+    inner = (err or {}).get("innererror") if isinstance(err, dict) else None
+    cfr = (inner or {}).get("content_filter_result") if isinstance(inner, dict) else None
+
+    out: List[FilterCandidate] = []
+
+    # Tier 1 — explicit hits.
+    if isinstance(cfr, dict):
+        for api_key, info in cfr.items():
+            if not isinstance(info, dict):
+                continue
+            if not info.get("filtered"):
+                continue
+            display = _API_KEY_TO_DISPLAY_NAME.get(api_key.lower())
+            if not display:
+                continue
+            # Source is not in the body; emit Prompt first, then Completion.
+            out.append(FilterCandidate(display, "Prompt", _CONF_EXPLICIT))
+            out.append(FilterCandidate(display, "Completion", _CONF_EXPLICIT))
+
+    # Tier 2 — fallback if nothing explicit.
+    if not out:
+        for name in _TIER2_FALLBACK_NAMES:
+            out.append(FilterCandidate(name, "Prompt", _CONF_FALLBACK))
+            out.append(FilterCandidate(name, "Completion", _CONF_FALLBACK))
+
+    # Tier 2 cont. — custom blocklists named on the snapshotted policy.
+    if policy_filters:
+        builtin = {v.lower() for v in _API_KEY_TO_DISPLAY_NAME.values()} | {
+            "indirect attack spotlighting"
+        }
+        seen = {(c.name, c.source) for c in out}
+        for f in policy_filters:
+            name = f.get("name") or ""
+            src = f.get("source") or ""
+            if not name or not src:
+                continue
+            if name.lower() in builtin:
+                continue
+            if (name, src) in seen:
+                continue
+            out.append(FilterCandidate(name, src, _CONF_BLOCKLIST))
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Snapshot / restore (consumed by GuardSession)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_account_target() -> tuple[DefaultAzureCredential, str, str, str]:
+    """Resolve credential, sub_id, rg, account_name from infra.json.
+
+    Centralised so the snapshot/restore helpers don't repeat the
+    boilerplate that already lives in :func:`check_content_filters`
+    and :func:`update_content_filter`.
+    """
+    from backend.config import get_account_config, get_infra_config
+
+    infra = get_infra_config()
+    account_cfg = get_account_config()
+    sub_id = (account_cfg.subscription_id or "").strip()
+    rg = (account_cfg.resource_group or "").strip()
+    if not sub_id or not rg:
+        raise ValueError(
+            "infra.json: account.subscription_id and account.resource_group "
+            "are required"
+        )
+    account = _account_name_from_endpoint(infra.azure_openai.chat.endpoint)
+    return _build_credential(), sub_id, rg, account
+
+
+def get_policy_snapshot(policy_name: str) -> Dict[str, Any]:
+    """Read the full RAI policy body and stamp it with the response ETag.
+
+    The returned dict has the exact shape ARM gave us, plus a top-level
+    ``"_etag"`` key (added by us, distinct from any ``"etag"`` field
+    inside the body) so the restore call can pass ``If-Match`` without
+    re-reading. Pass the entire return value to
+    :func:`restore_policy_snapshot` unchanged.
+    """
+    credential, sub_id, rg, account = _resolve_account_target()
+    path = (
+        f"/subscriptions/{sub_id}/resourceGroups/{rg}"
+        f"/providers/Microsoft.CognitiveServices/accounts/{account}"
+        f"/raiPolicies/{policy_name}"
+    )
+    body, etag = _arm_get_with_etag(credential, path)
+    snap = dict(body)
+    snap["_etag"] = etag
+    snap["_policy_name"] = policy_name
+    snap["_arm_path"] = path
+    return snap
+
+
+def restore_policy_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    """Re-PUT the snapshot's ``properties`` with ``If-Match`` set.
+
+    Args:
+        snapshot: The dict returned by :func:`get_policy_snapshot`.
+
+    Returns:
+        ARM's PUT response body. On HTTP 412 (precondition failed)
+        the underlying :func:`_arm_put` raises ``RuntimeError`` and
+        this function re-raises it after logging an ERROR with the
+        manual recovery hint.
+    """
+    if not isinstance(snapshot, dict):
+        raise ValueError("snapshot must be a dict from get_policy_snapshot()")
+    path = snapshot.get("_arm_path")
+    policy_name = snapshot.get("_policy_name") or "<unknown>"
+    if not path:
+        raise ValueError(
+            "snapshot is missing '_arm_path'; only pass values returned by "
+            "get_policy_snapshot()"
+        )
+    credential, _sub, _rg, _acct = _resolve_account_target()
+    body = {"properties": snapshot.get("properties") or {}}
+    etag = snapshot.get("_etag")
+    try:
+        return _arm_put(credential, path, body, if_match=etag)
+    except RuntimeError as exc:
+        if "412" in str(exc):
+            logger.error(
+                "[GuardChecker] restore of policy %s failed with 412 "
+                "(precondition failed). Another writer modified the "
+                "policy during this session. Manual recovery: "
+                "python -m backend.utils.guard_checker --policy %s "
+                "--filter <name> --source <Prompt|Completion> "
+                "--enabled true --blocking true --confirm",
+                policy_name, policy_name,
+            )
+        raise
+
+
+# ---------------------------------------------------------------------------
 # Setter
 # ---------------------------------------------------------------------------
 
@@ -418,6 +752,7 @@ def update_content_filter(
     new_severity: Optional[str] = None,
     confirm: bool = False,
     enabled: Optional[bool] = None,
+    if_match: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Mutate a single content-filter entry on an existing RAI policy.
 
@@ -432,7 +767,7 @@ def update_content_filter(
             the configured Azure OpenAI account.
         filter_name: Filter category, case-insensitive
             (e.g. ``"Profanity"``, ``"Hate"``, ``"Protected Material Code"``).
-        source: ``"Prompt"`` or ``"Completion"`` \u2014 the side of the
+        source: ``"Prompt"`` or ``"Completion"`` — the side of the
             request the filter applies to.
         new_enabled: New value for ``enabled`` (or ``None`` to keep).
         new_blocking: New value for ``blocking`` (or ``None`` to keep).
@@ -443,7 +778,13 @@ def update_content_filter(
             ``False`` (default), the function performs a dry run and
             returns the prospective body without calling PUT.
         enabled: Same tri-state guard as :func:`check_content_filters`
-            \u2014 ``False`` short-circuits and returns ``{}``.
+            — ``False`` short-circuits and returns ``{}``.
+        if_match: Optional explicit ETag for optimistic concurrency.
+            When ``None`` (default), the function captures the ETag
+            from its own GET and uses it on the PUT so concurrent
+            edits surface as HTTP 412 instead of being silently
+            overwritten. Pass an empty string to opt out and PUT
+            unconditionally.
 
     Returns:
         On a real run: the policy body returned by ARM after the PUT.
@@ -453,7 +794,8 @@ def update_content_filter(
 
     Raises:
         ValueError: Filter not found on the policy, or no fields to change.
-        RuntimeError: ARM call failed (e.g. gated category, missing RBAC).
+        RuntimeError: ARM call failed (e.g. gated category, missing RBAC,
+            412 precondition failed).
     """
     if not is_guard_check_enabled(enabled):
         logger.info("[GuardChecker] update skipped (disabled)")
@@ -470,6 +812,8 @@ def update_content_filter(
         raise ValueError(
             f"source must be 'Prompt' or 'Completion', got {source!r}"
         )
+
+    from backend.config import get_account_config, get_infra_config
 
     infra = get_infra_config()
     account_cfg = get_account_config()
@@ -490,7 +834,7 @@ def update_content_filter(
         f"/raiPolicies/{policy_name}"
     )
 
-    current = _arm_get(credential, path)
+    current, current_etag = _arm_get_with_etag(credential, path)
     props = dict(current.get("properties") or {})
     filters = list(props.get("contentFilters") or [])
 
@@ -555,7 +899,16 @@ def update_content_filter(
         "[GuardChecker] APPLY: %s/%s on policy %s: %s -> %s",
         filter_name, source, policy_name, before, after,
     )
-    return _arm_put(credential, path, new_body)
+    # Resolve the ETag to send: explicit caller value wins (including
+    # empty string == opt-out); otherwise use the one we just GET'd.
+    etag_to_send: Optional[str]
+    if if_match is None:
+        etag_to_send = current_etag
+    elif if_match == "":
+        etag_to_send = None
+    else:
+        etag_to_send = if_match
+    return _arm_put(credential, path, new_body, if_match=etag_to_send)
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +966,15 @@ def _cli() -> int:
             "and prints the prospective body."
         ),
     )
+    parser.add_argument(
+        "--show-blocklist-content", action="store_true",
+        help=(
+            "On read-only inspection, also dump the raw policy JSON "
+            "(which can include custom-blocklist regex). Off by "
+            "default to avoid leaking blocklist content into shell "
+            "history or logs."
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -656,9 +1018,16 @@ def _cli() -> int:
         return 0
 
     print(format_filter_report(report))
-    print("")
-    print("Raw JSON:")
-    print(json.dumps(report, indent=2))
+    if args.show_blocklist_content:
+        print("")
+        print("Raw JSON:")
+        print(json.dumps(report, indent=2))
+    else:
+        print("")
+        print(
+            "(raw JSON suppressed; pass --show-blocklist-content "
+            "to dump the full policy body)"
+        )
     return 0
 
 

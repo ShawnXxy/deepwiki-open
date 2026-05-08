@@ -22,6 +22,7 @@ from openai import BadRequestError
 from backend.config import get_azure_deployment_name
 from backend.clients.azureai_client import AzureAIClient
 from backend.logger import get_content_filter_logger
+from backend.utils.guard_checker import is_content_filter_error
 from backend.modules.chat.service import format_context_text, get_language_info
 from backend.modules.codemap.models import CodeMapData
 from backend.processor.codemap_generator import (
@@ -130,11 +131,7 @@ def _call_llm(prompt: str, model_client: AzureAIClient,
             api_kwargs=api_kwargs, model_type=ModelType.LLM
         )
     except BadRequestError as e:
-        error_msg = str(e).lower()
-        if any(kw in error_msg for kw in [
-            "content_filter", "content management policy",
-            "content filtering", "responsibleaipolicy",
-        ]):
+        if is_content_filter_error(e):
             _log_content_filter_prompt(
                 prompt=prompt,
                 deployment=deployment,
@@ -148,11 +145,6 @@ def _call_llm(prompt: str, model_client: AzureAIClient,
 
 
 # ---- content-filter diagnostic helpers ----
-
-_CONTENT_FILTER_KEYWORDS = frozenset([
-    "content_filter", "content management policy",
-    "content filtering", "responsibleaipolicy",
-])
 
 
 def _log_content_filter_prompt(

@@ -64,6 +64,8 @@ from adalflow.core.types import (
 )
 from adalflow.components.model_client.utils import parse_embedding_response
 
+from backend.utils.guard_checker import is_content_filter_error
+
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
@@ -254,15 +256,7 @@ def azure_openai_retry_with_delay(func):
                     UnprocessableEntityError, BadRequestError) as e:
                 req_id = _extract_request_id(e)
                 # Content filter errors are permanent — skip retry
-                error_msg = str(e).lower()
-                if isinstance(e, BadRequestError) and any(
-                    kw in error_msg for kw in [
-                        "content_filter",
-                        "content management policy",
-                        "content filtering",
-                        "responsibleaipolicy",
-                    ]
-                ):
+                if isinstance(e, BadRequestError) and is_content_filter_error(e):
                     log.warning(
                         "Content filter error (non-retryable), "
                         f"raising immediately (req_id={req_id}): {e}"
@@ -333,15 +327,7 @@ def azure_openai_async_retry_with_delay(func):
                     UnprocessableEntityError, BadRequestError) as e:
                 req_id = _extract_request_id(e)
                 # Content filter errors are permanent — skip retry
-                error_msg = str(e).lower()
-                if isinstance(e, BadRequestError) and any(
-                    kw in error_msg for kw in [
-                        "content_filter",
-                        "content management policy",
-                        "content filtering",
-                        "responsibleaipolicy",
-                    ]
-                ):
+                if isinstance(e, BadRequestError) and is_content_filter_error(e):
                     log.warning(
                         "Content filter error (non-retryable), "
                         f"raising immediately (req_id={req_id}): {e}"
