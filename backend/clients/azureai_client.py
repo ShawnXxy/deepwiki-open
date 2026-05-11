@@ -64,6 +64,12 @@ from adalflow.core.types import (
 )
 from adalflow.components.model_client.utils import parse_embedding_response
 
+from backend.utils.guard_checker import (
+    extract_content_filter_categories,
+    is_content_filter_error,
+)
+from backend.utils import guard_session
+
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 
@@ -223,7 +229,8 @@ def azure_openai_retry_with_delay(func):
     def wrapper(*args, **kwargs):
         max_retries = 3
         retry_count = 0
-        
+        guard_retried = False
+
         while retry_count < max_retries:
             try:
                 return func(*args, **kwargs)
@@ -253,21 +260,40 @@ def azure_openai_retry_with_delay(func):
             except (APITimeoutError, InternalServerError,
                     UnprocessableEntityError, BadRequestError) as e:
                 req_id = _extract_request_id(e)
-                # Content filter errors are permanent — skip retry
-                error_msg = str(e).lower()
-                if isinstance(e, BadRequestError) and any(
-                    kw in error_msg for kw in [
-                        "content_filter",
-                        "content management policy",
-                        "content filtering",
-                        "responsibleaipolicy",
-                    ]
-                ):
+                # Content filter errors are permanent — but if a
+                # GuardSession is active, attempt one auto-relax retry
+                # before re-raising.
+                if isinstance(e, BadRequestError) and is_content_filter_error(e):
                     log.warning(
-                        "Content filter error (non-retryable), "
-                        f"raising immediately (req_id={req_id}): {e}"
+                        "Content filter error (req_id=%s): %s", req_id, e,
                     )
                     _log_content_filter_messages(kwargs, req_id)
+
+                    sess = guard_session.get_active()
+                    if (sess is not None and sess.enabled
+                            and not guard_retried):
+                        candidates = extract_content_filter_categories(
+                            e, policy_filters=sess.snapshot_filters(),
+                        )
+                        for cand in candidates:
+                            if sess.relax(cand.name, cand.source):
+                                log.warning(
+                                    "[GuardSession] retrying after relaxing "
+                                    "%s/%s (confidence=%s, req_id=%s)",
+                                    cand.name, cand.source,
+                                    cand.confidence, req_id,
+                                )
+                                guard_retried = True
+                                try:
+                                    return func(*args, **kwargs)
+                                except Exception as retry_exc:  # noqa: BLE001
+                                    log.error(
+                                        "[GuardSession] retry failed; "
+                                        "propagating original error "
+                                        "(retry_error=%s: %s)",
+                                        type(retry_exc).__name__, retry_exc,
+                                    )
+                                    raise retry_exc
                     raise
                 # For other errors, use simple exponential backoff
                 if retry_count < max_retries - 1:
@@ -302,7 +328,8 @@ def azure_openai_async_retry_with_delay(func):
     async def wrapper(*args, **kwargs):
         max_retries = 3
         retry_count = 0
-        
+        guard_retried = False
+
         while retry_count < max_retries:
             try:
                 return await func(*args, **kwargs)
@@ -332,21 +359,40 @@ def azure_openai_async_retry_with_delay(func):
             except (APITimeoutError, InternalServerError,
                     UnprocessableEntityError, BadRequestError) as e:
                 req_id = _extract_request_id(e)
-                # Content filter errors are permanent — skip retry
-                error_msg = str(e).lower()
-                if isinstance(e, BadRequestError) and any(
-                    kw in error_msg for kw in [
-                        "content_filter",
-                        "content management policy",
-                        "content filtering",
-                        "responsibleaipolicy",
-                    ]
-                ):
+                # Content filter errors are permanent — but if a
+                # GuardSession is active, attempt one auto-relax retry
+                # before re-raising.
+                if isinstance(e, BadRequestError) and is_content_filter_error(e):
                     log.warning(
-                        "Content filter error (non-retryable), "
-                        f"raising immediately (req_id={req_id}): {e}"
+                        "Content filter error (req_id=%s): %s", req_id, e,
                     )
                     _log_content_filter_messages(kwargs, req_id)
+
+                    sess = guard_session.get_active()
+                    if (sess is not None and sess.enabled
+                            and not guard_retried):
+                        candidates = extract_content_filter_categories(
+                            e, policy_filters=sess.snapshot_filters(),
+                        )
+                        for cand in candidates:
+                            if sess.relax(cand.name, cand.source):
+                                log.warning(
+                                    "[GuardSession] retrying after relaxing "
+                                    "%s/%s (confidence=%s, req_id=%s)",
+                                    cand.name, cand.source,
+                                    cand.confidence, req_id,
+                                )
+                                guard_retried = True
+                                try:
+                                    return await func(*args, **kwargs)
+                                except Exception as retry_exc:  # noqa: BLE001
+                                    log.error(
+                                        "[GuardSession] retry failed; "
+                                        "propagating original error "
+                                        "(retry_error=%s: %s)",
+                                        type(retry_exc).__name__, retry_exc,
+                                    )
+                                    raise retry_exc
                     raise
                 # For other errors, use simple exponential backoff
                 if retry_count < max_retries - 1:

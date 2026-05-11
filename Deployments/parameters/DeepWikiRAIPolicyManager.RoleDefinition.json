@@ -1,0 +1,17 @@
+{
+  "Name": "DeepWiki RAI Policy Manager",
+  "IsCustom": true,
+  "Description": "Read & update Azure OpenAI RAI content-filter policies on a single AOAI account. Used by the GuardSession (backend/utils/guard_session.py) to snapshot, temporarily relax, and restore content-filter policies around a processor pipeline run. Strictly narrower than 'Cognitive Services Contributor' — no data-plane access, no resource lifecycle.",
+  "Actions": [
+    "Microsoft.CognitiveServices/accounts/read",
+    "Microsoft.CognitiveServices/accounts/deployments/read",
+    "Microsoft.CognitiveServices/accounts/raiPolicies/read",
+    "Microsoft.CognitiveServices/accounts/raiPolicies/write"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/4f3f8f41-5643-4664-8c12-ce6b78ceb81f/resourceGroups/RG-ORCAS-DEEPWIKI"
+  ]
+}

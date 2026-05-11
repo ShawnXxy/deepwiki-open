@@ -569,6 +569,10 @@ def _process(mode, repo_url, branch, language, comprehensive,
     Local/Docker mode uses the original pipeline:
         embed + FAISS → generate via FAISS → push to Search (if configured)
     """
+    # Lazy import: keeps backend.config out of code_processor's
+    # import-time dependency surface.
+    from backend.utils.guard_session import GuardSession
+
     owner, repo = _extract_owner_repo(repo_url)
     repo_name = f"{owner}_{repo}"
 
@@ -577,108 +581,115 @@ def _process(mode, repo_url, branch, language, comprehensive,
         f"mode={mode}, language={language}, owner={owner}, repo={repo}"
     )
 
-    token, token_type = resolve_auth(mode)
+    # Snapshot/relax/restore content-filter policies around the
+    # pipeline body. __exit__ runs unconditionally — clean exit,
+    # exception, KeyboardInterrupt — restoring the policy to its
+    # pre-run state. Auto-disabled in Docker mode and when
+    # DEEPWIKI_GUARD_CHECKER_DISABLED is set.
+    with GuardSession.from_infra(mode=mode):
+        token, token_type = resolve_auth(mode)
 
-    # Clone to local temp disk (all modes — even cloud clones locally
-    # on AML compute; vectors and wiki go to blob via storage abstraction)
-    try:
-        repo_dir, commit_hash = step_clone(
-            repo_url, token, branch, repo_name, token_type,
-        )
-    except ValueError as e:
-        if mode == 'cloud' and token_type == 'pat':
-            logger.warning(
-                "PAT clone failed in cloud mode, "
-                "falling back to managed identity"
-            )
-            token, token_type = _resolve_umi_auth()
+        # Clone to local temp disk (all modes — even cloud clones
+        # locally on AML compute; vectors and wiki go to blob via
+        # storage abstraction)
+        try:
             repo_dir, commit_hash = step_clone(
                 repo_url, token, branch, repo_name, token_type,
             )
-        else:
-            logger.error(f"Clone failed: {e}")
-            raise
+        except ValueError as e:
+            if mode == 'cloud' and token_type == 'pat':
+                logger.warning(
+                    "PAT clone failed in cloud mode, "
+                    "falling back to managed identity"
+                )
+                token, token_type = _resolve_umi_auth()
+                repo_dir, commit_hash = step_clone(
+                    repo_url, token, branch, repo_name, token_type,
+                )
+            else:
+                logger.error(f"Clone failed: {e}")
+                raise
 
-    _log_rss("after clone")
+        _log_rss("after clone")
 
-    # Build codemap graph (all modes, unless skipped)
-    codemap = None
-    if not skip_codemap:
-        try:
-            codemap = step_build_codemap(
-                repo_dir, owner, repo, 'azuredevops', branch,
-            )
-        except Exception as e:
-            logger.warning(f"Codemap generation failed (non-fatal): {e}")
-        finally:
+        # Build codemap graph (all modes, unless skipped)
+        codemap = None
+        if not skip_codemap:
+            try:
+                codemap = step_build_codemap(
+                    repo_dir, owner, repo, 'azuredevops', branch,
+                )
+            except Exception as e:
+                logger.warning(f"Codemap generation failed (non-fatal): {e}")
+            finally:
+                gc.collect()
+
+        _log_rss("after codemap")
+
+        if mode == 'cloud':
+            # ============================================================
+            # CLOUD MODE: embed → push to search → generate via search
+            # No FAISS, no in-memory document loading (~120 MB peak)
+            # ============================================================
+            step_embed_cloud(repo_url, token, branch, repo_dir=repo_dir)
+            _log_rss("after embed_cloud")
+
+            step_push_to_search(owner, repo, branch, wait=True)
+            _log_rss("after push_to_search")
+
+            try:
+                wiki_data = step_generate_wiki_cloud(
+                    repo_url, branch, repo_dir, owner, repo,
+                    commit_hash, language, comprehensive,
+                    codemap=codemap,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Wiki generation failed: {e}", exc_info=True
+                )
+                sys.exit(1)
+
+            # Codemap is no longer needed after wiki generation;
+            # release it before save_wiki so the JSON-write phase
+            # runs at minimum RSS. (generate_wiki internally already
+            # drops its reference; this is the outer-scope drop.)
+            codemap = None
             gc.collect()
+            _log_rss("after generate_wiki (codemap freed)")
+            step_save_wiki(wiki_data, language, comprehensive)
+        else:
+            # ============================================================
+            # LOCAL / DOCKER MODE: embed + FAISS → generate via FAISS
+            # (unchanged from existing implementation)
+            # ============================================================
+            retriever = step_embed(repo_url, token, branch, repo_dir=repo_dir)
 
-    _log_rss("after codemap")
+            try:
+                wiki_data = step_generate_wiki(
+                    repo_url, branch, repo_dir, retriever,
+                    commit_hash, language, comprehensive, owner, repo,
+                    codemap=codemap,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Wiki generation failed: {e}", exc_info=True
+                )
+                sys.exit(1)
 
-    if mode == 'cloud':
-        # ============================================================
-        # CLOUD MODE: embed → push to search → generate via search
-        # No FAISS, no in-memory document loading (~120 MB peak)
-        # ============================================================
-        step_embed_cloud(repo_url, token, branch, repo_dir=repo_dir)
-        _log_rss("after embed_cloud")
+            # Free FAISS index + transformed_docs + codemap before save
+            del retriever
+            codemap = None
+            gc.collect()
+            _log_rss("after generate_wiki (FAISS + codemap freed)")
 
-        step_push_to_search(owner, repo, branch, wait=True)
-        _log_rss("after push_to_search")
+            step_save_wiki(wiki_data, language, comprehensive)
 
-        try:
-            wiki_data = step_generate_wiki_cloud(
-                repo_url, branch, repo_dir, owner, repo,
-                commit_hash, language, comprehensive,
-                codemap=codemap,
-            )
-        except Exception as e:
-            logger.error(
-                f"Wiki generation failed: {e}", exc_info=True
-            )
-            sys.exit(1)
+        logger.info(
+            f"Processing complete: {len(wiki_data.generated_pages)} pages, "
+            f"commit={commit_hash[:7] if commit_hash else 'N/A'}"
+        )
 
-        # Codemap is no longer needed after wiki generation; release it
-        # before save_wiki so the JSON-write phase runs at minimum RSS.
-        # (generate_wiki internally already drops its reference; this is
-        # the outer-scope drop.)
-        codemap = None
-        gc.collect()
-        _log_rss("after generate_wiki (codemap freed)")
-        step_save_wiki(wiki_data, language, comprehensive)
-    else:
-        # ============================================================
-        # LOCAL / DOCKER MODE: embed + FAISS → generate via FAISS
-        # (unchanged from existing implementation)
-        # ============================================================
-        retriever = step_embed(repo_url, token, branch, repo_dir=repo_dir)
-
-        try:
-            wiki_data = step_generate_wiki(
-                repo_url, branch, repo_dir, retriever,
-                commit_hash, language, comprehensive, owner, repo,
-                codemap=codemap,
-            )
-        except Exception as e:
-            logger.error(
-                f"Wiki generation failed: {e}", exc_info=True
-            )
-            sys.exit(1)
-
-        # Free FAISS index + transformed_docs + codemap before save
-        del retriever
-        codemap = None
-        gc.collect()
-        _log_rss("after generate_wiki (FAISS + codemap freed)")
-
-        step_save_wiki(wiki_data, language, comprehensive)
-
-    logger.info(
-        f"Processing complete: {len(wiki_data.generated_pages)} pages, "
-        f"commit={commit_hash[:7] if commit_hash else 'N/A'}"
-    )
-
-    return wiki_data
+        return wiki_data
 
 
 # ============================================================================
