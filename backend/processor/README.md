@@ -251,6 +251,43 @@ Config file format (`run.json`):
 
 CLI args override config file values.
 
+## Content-Filter Auto-Relax (GuardSession)
+
+The pipeline body in `_process()` is wrapped in
+[`backend.utils.guard_session.GuardSession`](../utils/guard_session.py):
+on entry it snapshots the Azure OpenAI RAI policy bound to the chat
+and reasoning deployments, on a `content_filter` `BadRequestError`
+the AzureAIClient retry decorator asks the session to relax one
+safe-to-toggle filter row (e.g. `Profanity`) and retries the call
+once, and on exit the original policy is restored byte-identical
+via `If-Match: <etag>`. See
+[content_filter_autorelax_plan.md](content_filter_autorelax_plan.md)
+for the full design.
+
+Kill switches (any one disables the feature):
+
+| Variable | Effect |
+|----------|--------|
+| `_DEEPWIKI_INSIDE_DOCKER=1` | Auto-set by `--mode=docker`. Session is a no-op (snapshot would need ARM access not granted to the container). |
+| `DEEPWIKI_GUARD_CHECKER_DISABLED=1` | Hard kill — no GET, no PUT, no contextvar. Use to roll back if the feature misbehaves. |
+| `DEEPWIKI_AUTO_RELAX_FILTERS=0` | Snapshot still runs but `relax()` becomes a no-op. Useful in audit-only environments. |
+
+The session needs `Microsoft.CognitiveServices/.../raiPolicies/{read,write}`
+on the AOAI account. The custom role definition is at
+[Deployments/parameters/DeepWikiRAIPolicyManager.RoleDefinition.json](../../Deployments/parameters/DeepWikiRAIPolicyManager.RoleDefinition.json);
+see [Deployments/permission.md](../../Deployments/permission.md) for the
+`az role definition create` / `az role assignment create` commands.
+
+Without that role, `GuardSession` enters degraded mode at startup
+(one WARNING line) and the pipeline runs unchanged with no
+auto-relax.
+
+Inspect what the session would snapshot for the next run:
+
+```bash
+python -m backend.utils.guard_session --inspect
+```
+
 ## Dependencies
 
 - **Invokes:** `repository/git_ops` (clone), `codemap/graph_builder` (AST analysis), `embedder/` (RAG), `wiki/cache` (save), `clients/azureai_client` (LLM), `clients/search_client` (AI Search), `clients/storage` (blob/local), `promptstore/` (wiki templates), `promptstore/codemap` (codemap formatting), `processor/codemap_generator` (codemap summarization)

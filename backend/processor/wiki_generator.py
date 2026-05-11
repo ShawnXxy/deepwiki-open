@@ -204,12 +204,42 @@ def _parse_structure_xml(xml_text: str) -> Tuple[
     # Strip control characters
     raw = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', raw)
 
+    def _escape_bare_ampersands(s: str) -> str:
+        # XML/HTML entity references: &name; or &#123; or &#xAB;
+        # Replace any & that is NOT followed by such a reference.
+        return re.sub(r'&(?!(?:#\d+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);)',
+                      '&amp;', s)
+
+    def _dump_failed_xml(payload: str, reason: str) -> None:
+        try:
+            log_dir = os.path.join(os.getcwd(), 'logs')
+            os.makedirs(log_dir, exist_ok=True)
+            ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+            path = os.path.join(
+                log_dir, f'wiki_structure_failed_{ts}.xml',
+            )
+            with open(path, 'w', encoding='utf-8') as fh:
+                fh.write(payload)
+            logger.warning(
+                "Saved failed wiki structure XML to %s (%s)",
+                path, reason,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Could not save failed XML for inspection: %s", exc,
+            )
+
     try:
         root = ET.fromstring(raw)
     except ET.ParseError as e:
         logger.warning(f"XML parse error, attempting repair: {e}")
-        raw = close_open_tags(raw)
-        root = ET.fromstring(raw)
+        repaired = close_open_tags(raw)
+        repaired = _escape_bare_ampersands(repaired)
+        try:
+            root = ET.fromstring(repaired)
+        except ET.ParseError as e2:
+            _dump_failed_xml(raw, f"first parse: {e}; second parse: {e2}")
+            raise
 
     title = (root.findtext('title') or 'Wiki').strip()
     description = (root.findtext('description') or '').strip()

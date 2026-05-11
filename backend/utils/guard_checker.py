@@ -196,12 +196,19 @@ def _arm_put(
     api_version: str = _ARM_API_VERSION,
     *,
     if_match: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Perform a PUT against ARM and return the JSON body.
+) -> tuple[Dict[str, Any], Optional[str]]:
+    """Perform a PUT against ARM and return ``(body, new_etag)``.
 
     ``path`` must start with ``/subscriptions/...``. ARM may answer with
     202 Accepted for long-running ops; for RAI policies the response is
     typically synchronous (200/201) so we only handle that here.
+
+    The returned ``new_etag`` is the resource version *after* the PUT,
+    read from the ``ETag`` response header first and falling back to
+    the ``etag`` field inside the response body — matching the pattern
+    used by :func:`_arm_get_with_etag`. Callers that issue a follow-up
+    PUT (e.g. snapshot restore after a relax) MUST refresh their cached
+    ETag with this value, otherwise the second PUT will 412.
 
     Args:
         if_match: Optional ETag for optimistic concurrency control.
@@ -230,8 +237,15 @@ def _arm_put(
             f"ARM PUT {path} failed: {resp.status_code} {resp.text[:600]}"
         )
     if not resp.content:
-        return {}
-    return resp.json()
+        return {}, resp.headers.get("ETag")
+    try:
+        body_out = resp.json()
+    except ValueError:
+        body_out = {}
+    new_etag = resp.headers.get("ETag") or (
+        body_out.get("etag") if isinstance(body_out, dict) else None
+    )
+    return body_out, new_etag
 
 
 def _list_deployments(
@@ -613,7 +627,11 @@ def extract_content_filter_categories(
             out.append(FilterCandidate(display, "Prompt", _CONF_EXPLICIT))
             out.append(FilterCandidate(display, "Completion", _CONF_EXPLICIT))
 
-    # Tier 2 — fallback if nothing explicit.
+    # Tier 2 — fallback if nothing explicit. We deliberately keep the
+    # fallback active even when the body shows a Purview backend error
+    # (408/500/cert): the user has empirically confirmed that disabling
+    # Profanity makes such requests succeed (the Purview detail in the
+    # response is a co-symptom, not always the trigger).
     if not out:
         for name in _TIER2_FALLBACK_NAMES:
             out.append(FilterCandidate(name, "Prompt", _CONF_FALLBACK))
@@ -714,7 +732,8 @@ def restore_policy_snapshot(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     body = {"properties": snapshot.get("properties") or {}}
     etag = snapshot.get("_etag")
     try:
-        return _arm_put(credential, path, body, if_match=etag)
+        result_body, _new_etag = _arm_put(credential, path, body, if_match=etag)
+        return result_body
     except RuntimeError as exc:
         if "412" in str(exc):
             logger.error(
@@ -787,7 +806,10 @@ def update_content_filter(
             unconditionally.
 
     Returns:
-        On a real run: the policy body returned by ARM after the PUT.
+        On a real run: the policy body returned by ARM after the PUT,
+        with the post-PUT ETag stamped under the synthetic key
+        ``"_new_etag"`` so callers (e.g. :class:`GuardSession`) can
+        refresh their cached ETag and avoid a 412 on a follow-up PUT.
         On a dry run (``confirm=False``): a dict with key ``"dry_run"``
         set to ``True`` and the prospective body under ``"body"``.
         When the checker is disabled: an empty dict.
@@ -908,7 +930,38 @@ def update_content_filter(
         etag_to_send = None
     else:
         etag_to_send = if_match
-    return _arm_put(credential, path, new_body, if_match=etag_to_send)
+    result_body, new_etag = _arm_put(
+        credential, path, new_body, if_match=etag_to_send,
+    )
+    if isinstance(result_body, dict) and new_etag:
+        # Stamp the post-PUT ETag so callers can refresh their cached
+        # snapshot without re-GETting (avoids 412 on the restore PUT
+        # after a relax — see GuardSession.relax / __exit__).
+        result_body["_new_etag"] = new_etag
+
+    # Persistence verification: read the post-PUT row out of the body
+    # ARM returned (no extra GET) and log it. Helpful when debugging
+    # claims like "the relax PUT didn't actually take effect" — Portal
+    # only shows the *current* state, but auto-relax restores the row
+    # on session exit, so a user opening Portal after a failed run
+    # sees the original values. This log line proves what was
+    # persisted between the PUT and the restore.
+    if isinstance(result_body, dict):
+        verify_filters = (result_body.get("properties") or {}).get(
+            "contentFilters") or []
+        for f in verify_filters:
+            if (str(f.get("name", "")).lower() == filter_name.lower()
+                    and str(f.get("source", "")) == source):
+                logger.info(
+                    "[GuardChecker] VERIFIED: %s/%s on %s after PUT: "
+                    "enabled=%s blocking=%s (etag=%s)",
+                    filter_name, source, policy_name,
+                    f.get("enabled"), f.get("blocking"),
+                    new_etag,
+                )
+                break
+
+    return result_body
 
 
 # ---------------------------------------------------------------------------

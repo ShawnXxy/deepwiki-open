@@ -139,6 +139,22 @@ All data under `~/.adalflow/` (consistent across Windows/Linux/Docker):
 | Docker | API Key (.env) | Volume mount | Built-in | Built-in |
 | Azure | MSI | Azure Blob | Container App | Container App |
 
+## Environment Variables
+
+Beyond the deployment-specific keys (`AZURE_OPENAI_API_KEY`,
+`REPO_ACCESS_TOKEN`, `AZURE_CLIENT_ID`, …), the processor pipeline
+honours these feature flags:
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `_DEEPWIKI_INSIDE_DOCKER` | unset | Auto-set by `code_processor --mode=docker`. Disables the GuardSession content-filter auto-relax inside the container. |
+| `DEEPWIKI_GUARD_CHECKER_DISABLED` | unset | Hard kill for `backend.utils.guard_checker` and `GuardSession`. No ARM GET, no ARM PUT, no contextvar registration. |
+| `DEEPWIKI_AUTO_RELAX_FILTERS` | `1` (on) | Set to `0`/`false` to keep the snapshot but make `GuardSession.relax()` a no-op (audit-only). |
+
+See
+[backend/processor/README.md](processor/README.md#content-filter-auto-relax-guardsession)
+for the full GuardSession story.
+
 ## Quick Start
 
 ```powershell

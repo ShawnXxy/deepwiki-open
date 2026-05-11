@@ -46,6 +46,7 @@ import json
 import logging
 import os
 import sys
+import time
 from typing import Any, Dict, List, Optional
 
 from backend.utils.guard_checker import (
@@ -167,7 +168,9 @@ class GuardSession:
 
         # Determine effective enabled flag.
         if enabled is False:
-            return cls(policy_names=[], enabled=False, mode=mode)
+            sess = cls(policy_names=[], enabled=False, mode=mode)
+            sess._skipped = True
+            return sess
 
         if not is_guard_check_enabled(None):
             # DEEPWIKI_GUARD_CHECKER_DISABLED=1 or default-off in Docker.
@@ -403,7 +406,7 @@ class GuardSession:
             before = dict(row)
             try:
                 etag = (snap or {}).get("_etag")
-                update_content_filter(
+                result = update_content_filter(
                     policy_name=pname,
                     filter_name=canonical,
                     source=source,
@@ -412,6 +415,16 @@ class GuardSession:
                     confirm=True,
                     if_match=etag if etag else "",
                 )
+                # Refresh the cached ETag so the restore PUT in
+                # __exit__ sends the post-relax version. Without this
+                # the restore would 412 (PreconditionFailed) and the
+                # policy would be left in the relaxed state. See
+                # update_content_filter docstring for the "_new_etag"
+                # contract.
+                if isinstance(result, dict):
+                    new_etag = result.get("_new_etag")
+                    if new_etag and isinstance(snap, dict):
+                        snap["_etag"] = new_etag
                 self._applied.setdefault(pname, []).append({
                     "filter": canonical,
                     "source": source,
@@ -430,6 +443,27 @@ class GuardSession:
                     "[GuardSession] relax %s/%s on %s failed (%s: %s)",
                     canonical, source, pname, type(exc).__name__, exc,
                 )
+
+        # Azure OpenAI's data-plane caches the resolved RAI policy for
+        # roughly 30s — a retry fired immediately after a successful
+        # ARM PUT can still hit the *pre-relax* cached policy and fail
+        # for the same reason. Sleep briefly so the retry actually
+        # exercises the relaxed state. Tunable via env, default 15s,
+        # set to 0 to disable.
+        if any_ok:
+            try:
+                delay = float(os.environ.get(
+                    "DEEPWIKI_GUARD_PROPAGATION_DELAY_SECONDS", "15"
+                ))
+            except ValueError:
+                delay = 15.0
+            if delay > 0:
+                logger.info(
+                    "[GuardSession] sleeping %.1fs for policy propagation "
+                    "before retry (DEEPWIKI_GUARD_PROPAGATION_DELAY_SECONDS=0 to skip)",
+                    delay,
+                )
+                time.sleep(delay)
 
         return any_ok
 
