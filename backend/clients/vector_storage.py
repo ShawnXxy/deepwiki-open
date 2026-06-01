@@ -70,9 +70,20 @@ class VectorStorage:
     """
     
     VECTORS_DIR = "vectors"
-    
+    MANIFEST_FILENAME = "_manifest.json"
+
     def __init__(self):
         self._root_path = get_adalflow_root_path()
+
+    @staticmethod
+    def _is_chunk_filename(name: str) -> bool:
+        """Return True for files that are chunk payloads.
+
+        Filters out sidecar files (e.g. ``_manifest.json``) so callers that
+        treat every ``.json`` as a chunk do not accidentally surface the
+        manifest as a corrupt document.
+        """
+        return name.endswith('.json') and not os.path.basename(name).startswith('_')
     
     def _get_vectors_base_path(self, repo_name: str, branch: str) -> str:
         """Get the base path for vectors storage.
@@ -198,10 +209,10 @@ class VectorStorage:
             # Local storage
             local_path = self._get_local_vectors_path(repo_name, branch)
             if os.path.exists(local_path) and os.path.isdir(local_path):
-                # Check if directory contains any JSON files
+                # Check if directory contains any chunk JSON files
                 for root, _, files in os.walk(local_path):
                     for f in files:
-                        if f.endswith('.json'):
+                        if self._is_chunk_filename(f):
                             return True
             return False
     
@@ -444,7 +455,7 @@ class VectorStorage:
         json_files = []
         for root, _, files in os.walk(local_base):
             for f in files:
-                if f.endswith('.json'):
+                if self._is_chunk_filename(f):
                     json_files.append(os.path.join(root, f))
 
         if not json_files:
@@ -504,7 +515,7 @@ class VectorStorage:
         # List all blobs in the vectors path
         try:
             blobs = blob_client.list_blobs(vectors_path + "/")
-            json_blobs = [b for b in blobs if b.endswith('.json')]
+            json_blobs = [b for b in blobs if self._is_chunk_filename(b)]
         except Exception as e:
             logger.error(f"[Vec] Failed to list blobs: {e}")
             return []
@@ -605,7 +616,7 @@ class VectorStorage:
         json_files: List[str] = []
         for root, _, files in os.walk(local_base):
             for f in files:
-                if f.endswith('.json'):
+                if self._is_chunk_filename(f):
                     json_files.append(os.path.join(root, f))
 
         if not json_files:
@@ -663,7 +674,7 @@ class VectorStorage:
 
         try:
             blobs = blob_client.list_blobs(vectors_path + "/")
-            json_blobs = [b for b in blobs if b.endswith('.json')]
+            json_blobs = [b for b in blobs if self._is_chunk_filename(b)]
         except Exception as e:
             logger.error(f"[Vec] Failed to list blobs: {e}")
             return
@@ -744,7 +755,7 @@ class VectorStorage:
                     prefix = vectors_path + "/"
                     blobs = blob_client.list_blobs(prefix)
                     for b in blobs:
-                        if b.endswith('.json'):
+                        if self._is_chunk_filename(b):
                             # Store path relative to vectors base
                             files.add(b[len(prefix):])
             else:
@@ -752,7 +763,7 @@ class VectorStorage:
                 if os.path.exists(local_base):
                     for root, _, filenames in os.walk(local_base):
                         for f in filenames:
-                            if f.endswith('.json'):
+                            if self._is_chunk_filename(f):
                                 rel = os.path.relpath(
                                     os.path.join(root, f), local_base
                                 ).replace("\\", "/")
@@ -815,6 +826,195 @@ class VectorStorage:
 
         logger.info(f"[Vec] Deleted {deleted}/{len(rel_paths)} orphan files")
         return deleted
+
+    # ------------------------------------------------------------------
+    # Manifest sidecar (delta-embedding bookkeeping)
+    # ------------------------------------------------------------------
+
+    def _get_manifest_local_path(self, repo_name: str, branch: str) -> str:
+        return os.path.join(
+            self._get_local_vectors_path(repo_name, branch),
+            self.MANIFEST_FILENAME,
+        )
+
+    def _get_manifest_blob_path(self, repo_name: str, branch: str) -> str:
+        return f"{self._get_vectors_base_path(repo_name, branch)}/{self.MANIFEST_FILENAME}"
+
+    def read_manifest(self, repo_name: str, branch: str) -> Optional[Dict[str, Any]]:
+        """Read the embedding manifest sidecar.
+
+        Returns ``None`` when the manifest is missing or unreadable. Never
+        raises — a missing manifest just means "cold start, embed everything".
+        """
+        try:
+            if is_blob_storage_configured():
+                blob_client = get_blob_storage_client()
+                if not blob_client:
+                    return None
+                content = blob_client.download_text(
+                    self._get_manifest_blob_path(repo_name, branch)
+                )
+                if not content:
+                    return None
+                if _USE_ORJSON:
+                    return _json_fast.loads(
+                        content.encode('utf-8') if isinstance(content, str) else content
+                    )
+                return json.loads(content)
+            else:
+                path = self._get_manifest_local_path(repo_name, branch)
+                if not os.path.exists(path):
+                    return None
+                return self._read_json_file(path)
+        except Exception as e:
+            logger.warning(f"[Vec] Failed to read manifest for {repo_name}/{branch}: {e}")
+            return None
+
+    def write_manifest(
+        self,
+        repo_name: str,
+        branch: str,
+        manifest: Dict[str, Any],
+    ) -> bool:
+        """Atomically write the embedding manifest sidecar.
+
+        For local storage: writes to ``_manifest.json.tmp`` then ``os.replace``.
+        For blob storage: relies on the single-PUT upload being atomic.
+        """
+        try:
+            payload = json.dumps(manifest, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"[Vec] Failed to serialize manifest: {e}")
+            return False
+
+        try:
+            if is_blob_storage_configured():
+                blob_client = get_blob_storage_client()
+                if not blob_client:
+                    return False
+                return blob_client.upload_text(
+                    self._get_manifest_blob_path(repo_name, branch),
+                    payload,
+                )
+            else:
+                path = self._get_manifest_local_path(repo_name, branch)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                tmp = path + ".tmp"
+                with open(tmp, 'w', encoding='utf-8') as f:
+                    f.write(payload)
+                os.replace(tmp, path)
+                return True
+        except Exception as e:
+            logger.error(f"[Vec] Failed to write manifest: {e}")
+            return False
+
+    def delete_files_for_sources(
+        self,
+        repo_name: str,
+        branch: str,
+        rel_paths: set,
+        prev_manifest: Dict[str, Any],
+    ) -> int:
+        """Delete every chunk file belonging to the given source paths.
+
+        Uses the previous manifest to look up the chunk file list for each
+        source. Returns the count of files removed. Safe to call with an
+        empty set or missing manifest entries.
+        """
+        if not rel_paths or not prev_manifest:
+            return 0
+
+        files_section = prev_manifest.get("files") or {}
+        targets: set = set()
+        for src in rel_paths:
+            entry = files_section.get(src)
+            if not entry:
+                continue
+            for cf in entry.get("chunk_files") or []:
+                targets.add(cf)
+
+        if not targets:
+            return 0
+
+        return self.delete_files(repo_name, branch, targets)
+
+    def iter_documents_for_sources(
+        self,
+        repo_name: str,
+        branch: str,
+        rel_paths,
+        manifest: Dict[str, Any],
+        batch_size: int = 1000,
+    ) -> Iterator[List[Document]]:
+        """Stream Document batches limited to chunks of specific source files.
+
+        Looks up chunk file paths in ``manifest.files[src].chunk_files`` and
+        loads only those, yielding documents in batches of ``batch_size``.
+        """
+        if not rel_paths or not manifest:
+            return
+
+        files_section = manifest.get("files") or {}
+        chunk_rels: List[str] = []
+        for src in rel_paths:
+            entry = files_section.get(src)
+            if not entry:
+                continue
+            for cf in entry.get("chunk_files") or []:
+                chunk_rels.append(cf)
+
+        if not chunk_rels:
+            return
+
+        vectors_path = self._get_vectors_base_path(repo_name, branch)
+
+        if is_blob_storage_configured():
+            blob_client = get_blob_storage_client()
+            if not blob_client:
+                logger.error("[Vec] Blob client not available")
+                return
+
+            def _download_one(rel: str) -> Optional[Dict[str, Any]]:
+                try:
+                    content = blob_client.download_text(f"{vectors_path}/{rel}")
+                    if content:
+                        if _USE_ORJSON:
+                            return _json_fast.loads(
+                                content.encode('utf-8') if isinstance(content, str) else content
+                            )
+                        return json.loads(content)
+                except Exception:
+                    pass
+                return None
+
+            from concurrent.futures import ThreadPoolExecutor
+            for start in range(0, len(chunk_rels), batch_size):
+                slice_ = chunk_rels[start:start + batch_size]
+                workers = min(64, max(8, len(slice_) // 50 or 8))
+                batch_docs: List[Document] = []
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    for chunk_data in pool.map(_download_one, slice_):
+                        if chunk_data is not None:
+                            batch_docs.append(self._dict_to_document(chunk_data))
+                if batch_docs:
+                    yield batch_docs
+        else:
+            local_base = self._get_local_vectors_path(repo_name, branch)
+            from concurrent.futures import ThreadPoolExecutor
+            for start in range(0, len(chunk_rels), batch_size):
+                slice_ = chunk_rels[start:start + batch_size]
+                full_paths = [
+                    os.path.join(local_base, rp.replace("/", os.sep))
+                    for rp in slice_
+                ]
+                workers = min(32, max(8, len(slice_) // 50 or 8))
+                batch_docs: List[Document] = []
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    for chunk_data in pool.map(self._read_json_file, full_paths):
+                        if chunk_data is not None:
+                            batch_docs.append(self._dict_to_document(chunk_data))
+                if batch_docs:
+                    yield batch_docs
 
     def delete(self, repo_name: str, branch: str) -> bool:
         """

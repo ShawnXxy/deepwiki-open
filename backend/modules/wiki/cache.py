@@ -196,6 +196,97 @@ async def read_wiki_cache(
     return None
 
 
+def wiki_cache_exists_for_commit(
+    owner: str,
+    repo: str,
+    repo_type: str,
+    language: str,
+    commit_hash: str,
+    comprehensive: bool = True,
+    branch: Optional[str] = None,
+) -> bool:
+    """Check whether a saved wiki cache matches ``commit_hash`` exactly.
+
+    Cheap, synchronous probe used by the processor to short-circuit wiki
+    regeneration when nothing has changed since the previous run. Returns
+    True only when:
+      * A cache blob/file exists (new format or legacy fallback), AND
+      * Its stored ``commit_hash`` is non-empty AND equals ``commit_hash``,
+      * AND the cache is not a partial/checkpoint write.
+
+    Any I/O error or parse error returns False (treat as cache miss — the
+    full pipeline will safely regenerate).
+    """
+    if not commit_hash:
+        return False
+
+    target = commit_hash.strip()
+    if not target:
+        return False
+
+    def _matches(content: Optional[str]) -> bool:
+        if not content:
+            return False
+        try:
+            data = json.loads(content)
+        except Exception:
+            return False
+        stored = (data.get("commit_hash") or "").strip()
+        if not stored or stored != target:
+            return False
+        if data.get("is_partial"):
+            return False
+        return True
+
+    try:
+        if is_blob_storage_configured():
+            blob_client = get_blob_storage_client()
+            if not blob_client:
+                return False
+            for path_fn in (
+                get_wiki_cache_blob_path,
+                get_wiki_cache_blob_path_legacy,
+            ):
+                try:
+                    blob_path = (
+                        path_fn(owner, repo, repo_type, language, comprehensive, branch)
+                        if path_fn is get_wiki_cache_blob_path
+                        else path_fn(owner, repo, repo_type, language, comprehensive)
+                    )
+                except TypeError:
+                    blob_path = path_fn(owner, repo, repo_type, language, comprehensive)
+                if not blob_client.exists(blob_path):
+                    continue
+                if _matches(blob_client.download_text(blob_path)):
+                    return True
+            return False
+
+        for path_fn in (
+            get_wiki_cache_path,
+            get_wiki_cache_path_legacy,
+        ):
+            try:
+                cache_path = (
+                    path_fn(owner, repo, repo_type, language, comprehensive, branch)
+                    if path_fn is get_wiki_cache_path
+                    else path_fn(owner, repo, repo_type, language, comprehensive)
+                )
+            except TypeError:
+                cache_path = path_fn(owner, repo, repo_type, language, comprehensive)
+            if not os.path.exists(cache_path):
+                continue
+            try:
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    if _matches(f.read()):
+                        return True
+            except Exception:
+                continue
+        return False
+    except Exception as e:
+        logger.debug(f"wiki_cache_exists_for_commit probe failed: {e}")
+        return False
+
+
 async def save_wiki_cache(data: WikiCacheRequest) -> bool:
     """
     Saves wiki cache data to storage.

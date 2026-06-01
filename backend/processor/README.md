@@ -8,6 +8,35 @@ Runs as a one-shot CLI command — no server required. Transforms a code reposit
 
 **Pipeline:** Clone repo → Build codemap → Embed documents → Generate wiki → Save cache
 
+## Incremental reruns (delta embedding)
+
+Re-running the processor on the same repo is incremental by default. The
+embedder writes a sidecar manifest at `vectors/<owner>_<repo>_<branch>/_manifest.json`
+recording the manifest schema version, HEAD commit hash, embedder signature,
+and — for each source file — its sha256, size and the chunk filenames
+produced. On the next run the pipeline:
+
+1. Walks the working tree and asks the manifest "what changed?"
+   * If the HEAD commit matches the manifest and the working tree is clean,
+     the fast path skips embedding entirely.
+   * Otherwise the git diff between the previous and current HEAD is
+     consulted (`git diff --name-status` + `git status --porcelain`).
+   * sha256 of each candidate file is always the final arbiter: a mismatch
+     forces re-embedding even when git says "unchanged", and a match
+     overrides a stale signal.
+2. Re-embeds only changed/added files; deletes chunks for removed/renamed
+   files. Unchanged chunks stay on blob/disk.
+3. Cloud mode: pushes only the changed slice into Azure AI Search, deleting
+   the corresponding rows first. Document keys are deterministic
+   (`{repo}_{branch}_{path}_{chunk_index:03d}`), so upserts overwrite the
+   right row.
+4. If commit and embedder are unchanged AND a wiki cache for the same
+   commit already exists, the entire pipeline short-circuits after clone.
+
+Pass `--full-reprocess` on the CLI to ignore the manifest and rebuild
+everything (used after embedder dimension/model changes or when the index
+schema is bumped).
+
 <details>
 The pipeline steps differ between local/Docker and cloud modes:
 

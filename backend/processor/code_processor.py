@@ -64,6 +64,13 @@ Examples:
                         help=argparse.SUPPRESS)
     parser.add_argument('--skip-codemap', action='store_true',
                         help='Skip codemap graph generation')
+    parser.add_argument('--full-reprocess', action='store_true',
+                        help=(
+                            'Ignore the embedding manifest and re-embed '
+                            'every file (full rebuild). Default behaviour '
+                            'is incremental: only changed files are '
+                            're-embedded.'
+                        ))
 
     args = parser.parse_args()
 
@@ -82,6 +89,9 @@ Examples:
         'comprehensive': True,
         'language': args.language or config.get('language', 'en'),
         'skip_codemap': args.skip_codemap or config.get('skip_codemap', False),
+        'full_reprocess': args.full_reprocess or config.get(
+            'full_reprocess', False
+        ),
     }
 
     if args.comprehensive is not None:
@@ -296,11 +306,15 @@ def step_build_codemap(repo_path, owner, repo, repo_type, branch):
     return codemap
 
 
-def step_embed(repo_url, token, branch, repo_dir=None):
+def step_embed(repo_url, token, branch, repo_dir=None, force_reprocess=False):
     """Embed documents and build retriever. Returns RAG instance.
 
     Storage backend (local or blob) and AOAI auth (MSI or API key)
     are driven by config - this step does not need to know.
+
+    ``force_reprocess`` opts out of the manifest-driven delta and forces a
+    full re-embed of every file. Defaults to False, so reruns only embed
+    files that actually changed.
     """
     from backend.modules.embedder.retriever import RAG
 
@@ -311,7 +325,7 @@ def step_embed(repo_url, token, branch, repo_dir=None):
         type='azuredevops',
         access_token=token,
         branch=branch,
-        force_reprocess=True,
+        force_reprocess=force_reprocess,
         repo_dir=repo_dir,
     )
     logger.info(f"Retriever ready ({len(rag.transformed_docs)} docs)")
@@ -327,58 +341,138 @@ def step_embed(repo_url, token, branch, repo_dir=None):
     return rag
 
 
-def step_embed_cloud(repo_url, token, branch, repo_dir=None):
+def step_embed_cloud(repo_url, token, branch, repo_dir=None, force_reprocess=False):
     """Embed documents and save to blob (cloud mode, no FAISS).
 
     Skips FAISS construction and document accumulation since wiki
-    generation will use Azure AI Search for retrieval instead.
-    Returns (chunk_count, owner, repo, branch_suffix) for downstream steps.
+    generation will use Azure AI Search for retrieval instead. Returns
+    ``(chunk_count, delta_changed_sources)`` where ``delta_changed_sources``
+    is the set of source paths whose chunks were rewritten in this run —
+    Step 5 (push_to_search) uses it to delete the corresponding AI Search
+    docs before re-pushing.
     """
-    from backend.modules.embedder.indexer import DatabaseManager
+    from backend.modules.embedder.indexer import (
+        DatabaseManager,
+        _walk_candidate_files,
+        _current_embedder_signature,
+        _build_manifest,
+    )
+    from backend.modules.embedder.delta import (
+        compute_file_delta, summarize_for_log,
+    )
     from backend.modules.embedder.document import (
         transform_documents_and_save_as_json,
     )
+    from backend.modules.repository.git_ops import get_head_commit_hash
     from backend.clients.vector_storage import get_vector_storage
 
     logger.info("Step 2: Embedding documents (cloud mode)")
     db_manager = DatabaseManager()
     db_manager._create_repo(
         repo_url, 'azuredevops', token, branch,
-        force_reprocess=True,
+        force_reprocess=force_reprocess,
         repo_dir=repo_dir,
     )
 
     repo_name = db_manager.repo_paths["repo_name"]
     branch_suffix = db_manager.repo_paths["branch_suffix"]
-
-    # Snapshot for orphan cleanup
+    save_repo_dir = db_manager.repo_paths["save_repo_dir"]
     vector_storage = get_vector_storage()
-    old_files = vector_storage.list_files(repo_name, branch_suffix)
 
-    # Fused embed+save pipeline — skip all_embedded_docs accumulation
-    chunk_count, _ = transform_documents_and_save_as_json(
-        db_manager.repo_paths["save_repo_dir"],
+    # ----- Delta detection -----
+    prev_manifest = (
+        vector_storage.read_manifest(repo_name, branch_suffix)
+        if not force_reprocess else None
+    )
+    current_commit_hash = ""
+    if save_repo_dir and os.path.isdir(os.path.join(save_repo_dir, ".git")):
+        try:
+            current_commit_hash = get_head_commit_hash(save_repo_dir)
+        except Exception as e:
+            logger.warning(f"[Delta] Could not read HEAD commit: {e}")
+
+    candidate_file_infos = _walk_candidate_files(save_repo_dir)
+    embedder_sig = _current_embedder_signature()
+    delta = compute_file_delta(
+        repo_dir=save_repo_dir,
+        file_infos=candidate_file_infos,
+        prev_manifest=prev_manifest,
+        current_embedder=embedder_sig,
+        current_commit_hash=current_commit_hash,
+        verify_hash=True,
+    )
+    logger.info(f"[Vec] Delta summary (cloud): {summarize_for_log(delta)}")
+
+    # Fast-path no-op exit.
+    if (
+        prev_manifest
+        and not delta.to_embed
+        and not delta.to_delete
+        and vector_storage.exists(repo_name, branch_suffix)
+    ):
+        logger.info("[Vec] No changes detected — skipping cloud embed")
+        return 0, set()
+
+    # ----- Drop chunks for deleted/replaced sources -----
+    if delta.to_delete and prev_manifest:
+        removed = vector_storage.delete_files_for_sources(
+            repo_name, branch_suffix, delta.to_delete, prev_manifest,
+        )
+        logger.info(
+            f"[Vec] Removed {removed} cloud chunk files for "
+            f"{len(delta.to_delete)} deleted/changed sources"
+        )
+
+    # ----- Embed only the to_embed slice (skip FAISS accumulation) -----
+    delta_paths = {
+        fi[1].replace("\\", "/") for fi in delta.to_embed
+    } if not force_reprocess else None
+
+    chunk_count, _, chunks_by_source_new = transform_documents_and_save_as_json(
+        save_repo_dir,
         repo_name,
         branch_suffix,
         repo_url=repo_url,
         repo_type='azuredevops',
         skip_accumulate=True,
+        delta_to_embed=delta_paths,
+        return_chunks_by_source=True,
     )
 
-    # Orphan cleanup
-    if old_files:
-        new_files = vector_storage.list_files(repo_name, branch_suffix)
-        orphans = old_files - new_files
-        if orphans:
-            logger.info(
-                f"[Vec] Cleaning {len(orphans)} orphan files"
-            )
-            vector_storage.delete_files(
-                repo_name, branch_suffix, orphans
-            )
+    # ----- Write the new manifest -----
+    try:
+        new_manifest = _build_manifest(
+            prev_manifest=prev_manifest,
+            delta=delta,
+            chunks_by_source_new=chunks_by_source_new,
+            current_commit_hash=current_commit_hash,
+            embedder_sig=embedder_sig,
+        )
+        vector_storage.write_manifest(repo_name, branch_suffix, new_manifest)
+    except Exception as e:
+        logger.warning(f"[Vec] Failed to write manifest (non-fatal): {e}")
 
-    logger.info(f"Embedded {chunk_count} chunks (saved to blob, no FAISS)")
-    return chunk_count
+    # ``changed_sources`` = sources whose chunks now differ in blob storage,
+    # i.e. anything we just re-embedded plus anything we deleted. The cloud
+    # push step uses this to keep AI Search in sync.
+    #
+    # Cold-start optimisation: when there was no prior manifest every file
+    # was embedded fresh, so the "diff" is "everything". Return ``None`` to
+    # signal the push step to use its streaming full-push path instead of
+    # iterating per-file — same correctness, far fewer filter queries.
+    if prev_manifest is None:
+        changed_sources = None
+    else:
+        changed_sources = set(
+            fi[1].replace("\\", "/") for fi in delta.to_embed
+        ) | set(delta.to_delete)
+
+    logger.info(
+        f"Embedded {chunk_count} chunks (saved to blob, no FAISS); "
+        f"changed sources: "
+        f"{'ALL (cold start)' if changed_sources is None else len(changed_sources)}"
+    )
+    return chunk_count, changed_sources
 
 
 def step_generate_wiki(
@@ -434,21 +528,38 @@ def step_save_wiki(wiki_data, language, comprehensive):
         logger.error(f"Failed to save wiki cache: {e}", exc_info=True)
 
 
-def step_push_to_search(owner, repo, branch, wait=False):
+def step_push_to_search(
+    owner, repo, branch, wait=False,
+    changed_sources=None, full_reprocess=False,
+):
     """Push vectors to AI Search and trigger indexer (cloud only).
 
     Loads and pushes in batches of PUSH_BATCH_SIZE to avoid holding
     all vectors in memory at once (~725MB for 50K chunks).
+
+    The selective-push contract:
+      * ``full_reprocess=True`` OR ``changed_sources is None`` → push every
+        chunk currently in blob storage (legacy behaviour, used on cold
+        start / explicit full rebuild).
+      * ``changed_sources`` is a (possibly empty) set of source-file paths
+        → delete the existing AI Search rows for those files (if any) then
+        push only the chunks belonging to those files. Files not in the
+        set are assumed to already be in the index with current content.
 
     Args:
         owner: Repo owner
         repo: Repo name
         branch: Branch name
         wait: If True, block until indexer completes (for cloud-first flow)
+        changed_sources: Set of relative source paths whose chunks were
+            re-embedded or deleted in this run. ``None`` means "unknown,
+            push everything".
+        full_reprocess: When True, forces the full push path regardless of
+            ``changed_sources``.
     """
     from backend.clients.search_client import (
         get_index_name, push_documents, run_indexer,
-        index_exists, wait_for_indexer,
+        index_exists, wait_for_indexer, delete_documents_for_sources,
     )
     from backend.clients.vector_storage import get_vector_storage
 
@@ -461,6 +572,87 @@ def step_push_to_search(owner, repo, branch, wait=False):
     repo_name = f"{owner}_{repo}"
     vector_storage = get_vector_storage()
 
+    selective = (
+        not full_reprocess
+        and changed_sources is not None
+    )
+
+    if selective and not changed_sources:
+        logger.info(
+            "[Search] No source changes detected — skipping push entirely"
+        )
+        return
+
+    # ----- Selective path: delete-by-source then push only those files -----
+    if selective:
+        # Normalise to forward slashes (matches what we stored in filepath).
+        norm_sources = {
+            s.replace("\\", "/") for s in changed_sources if s
+        }
+        # Drop AI Search rows for changed/deleted files first so old chunks
+        # don't linger for any file that shrank between runs.
+        try:
+            delete_documents_for_sources(
+                idx_name, repo_name, branch or 'main', norm_sources,
+            )
+        except Exception as e:
+            logger.warning(
+                f"[Search] delete_documents_for_sources failed "
+                f"(continuing with push): {e}"
+            )
+
+        # iter_documents_for_sources only reads chunks for changed files —
+        # cheap on blob storage because we know the exact file list.
+        PUSH_BATCH_SIZE = 1000
+        pushed = 0
+        batch: list = []
+        _log_rss("before push_to_search load")
+        for doc in vector_storage.iter_documents_for_sources(
+            repo_name, branch, norm_sources,
+        ):
+            batch.append(doc)
+            if len(batch) >= PUSH_BATCH_SIZE:
+                push_documents(idx_name, batch, repo_name, branch)
+                pushed += len(batch)
+                for d in batch:
+                    d.vector = None
+                batch = []
+        if batch:
+            push_documents(idx_name, batch, repo_name, branch)
+            pushed += len(batch)
+            for d in batch:
+                d.vector = None
+            batch = []
+        _log_rss("after push_to_search load")
+
+        if pushed == 0:
+            logger.info(
+                "[Search] Selective push found 0 chunks for "
+                f"{len(norm_sources)} sources (deletes only)"
+            )
+        else:
+            logger.info(
+                f"[Search] Selective push: {pushed} chunks across "
+                f"{len(norm_sources)} sources"
+            )
+
+        import gc
+        gc.collect()
+        run_indexer(idx_name)
+        logger.info("Indexer triggered")
+        if wait:
+            logger.info("Waiting for indexer to complete...")
+            success = wait_for_indexer(idx_name, timeout_seconds=600)
+            if not success:
+                logger.error(
+                    "Indexer timeout — wiki generation may have "
+                    "incomplete results"
+                )
+            else:
+                logger.info("Indexer completed successfully")
+        return
+
+    # ----- Full-push path (legacy / cold start / --full-reprocess) -----
     # Stream chunks in batches -- never materialise the full vector set in
     # memory. Each batch is converted to upload payload, pushed, and freed
     # before the next batch is fetched. Bounds peak RSS at
@@ -473,13 +665,10 @@ def step_push_to_search(owner, repo, branch, wait=False):
     ):
         if not batch:
             continue
-        # `id_offset=pushed` ensures each chunk gets a globally unique key
-        # of the form `{repo}_{branch}_{global_index}`. Without this, keys
-        # would collide across batches and AI Search would silently keep
-        # only the LAST batch (upsert-by-key semantics).
-        push_documents(
-            idx_name, batch, repo_name, branch, id_offset=pushed,
-        )
+        # Deterministic per-file keys (see `_build_doc_key`) make this
+        # idempotent — re-pushing the same chunk overwrites its row instead
+        # of duplicating it.
+        push_documents(idx_name, batch, repo_name, branch)
         pushed += len(batch)
         # Release vectors before fetching the next batch.
         for doc in batch:
@@ -556,7 +745,7 @@ def step_generate_wiki_cloud(
 
 
 def _process(mode, repo_url, branch, language, comprehensive,
-             skip_codemap=False):
+             skip_codemap=False, full_reprocess=False):
     """Run the processing pipeline using step functions.
 
     The mode determines auth; config (already set before this call)
@@ -568,6 +757,11 @@ def _process(mode, repo_url, branch, language, comprehensive,
 
     Local/Docker mode uses the original pipeline:
         embed + FAISS → generate via FAISS → push to Search (if configured)
+
+    Args:
+        full_reprocess: When True, ignores the embedding manifest and
+            re-embeds every file. Defaults to False, so reruns only embed
+            files that changed since the last manifest.
     """
     # Lazy import: keeps backend.config out of code_processor's
     # import-time dependency surface.
@@ -612,6 +806,38 @@ def _process(mode, repo_url, branch, language, comprehensive,
 
         _log_rss("after clone")
 
+        # ----- Fast-path: skip everything if wiki cache matches commit -----
+        # When the same commit was already processed end-to-end (wiki cache
+        # holds the matching ``commit_hash``), there is nothing to do. Skip
+        # codemap + embed + push + wiki gen + save entirely. ``--full-reprocess``
+        # opts out of this shortcut and forces a full rebuild.
+        if not full_reprocess:
+            try:
+                from backend.modules.wiki.cache import (
+                    wiki_cache_exists_for_commit,
+                )
+                if commit_hash and wiki_cache_exists_for_commit(
+                    owner=owner,
+                    repo=repo,
+                    repo_type='azuredevops',
+                    language=language,
+                    commit_hash=commit_hash,
+                    comprehensive=comprehensive,
+                    branch=branch,
+                ):
+                    logger.info(
+                        f"[FastPath] Wiki cache already exists for commit "
+                        f"{commit_hash[:7]} (lang={language}, "
+                        f"comprehensive={comprehensive}) — "
+                        f"skipping embed / push / wiki regeneration. "
+                        f"Pass --full-reprocess to force a rebuild."
+                    )
+                    return None
+            except Exception as e:
+                # Fast-path is purely an optimisation; any error → fall
+                # through to the normal pipeline.
+                logger.debug(f"Wiki fast-path probe skipped: {e}")
+
         # Build codemap graph (all modes, unless skipped)
         codemap = None
         if not skip_codemap:
@@ -631,10 +857,17 @@ def _process(mode, repo_url, branch, language, comprehensive,
             # CLOUD MODE: embed → push to search → generate via search
             # No FAISS, no in-memory document loading (~120 MB peak)
             # ============================================================
-            step_embed_cloud(repo_url, token, branch, repo_dir=repo_dir)
+            chunk_count, changed_sources = step_embed_cloud(
+                repo_url, token, branch, repo_dir=repo_dir,
+                force_reprocess=full_reprocess,
+            )
             _log_rss("after embed_cloud")
 
-            step_push_to_search(owner, repo, branch, wait=True)
+            step_push_to_search(
+                owner, repo, branch, wait=True,
+                changed_sources=changed_sources,
+                full_reprocess=full_reprocess,
+            )
             _log_rss("after push_to_search")
 
             try:
@@ -662,7 +895,10 @@ def _process(mode, repo_url, branch, language, comprehensive,
             # LOCAL / DOCKER MODE: embed + FAISS → generate via FAISS
             # (unchanged from existing implementation)
             # ============================================================
-            retriever = step_embed(repo_url, token, branch, repo_dir=repo_dir)
+            retriever = step_embed(
+                repo_url, token, branch, repo_dir=repo_dir,
+                force_reprocess=full_reprocess,
+            )
 
             try:
                 wiki_data = step_generate_wiki(
@@ -799,6 +1035,7 @@ def main():
             language=args.language,
             comprehensive=args.comprehensive,
             skip_codemap=args.skip_codemap,
+            full_reprocess=args.full_reprocess,
         )
     except Exception as e:
         logger.error(f"Processing failed: {e}", exc_info=True)

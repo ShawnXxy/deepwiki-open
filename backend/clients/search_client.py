@@ -229,29 +229,46 @@ def _is_payload_too_large(e: Exception) -> bool:
     )
 
 
+def _build_doc_key(repo_name: str, branch: str, file_path: str, chunk_index: int) -> str:
+    """Compose a deterministic, per-file AI Search document key.
+
+    Format: ``{repo}_{branch}_{path_token}_{chunk_index:03d}``
+
+    The key is stable across re-embeds for the same ``(file_path, chunk_index)``
+    pair, so AI Search upserts the same row instead of creating duplicates.
+    This is the contract that makes incremental cloud push correct.
+
+    ``path_token`` is the file path sanitised to AI Search's allowed alphabet
+    (``[a-zA-Z0-9_\\-=]``). Slashes / dots / extension separators all collapse
+    to underscore so directory structure is preserved without illegal chars.
+    """
+    path_token = re.sub(r'[^a-zA-Z0-9_\-=]', '_', file_path or 'unknown')
+    raw = f"{repo_name}_{branch}_{path_token}_{int(chunk_index):03d}"
+    return _sanitize_document_key(raw)
+
+
 def push_documents(
     index_name: str,
     documents: list,
     repo_name: str,
     branch: str,
-    id_offset: int = 0,
 ) -> int:
     """Push vector documents to AI Search index.
 
     Uses adaptive batch sizing: starts at 500, halves on 413 errors.
     Once a smaller size succeeds, all remaining batches use that size.
 
+    Each document gets a deterministic key derived from ``(file_path,
+    chunk_index)`` via :func:`_build_doc_key`. This makes the upload
+    idempotent across reruns: re-pushing the same file overwrites the same
+    rows instead of accumulating duplicates, which is the property the
+    delta-embedding pipeline relies on.
+
     Args:
         index_name: Target index name
         documents: List of adalflow Document objects (with text, vector, meta_data)
         repo_name: Repository identifier (owner_repo)
         branch: Branch name
-        id_offset: Global chunk-index offset for the document keys. When this
-            function is called in a loop with a separate batch each time, each
-            call must pass the cumulative count of previously-pushed documents
-            so that keys are globally unique. Default 0 preserves the
-            single-batch behaviour. AI Search ``upload_documents`` is
-            upsert-by-key, so duplicate keys silently overwrite earlier docs.
 
     Returns:
         Number of documents pushed
@@ -260,13 +277,14 @@ def push_documents(
 
     # Build search docs
     search_docs = []
-    for i, doc in enumerate(documents):
+    for doc in documents:
         meta = doc.meta_data or {}
-        global_id = id_offset + i
+        file_path = meta.get('file_path', 'unknown')
+        chunk_index = int(meta.get('chunk_index', 0) or 0)
         search_doc = {
-            "id": _sanitize_document_key(f"{repo_name}_{branch}_{global_id}"),
-            "title": meta.get('file_path', ''),
-            "filepath": meta.get('file_path', ''),
+            "id": _build_doc_key(repo_name, branch, file_path, chunk_index),
+            "title": file_path,
+            "filepath": file_path,
             "content": doc.text or '',
             "raw_content": (
                 doc.text[meta['_header_len']:]
@@ -301,6 +319,107 @@ def push_documents(
 
     logger.info(f"Total {total} documents pushed to index {index_name}")
     return total
+
+
+def delete_documents_for_sources(
+    index_name: str,
+    repo_name: str,
+    branch: str,
+    source_paths,
+) -> int:
+    """Remove all AI Search docs whose ``filepath`` is in ``source_paths``.
+
+    Used by the delta pipeline to clean up rows for files that were deleted
+    or renamed before pushing the fresh chunks. Implemented as a filtered
+    query for each path (returning only the ``id`` field) followed by a
+    batched ``delete_documents`` call.
+
+    Args:
+        index_name: Target index name (must already exist).
+        repo_name: Repository identifier (owner_repo), used to scope the
+            ``service_id`` filter so deletes never touch other repos.
+        branch: Branch name (currently unused for filtering; kept for
+            signature symmetry with ``push_documents`` and forward compat).
+        source_paths: Iterable of relative file paths whose docs should be
+            removed.
+
+    Returns:
+        Number of documents deleted.
+    """
+    paths = [p for p in (source_paths or []) if p]
+    if not paths:
+        return 0
+
+    client = _get_search_documents_client(index_name)
+
+    # AI Search OData ``in`` operator supports comma-separated list, but we
+    # quote-escape each item to be safe. Issue one filter per chunk of paths
+    # to keep the filter expression below the service limit (~32 KB).
+    CHUNK = 50
+    to_delete: list = []
+    for start in range(0, len(paths), CHUNK):
+        slice_ = paths[start:start + CHUNK]
+        quoted = ",".join(
+            "'" + p.replace("'", "''") + "'" for p in slice_
+        )
+        filter_expr = (
+            f"service_id eq '{repo_name}' "
+            f"and search.in(filepath, \"{','.join(slice_)}\", ',')"
+        )
+        # Fallback to OR chain if search.in proves flaky; OData accepts both.
+        try:
+            hits = client.search(
+                search_text="*",
+                filter=filter_expr,
+                select=["id"],
+                top=10000,
+            )
+            for h in hits:
+                to_delete.append({"id": h["id"]})
+        except Exception as e:
+            logger.warning(
+                f"[Search] filtered query failed ({e}); "
+                f"falling back to OR chain"
+            )
+            or_chain = " or ".join(
+                f"filepath eq '{p.replace(chr(39), chr(39) + chr(39))}'"
+                for p in slice_
+            )
+            filter_expr2 = f"service_id eq '{repo_name}' and ({or_chain})"
+            try:
+                hits = client.search(
+                    search_text="*",
+                    filter=filter_expr2,
+                    select=["id"],
+                    top=10000,
+                )
+                for h in hits:
+                    to_delete.append({"id": h["id"]})
+            except Exception as e2:
+                logger.error(
+                    f"[Search] delete-by-source filter also failed: {e2}"
+                )
+
+    if not to_delete:
+        logger.info(
+            f"[Search] No existing docs to delete for {len(paths)} sources"
+        )
+        return 0
+
+    # Batched delete (Azure Search supports up to 1000 actions per batch).
+    BATCH = 500
+    deleted = 0
+    for start in range(0, len(to_delete), BATCH):
+        batch = to_delete[start:start + BATCH]
+        try:
+            client.delete_documents(documents=batch)
+            deleted += len(batch)
+        except Exception as e:
+            logger.error(f"[Search] delete_documents batch failed: {e}")
+    logger.info(
+        f"[Search] Deleted {deleted} docs for {len(paths)} source files"
+    )
+    return deleted
 
 
 def search(

@@ -6,18 +6,166 @@ Provides the DatabaseManager class for managing document databases.
 
 import os
 import logging
-from typing import List
+from datetime import datetime, timezone
+from typing import Dict, List
 
 from adalflow.core.types import Document
 from backend.paths import get_adalflow_root_path
 
-from backend.config import configs
 from backend.clients.blob_client import get_blob_storage_client, is_blob_storage_configured
 from backend.clients.vector_storage import get_vector_storage
 from backend.modules.embedder.document import transform_documents_and_save_as_json
-from backend.modules.repository.git_ops import download_repo, detect_default_branch
+from backend.modules.embedder.delta import (
+    compute_file_delta,
+    summarize_for_log,
+    CURRENT_MANIFEST_VERSION,
+)
+from backend.modules.repository.git_ops import (
+    download_repo,
+    detect_default_branch,
+    get_head_commit_hash,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _current_embedder_signature() -> Dict[str, object]:
+    """Read deployment / dimensions of the embedder that will be used now."""
+    try:
+        from backend.config import get_embedder_config_obj
+        cfg = get_embedder_config_obj()
+        kw = cfg.embedder.model_kwargs
+        return {
+            "deployment": getattr(kw, "model", "") or "",
+            "model_name": getattr(kw, "model", "") or "",
+            "vector_dim": int(getattr(kw, "dimensions", 0) or 0),
+        }
+    except Exception as e:
+        logger.warning(f"[Delta] Could not read embedder signature: {e}")
+        return {"deployment": "", "model_name": "", "vector_dim": 0}
+
+
+def _walk_candidate_files(
+    repo_dir: str,
+    excluded_dirs: List[str] = None,
+    excluded_files: List[str] = None,
+    included_dirs: List[str] = None,
+    included_files: List[str] = None,
+) -> List[tuple]:
+    """Reproduce the file-walk filter logic from
+    ``transform_documents_and_save_as_json`` without doing any I/O on file
+    contents.
+
+    Returns ``[(full_path, relative_path, ext, is_code), ...]`` matching the
+    structure the embedder consumes.
+    """
+    from backend.config import get_file_filters_config, get_included_config
+    from backend.types import FileFilter
+    from backend.utils.filter import load_gitignore, is_gitignored
+
+    if not repo_dir or not os.path.isdir(repo_dir):
+        return []
+
+    included = get_included_config()
+    code_extensions = set(included["code"])
+    doc_extensions = set(included["doc"])
+    all_ext_set = code_extensions | doc_extensions
+
+    has_dirs = included_dirs is not None and len(included_dirs) > 0
+    has_files = included_files is not None and len(included_files) > 0
+    if has_dirs or has_files:
+        file_filter = FileFilter(
+            included_dirs=set(included_dirs) if included_dirs else set(),
+            included_patterns=set(included_files) if included_files else set(),
+        )
+    else:
+        file_filters = get_file_filters_config()
+        final_excluded_dirs = set(file_filters["excluded_dirs"])
+        final_excluded_patterns = set(file_filters["excluded_files"])
+        if excluded_dirs is not None:
+            final_excluded_dirs.update(excluded_dirs)
+        if excluded_files is not None:
+            final_excluded_patterns.update(excluded_files)
+        file_filter = FileFilter(
+            excluded_dirs=final_excluded_dirs,
+            excluded_patterns=final_excluded_patterns,
+        )
+
+    gitignore_spec = load_gitignore(repo_dir)
+    walk_excluded_dirs = set(get_file_filters_config()["excluded_dirs"])
+
+    file_infos: List[tuple] = []
+    for root, dirs, files in os.walk(repo_dir):
+        dirs[:] = [d for d in dirs if d not in walk_excluded_dirs]
+        for fname in files:
+            full_path = os.path.join(root, fname)
+            relative_path = os.path.relpath(full_path, repo_dir)
+            if is_gitignored(gitignore_spec, relative_path):
+                continue
+            if not file_filter.should_process_file(relative_path):
+                continue
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in all_ext_set:
+                continue
+            is_code = ext in code_extensions
+            file_infos.append(
+                (full_path, relative_path.replace("\\", "/"), ext, is_code)
+            )
+    return file_infos
+
+
+def _build_manifest(
+    prev_manifest,
+    delta,
+    chunks_by_source_new: Dict[str, List[str]],
+    current_commit_hash: str,
+    embedder_sig: Dict[str, object],
+) -> Dict[str, object]:
+    """Compose the new manifest from the previous manifest + delta result.
+
+    Carries unchanged entries forward verbatim, replaces / adds entries for
+    embedded files, and drops entries listed in ``delta.to_delete``.
+    """
+    prev_files: Dict[str, Dict[str, object]] = {}
+    if prev_manifest:
+        prev_files = dict(prev_manifest.get("files") or {})
+
+    # Drop deleted / replaced entries.
+    for src in delta.to_delete:
+        prev_files.pop(src, None)
+
+    # Add / replace entries for freshly embedded sources.
+    for src, chunk_files in chunks_by_source_new.items():
+        norm = src.replace("\\", "/")
+        sha = delta.file_hashes.get(norm) or delta.file_hashes.get(src) or ""
+        entry: Dict[str, object] = {
+            "sha256": sha,
+            "chunk_count": len(chunk_files),
+            "chunk_files": sorted(chunk_files),
+        }
+        # Pick up file size opportunistically — best-effort, never blocks.
+        for fi in delta.to_embed:
+            if fi[1].replace("\\", "/") == norm:
+                try:
+                    entry["size"] = os.path.getsize(fi[0])
+                except OSError:
+                    pass
+                break
+        prev_files[norm] = entry
+
+    # Update hashes for unchanged files when delta produced new ones (e.g.
+    # the fast-path verify-hash code path).
+    for rel, sha in (delta.file_hashes or {}).items():
+        if rel in prev_files and not prev_files[rel].get("sha256"):
+            prev_files[rel]["sha256"] = sha
+
+    return {
+        "version": CURRENT_MANIFEST_VERSION,
+        "commit_hash": current_commit_hash or "",
+        "embedded_at": datetime.now(timezone.utc).isoformat(),
+        "embedder": dict(embedder_sig),
+        "files": prev_files,
+    }
 
 
 class DatabaseManager:
@@ -252,141 +400,195 @@ class DatabaseManager:
         included_files: List[str] = None,
         force_reprocess: bool = False
     ) -> List[Document]:
-        """
-        Prepare the indexed database for the repository.
-        
-        Storage priority:
-        1. If force_reprocess=True: Snapshot existing files, overwrite in-place,
-           then delete orphans (zero-downtime reprocessing)
-        2. Check for existing JSON vectors in "vectors/" - load if found
-        3. If none exist, create new using JSON format in "vectors/"
+        """Prepare the indexed database for the repository.
 
-        Zero-downtime reprocessing (force_reprocess=True):
-            Instead of deleting all vectors upfront (which creates a window where
-            the wiki has no embeddings), we:
-            1. Snapshot the set of existing vector filenames
-            2. Run embedding — new chunks overwrite existing files in-place
-            3. After completion, delete orphan files (old files not in new set)
-            This ensures the FAISS index is always populated during reprocessing.
+        Uses an embedding manifest sidecar (``vectors/<owner>_<repo>_<branch>/
+        _manifest.json``) to compute a precise file-level delta against the
+        previous run. Only changed / added files are re-embedded; chunks for
+        deleted or renamed files are removed. Unchanged files are reused
+        in-place.
 
         Args:
-            embedder_type (str, optional): Kept for backward compatibility, ignored.
-            is_ollama_embedder (bool, optional): DEPRECATED. Kept for backward compatibility.
-            excluded_dirs (List[str], optional): List of directories to exclude from processing
-            excluded_files (List[str], optional): List of file patterns to exclude from processing
-            included_dirs (List[str], optional): List of directories to include exclusively
-            included_files (List[str], optional): List of file patterns to include exclusively
-            force_reprocess (bool): If True, ignore existing vectors and create fresh.
-
-        Returns:
-            List[Document]: List of Document objects
-            
-        Raises:
-            ConnectionError: If Azure Blob Storage is configured but connection fails
+            force_reprocess: When True, ignores any existing manifest and
+                re-embeds every file (full rebuild). The previous chunks are
+                left in place during embedding for zero-downtime, then
+                orphans are cleaned up.
         """
         repo_name = self.repo_paths.get("repo_name", "unknown")
         branch_suffix = self.repo_paths.get("branch_suffix", "main")
+        save_repo_dir = self.repo_paths.get("save_repo_dir")
         vector_storage = get_vector_storage()
-        old_files: set = set()  # Snapshot for orphan cleanup
-        
-        # ========================================================================
-        # FORCE REPROCESS: Zero-downtime incremental overwrite + orphan cleanup
-        # ========================================================================
-        if force_reprocess:
-            logger.info("[Vec] Force reprocess requested — zero-downtime mode")
 
-            # Snapshot existing vector files BEFORE processing
-            old_files = vector_storage.list_files(repo_name, branch_suffix)
-            if old_files:
-                logger.info(f"[Vec] Snapshot: {len(old_files)} existing vector files")
+        # ----- Read previous manifest (unless force_reprocess) -----
+        prev_manifest = None
+        if not force_reprocess:
+            prev_manifest = vector_storage.read_manifest(repo_name, branch_suffix)
+            if prev_manifest:
+                logger.info(
+                    f"[Vec] Found previous manifest: commit="
+                    f"{str(prev_manifest.get('commit_hash') or '')[:7]}, "
+                    f"files={len(prev_manifest.get('files') or {})}"
+                )
             else:
-                logger.info("[Vec] No existing vectors (fresh run)")
-
-            # Skip loading existing, go directly to creating new
+                logger.info("[Vec] No previous manifest — cold start")
         else:
-            logger.info(f"Looking for existing embeddings for {repo_name} (branch: {branch_suffix})...")
-        
-            # ==================================================================
-            # STEP 1: Check for existing vectors (only when not force_reprocess)
-            # ==================================================================
-            if self.repo_paths and is_blob_storage_configured():
-                try:
-                    blob_client = get_blob_storage_client()
-                    if not blob_client:
-                        error_msg = "Azure Blob Storage is configured but failed to create client. Check MSI configuration."
-                        logger.error(error_msg)
-                        raise ConnectionError(error_msg)
-                    
-                    if vector_storage.exists(repo_name, branch_suffix):
-                        logger.info(f"[Vec] Found JSON vectors at: vectors/{repo_name}_{branch_suffix}/")
-                        documents = vector_storage.load_documents(repo_name, branch_suffix)
-                        if documents:
-                            logger.info(f"[Vec] Successfully loaded {len(documents)} documents from JSON vector storage")
-                            return documents
-                        logger.info("[Vec] Vectors directory exists but empty/invalid, will create new")
-                    else:
-                        logger.info("[Vec] No existing vectors found, will create new")
-                        
-                except ConnectionError:
-                    raise
-                except Exception as e:
-                    error_msg = f"Failed to connect to Azure Blob Storage: {e}"
-                    logger.error(error_msg)
-                    raise ConnectionError(error_msg) from e
-            else:
-                # Local storage mode
-                if vector_storage.exists(repo_name, branch_suffix):
-                    logger.info(f"[Vec] Found JSON vectors at: vectors/{repo_name}_{branch_suffix}/")
-                    documents = vector_storage.load_documents(repo_name, branch_suffix)
-                    if documents:
-                        logger.info(f"[Vec] Successfully loaded {len(documents)} documents from JSON vector storage")
-                        return documents
+            logger.info("[Vec] force_reprocess=True — ignoring manifest")
 
-        # ========================================================================
-        # STEP 2: Create new database using JSON format
-        # ========================================================================
-        logger.info("[Vec] Creating new embeddings with JSON vector storage...")
+        # ----- Resolve current commit hash for delta detection -----
+        current_commit_hash = ""
+        if save_repo_dir and os.path.isdir(os.path.join(save_repo_dir, ".git")):
+            try:
+                current_commit_hash = get_head_commit_hash(save_repo_dir)
+            except Exception as e:
+                logger.warning(f"[Delta] Could not read HEAD commit: {e}")
 
-        # Fused read+split+embed: reads files in batches of 1000 to
-        # avoid loading the entire repository into memory at once.
-        # Returns (chunk_count, documents) — documents have vectors
-        # attached, ready for FAISS construction without disk reload.
-        chunk_count, transformed_docs = transform_documents_and_save_as_json(
-            self.repo_paths["save_repo_dir"],
-            repo_name,
-            branch_suffix,
-            repo_url=self.repo_url_or_path,
-            repo_type=self.repo_paths.get("repo_type"),
+        # ----- Collect candidate files (lightweight walk only) -----
+        # The same walk happens inside ``transform_documents_and_save_as_json``;
+        # we replicate it here just to compute the delta. The cost is a
+        # directory scan (no file reads, no embedding).
+        candidate_file_infos = _walk_candidate_files(
+            save_repo_dir,
             excluded_dirs=excluded_dirs,
             excluded_files=excluded_files,
             included_dirs=included_dirs,
             included_files=included_files,
         )
 
-        if chunk_count == 0:
+        # ----- Compute delta -----
+        embedder_sig = _current_embedder_signature()
+        delta = compute_file_delta(
+            repo_dir=save_repo_dir,
+            file_infos=candidate_file_infos,
+            prev_manifest=prev_manifest if not force_reprocess else None,
+            current_embedder=embedder_sig,
+            current_commit_hash=current_commit_hash,
+            verify_hash=True,
+        )
+        logger.info(f"[Vec] Delta summary: {summarize_for_log(delta)}")
+
+        # ----- Fast path: nothing to embed, nothing to delete -----
+        if (
+            prev_manifest
+            and not delta.to_embed
+            and not delta.to_delete
+            and vector_storage.exists(repo_name, branch_suffix)
+        ):
+            logger.info(
+                "[Vec] No changes detected — reusing existing embeddings"
+            )
+            documents = vector_storage.load_documents(repo_name, branch_suffix)
+            if documents:
+                logger.info(
+                    f"[Vec] Loaded {len(documents)} cached documents from "
+                    f"vector storage"
+                )
+                # Opportunistic manifest self-heal: if the fast-path verifier
+                # produced sha256s for entries that were missing them in the
+                # old manifest, persist the updated manifest now. Otherwise
+                # the next run cannot do hash-based mismatch detection.
+                prev_files_map = prev_manifest.get("files") or {}
+                missing_hashes = [
+                    rel for rel, sha in delta.file_hashes.items()
+                    if rel in prev_files_map and not prev_files_map[rel].get("sha256")
+                ]
+                if missing_hashes:
+                    try:
+                        healed = _build_manifest(
+                            prev_manifest=prev_manifest,
+                            delta=delta,
+                            chunks_by_source_new={},
+                            current_commit_hash=current_commit_hash,
+                            embedder_sig=embedder_sig,
+                        )
+                        vector_storage.write_manifest(repo_name, branch_suffix, healed)
+                        logger.info(
+                            f"[Vec] Backfilled sha256 for {len(missing_hashes)} "
+                            f"manifest entries"
+                        )
+                    except Exception as e:
+                        logger.warning(f"[Vec] Manifest backfill failed (non-fatal): {e}")
+                return documents
+            logger.warning(
+                "[Vec] Manifest is clean but vector store has no documents; "
+                "falling through to full reprocess"
+            )
+            delta.to_embed = list(candidate_file_infos)
+            delta.unchanged = set()
+            delta.reason = "manifest_clean_but_empty_store"
+
+        # ----- Drop chunks for files that were deleted or replaced -----
+        if delta.to_delete and prev_manifest:
+            removed = vector_storage.delete_files_for_sources(
+                repo_name, branch_suffix, delta.to_delete, prev_manifest,
+            )
+            logger.info(
+                f"[Vec] Removed {removed} chunk files for "
+                f"{len(delta.to_delete)} deleted/changed sources"
+            )
+
+        # ----- Embed only the to_embed slice -----
+        delta_paths = {
+            fi[1].replace("\\", "/") for fi in delta.to_embed
+        } if not force_reprocess else None
+
+        if not delta.to_embed and not force_reprocess:
+            # Nothing to embed (e.g. only deletions). Skip the call entirely
+            # so we don't pay the file-walk cost twice.
+            chunk_count = 0
+            transformed_docs: List[Document] = []
+            chunks_by_source_new: Dict[str, List[str]] = {}
+        else:
+            chunk_count, transformed_docs, chunks_by_source_new = (
+                transform_documents_and_save_as_json(
+                    save_repo_dir,
+                    repo_name,
+                    branch_suffix,
+                    repo_url=self.repo_url_or_path,
+                    repo_type=self.repo_paths.get("repo_type"),
+                    excluded_dirs=excluded_dirs,
+                    excluded_files=excluded_files,
+                    included_dirs=included_dirs,
+                    included_files=included_files,
+                    delta_to_embed=delta_paths,
+                    return_chunks_by_source=True,
+                )
+            )
+
+        # ----- Write the new manifest -----
+        try:
+            new_manifest = _build_manifest(
+                prev_manifest=prev_manifest if not force_reprocess else None,
+                delta=delta,
+                chunks_by_source_new=chunks_by_source_new,
+                current_commit_hash=current_commit_hash,
+                embedder_sig=embedder_sig,
+            )
+            vector_storage.write_manifest(repo_name, branch_suffix, new_manifest)
+        except Exception as e:
+            logger.warning(f"[Vec] Failed to write manifest (non-fatal): {e}")
+
+        # ----- Hand back full document set for FAISS -----
+        if chunk_count == 0 and not delta.unchanged:
             logger.warning("No documents found to process")
             return []
 
+        # Load any unchanged documents so the caller (FAISS) gets the
+        # complete set. ``transformed_docs`` only contains the freshly
+        # embedded slice.
+        if delta.unchanged and prev_manifest:
+            logger.info(
+                f"[Vec] Loading {len(delta.unchanged)} unchanged source "
+                f"files from vector store"
+            )
+            for batch in vector_storage.iter_documents_for_sources(
+                repo_name, branch_suffix, delta.unchanged, prev_manifest,
+            ):
+                transformed_docs.extend(batch)
+
         logger.info(
-            f"[Vec] Embedded {chunk_count} chunks, "
-            f"using returned docs for FAISS (no disk reload)"
+            f"[Vec] Index ready: {len(transformed_docs)} total documents "
+            f"({chunk_count} freshly embedded)"
         )
-
-        # ====================================================================
-        # STEP 3: Orphan cleanup (only during force_reprocess)
-        # ====================================================================
-        if force_reprocess and old_files:
-            new_files = vector_storage.list_files(repo_name, branch_suffix)
-            orphans = old_files - new_files
-            if orphans:
-                logger.info(
-                    f"[Vec] Cleaning {len(orphans)} orphan files "
-                    f"(old={len(old_files)}, new={len(new_files)})"
-                )
-                vector_storage.delete_files(repo_name, branch_suffix, orphans)
-            else:
-                logger.info("[Vec] No orphan files to clean up")
-
         return transformed_docs
 
     def prepare_retriever(
