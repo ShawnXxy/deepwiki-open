@@ -63,6 +63,122 @@ def get_head_commit_hash(local_path: str) -> str:
         return ""
 
 
+def get_changed_files(local_path: str, prev_commit_hash: str) -> dict:
+    """Return paths changed between ``prev_commit_hash`` and the working tree.
+
+    The map values are git porcelain status letters:
+
+    - ``"A"`` — added
+    - ``"M"`` — modified
+    - ``"D"`` — deleted
+    - ``"R"`` — renamed (rename target reported as new path; old path is
+      additionally returned as ``"D"`` so chunks are dropped)
+    - ``"C"`` — copied
+    - ``"T"`` — type change
+    - ``"U"`` — unmerged
+
+    Combines ``git diff --name-status`` against the previous commit with
+    ``git status --porcelain`` so uncommitted edits in the working tree are
+    captured too. Returns ``{}`` when ``prev_commit_hash`` is empty/unknown
+    (caller should treat that as "cold start, embed everything").
+
+    All paths are returned as forward-slash relative paths, matching what
+    ``read_all_documents`` records in ``Document.meta_data['file_path']``.
+    """
+    if not prev_commit_hash:
+        return {}
+
+    changed: dict = {}
+
+    def _norm(p: str) -> str:
+        return p.replace("\\", "/").strip()
+
+    # 1) Diff against previous commit hash (committed history).
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-status", "-z", prev_commit_hash, "HEAD"],
+            capture_output=True, text=True, cwd=local_path, check=False
+        )
+        if result.returncode != 0:
+            # Most common cause: prev_commit_hash is no longer reachable
+            # (force-push, history rewrite). Caller will fall back to full reprocess.
+            logger.warning(
+                f"git diff against {prev_commit_hash[:8]} failed: "
+                f"{result.stderr.strip()[:200]}"
+            )
+            return {}
+
+        # -z output: NUL-separated tokens. For non-rename entries it's
+        # "STATUS\0PATH\0"; for rename/copy it's "R100\0OLD\0NEW\0".
+        tokens = [t for t in result.stdout.split('\0') if t]
+        i = 0
+        while i < len(tokens):
+            status = tokens[i]
+            letter = status[0] if status else ''
+            if letter in ('R', 'C'):
+                if i + 2 < len(tokens):
+                    old_path = _norm(tokens[i + 1])
+                    new_path = _norm(tokens[i + 2])
+                    changed[old_path] = 'D'
+                    changed[new_path] = letter
+                    i += 3
+                    continue
+                i += 1
+                continue
+            if letter in ('A', 'M', 'D', 'T', 'U'):
+                if i + 1 < len(tokens):
+                    changed[_norm(tokens[i + 1])] = letter
+                    i += 2
+                    continue
+            # Unknown token shape — skip one to avoid infinite loop
+            i += 1
+    except Exception as e:
+        logger.warning(f"git diff --name-status failed: {e}")
+        return {}
+
+    # 2) Uncommitted edits in working tree (covers freshly cloned repos
+    #    where HEAD == prev but build artefacts were touched, plus any
+    #    edits applied after clone).
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "-z"],
+            capture_output=True, text=True, cwd=local_path, check=False
+        )
+        if result.returncode == 0:
+            # -z porcelain format: XY <space> PATH \0 [original_path \0 if rename]
+            # XY is 2 chars; index 2 is space; path starts at 3.
+            tokens = [t for t in result.stdout.split('\0') if t]
+            j = 0
+            while j < len(tokens):
+                tok = tokens[j]
+                if len(tok) < 4:
+                    j += 1
+                    continue
+                xy = tok[:2]
+                path = _norm(tok[3:])
+                # Map worktree (Y) or index (X) status to our letter codes.
+                # Prefer worktree state; fall back to index.
+                letter = (xy[1] if xy[1] != ' ' else xy[0]).upper()
+                if letter == '?':
+                    letter = 'A'  # untracked => treat as added
+                if letter in ('R', 'C') and j + 1 < len(tokens):
+                    # Original path follows in next token; mark it as deleted
+                    old = _norm(tokens[j + 1])
+                    changed.setdefault(old, 'D')
+                    j += 2
+                else:
+                    j += 1
+                if letter not in ('A', 'M', 'D', 'R', 'C', 'T', 'U'):
+                    continue
+                # Don't downgrade an existing 'D' (delete is terminal for the path)
+                if changed.get(path) != 'D':
+                    changed[path] = letter
+    except Exception as e:
+        logger.debug(f"git status --porcelain failed (non-fatal): {e}")
+
+    return changed
+
+
 def detect_default_branch(local_path: str) -> str:
     """
     Detect the default branch of a cloned repository.

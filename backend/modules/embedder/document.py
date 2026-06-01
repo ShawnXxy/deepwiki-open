@@ -7,7 +7,7 @@ Provides functions for reading, splitting, and embedding documents.
 import gc
 import os
 import logging
-from typing import List, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import adalflow as adal
 from adalflow.core.types import Document
@@ -326,7 +326,9 @@ def transform_documents_and_save_as_json(
     included_files: List[str] = None,
     progress_callback: callable = None,
     skip_accumulate: bool = False,
-) -> Tuple[int, List[Document]]:
+    delta_to_embed: Optional[Set[str]] = None,
+    return_chunks_by_source: bool = False,
+):
     """
     Reads, splits, embeds and saves documents as JSON chunk files.
 
@@ -453,9 +455,25 @@ def transform_documents_and_save_as_json(
     # Sort: code files first (higher priority), then docs
     file_infos.sort(key=lambda fi: (not fi[3], fi[1]))
 
+    # Optional delta filter: keep only files explicitly marked for re-embedding.
+    # ``delta_to_embed`` contains forward-slash relative paths; we normalise
+    # ``relative_path`` to match before lookup so Windows-style paths line up.
+    if delta_to_embed is not None:
+        before = len(file_infos)
+        file_infos = [
+            fi for fi in file_infos
+            if fi[1].replace("\\", "/") in delta_to_embed
+        ]
+        logger.info(
+            f"[Vec] Delta filter applied: {before} candidate files -> "
+            f"{len(file_infos)} to embed"
+        )
+
     total_files = len(file_infos)
     if total_files == 0:
         logger.warning("[Vec] No files found to process")
+        if return_chunks_by_source:
+            return 0, [], {}
         return 0, []
 
     logger.info(
@@ -484,6 +502,10 @@ def transform_documents_and_save_as_json(
     chunks_saved = 0
     total_chunks = 0
     all_embedded_docs: List[Document] = []
+    # When return_chunks_by_source=True we record the deterministic chunk
+    # filenames generated for each source file. The caller uses this to
+    # update the embedding manifest without re-walking the vector store.
+    chunks_by_source: Dict[str, List[str]] = {}
     pipeline_start = time.time()
     _read_errors: List[str] = []  # accumulated per-file read errors
     _embed_warnings: List[str] = []  # accumulated embed batch warnings
@@ -617,6 +639,28 @@ def transform_documents_and_save_as_json(
             if not skip_accumulate:
                 all_embedded_docs.extend(batch_transformed)
             chunks_saved += len(batch_transformed)
+
+            # Track chunk filenames per source for the manifest. We mirror
+            # the grouping that save_documents uses so the numbers match the
+            # files that were just written to disk.
+            if return_chunks_by_source:
+                by_src_in_batch: Dict[str, List[Document]] = {}
+                for doc in batch_transformed:
+                    src = (
+                        doc.meta_data.get("file_path", "unknown")
+                        if doc.meta_data else "unknown"
+                    )
+                    by_src_in_batch.setdefault(src, []).append(doc)
+                for src, docs in by_src_in_batch.items():
+                    start_idx = len(chunks_by_source.get(src, []))
+                    filenames = chunks_by_source.setdefault(src, [])
+                    for offset in range(len(docs)):
+                        filenames.append(
+                            vector_storage._get_json_filename(
+                                src, start_idx + offset
+                            )
+                        )
+
             del batch_transformed, embed_batch
             gc.collect()
 
@@ -655,10 +699,14 @@ def transform_documents_and_save_as_json(
 
     if chunks_saved == 0:
         logger.warning("[Vec] No documents after embedding")
+        if return_chunks_by_source:
+            return 0, [], {}
         return 0, []
 
     logger.info(
         f"[Vec] Successfully embedded and saved {chunks_saved} "
         f"enriched chunks as JSON"
     )
+    if return_chunks_by_source:
+        return chunks_saved, all_embedded_docs, chunks_by_source
     return chunks_saved, all_embedded_docs
