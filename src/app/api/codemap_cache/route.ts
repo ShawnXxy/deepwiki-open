@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { sanitizeBranchForPath } from '@/utils/sanitizeBranch';
 
 /**
  * GET /api/codemap_cache — Read codemap graph data.
@@ -24,7 +25,9 @@ function getCacheFilename(
   repoType: string,
   branch?: string | null,
 ): string {
-  const branchSuffix = branch || 'default';
+  // Must match Python get_codemap_filename() exactly so the same branch never
+  // produces two different filenames (e.g. 8.0 vs 8-0).
+  const branchSuffix = sanitizeBranchForPath(branch, 'default');
   return `codemap_${repoType}_${owner}_${repo}_${branchSuffix}.json`;
 }
 
