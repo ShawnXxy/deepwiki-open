@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { sanitizeBranchForPath } from '@/utils/sanitizeBranch';
 
 /**
  * GET /api/wiki_cache — Read wiki cache.
@@ -27,7 +28,9 @@ function getCacheFilename(
   branch?: string | null,
 ): string {
   const mode = comprehensive ? 'comprehensive' : 'concise';
-  const branchSuffix = branch || 'default';
+  // Must match Python WikiCacheIdentifier.get_cache_filename() exactly so the
+  // same branch never produces two different filenames (e.g. 8.0 vs 8-0).
+  const branchSuffix = sanitizeBranchForPath(branch, 'default');
   return `deepwiki_cache_${repoType}_${owner}_${repo}_${language}_${mode}_${branchSuffix}.json`;
 }
 

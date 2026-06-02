@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { sanitizeBranchForPath } from '@/utils/sanitizeBranch';
 
 /**
  * GET /api/wiki/projects — List processed projects.
@@ -112,7 +113,9 @@ export async function DELETE(request: Request) {
 
     const cacheDir = getCacheDir();
     const mode = comprehensive ? 'comprehensive' : 'concise';
-    const branchSuffix = branch || 'default';
+    // Must match Python WikiCacheIdentifier.get_cache_filename() exactly so the
+    // delete targets the same dashed filename the backend wrote.
+    const branchSuffix = sanitizeBranchForPath(branch, 'default');
     const filename = `deepwiki_cache_${repo_type}_${owner}_${repo}_${language}_${mode}_${branchSuffix}.json`;
     const filePath = path.join(cacheDir, filename);
 
