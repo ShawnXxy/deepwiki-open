@@ -354,7 +354,10 @@ def _create_or_update_pipeline(
         masked = pat[:6] + '***' if len(pat) > 6 else '***'
         logger.info(f"Passing REPO_ACCESS_TOKEN to AML job ({masked})")
 
-    # Define the command component with code upload
+    # Define the command component with code upload.
+    # is_deterministic=False: target git repo HEAD changes outside AML's view,
+    # so step reuse must be disabled — otherwise scheduled runs return cached
+    # output from the previous fresh run (silent no-op, ~2s "Completed").
     processor_command = command(
         name=f"{name}-step",
         display_name=f"DeepWiki: {owner}/{repo} ({branch})",
@@ -363,6 +366,7 @@ def _create_or_update_pipeline(
         environment=f"{config['environment_name']}@latest",
         code=project_root,
         environment_variables=env_vars if env_vars else None,
+        is_deterministic=False,
     )
 
     # Wrap in a pipeline (schedules require PipelineJob, not CommandJob)
