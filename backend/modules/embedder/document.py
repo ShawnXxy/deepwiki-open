@@ -228,7 +228,8 @@ def read_all_documents(
     # Process code files first (higher priority for embedding)
     skipped_oversize = 0
     for file_path, ext in code_files:
-        relative_path = os.path.relpath(file_path, path)
+        # Forward-slash form so retriever lookup matches LLM-emitted paths.
+        relative_path = os.path.relpath(file_path, path).replace(os.sep, '/')
 
         cap = _size_cap_for(ext, is_code=True)
         try:
@@ -272,7 +273,7 @@ def read_all_documents(
 
     # Then process documentation files
     for file_path, ext in doc_files:
-        relative_path = os.path.relpath(file_path, path)
+        relative_path = os.path.relpath(file_path, path).replace(os.sep, '/')
 
         cap = _size_cap_for(ext, is_code=False)
         try:
@@ -491,7 +492,8 @@ def transform_documents_and_save_as_json(
         dirs[:] = [d for d in dirs if d not in walk_excluded_dirs]
         for fname in files:
             full_path = os.path.join(root, fname)
-            relative_path = os.path.relpath(full_path, repo_path)
+            # Forward-slash form so retriever lookup matches LLM-emitted paths.
+            relative_path = os.path.relpath(full_path, repo_path).replace(os.sep, '/')
 
             # Layer 1a: Check .gitignore
             if is_gitignored(gitignore_spec, relative_path):
