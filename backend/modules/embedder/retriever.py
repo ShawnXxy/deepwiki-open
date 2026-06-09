@@ -355,9 +355,11 @@ IMPORTANT FORMATTING RULES:
 
             # Build file-path index for O(1) lookup in
             # call_with_file_filter() instead of O(N) scan per page.
+            # Keys normalised to forward slash so Windows-built indices and
+            # LLM-emitted POSIX paths line up on lookup.
             self._file_path_index: Dict[str, List[int]] = {}
             for i, doc in enumerate(self.transformed_docs):
-                fp = doc.meta_data.get('file_path', '')
+                fp = doc.meta_data.get('file_path', '').replace('\\', '/')
                 if fp not in self._file_path_index:
                     self._file_path_index[fp] = []
                 self._file_path_index[fp].append(i)
@@ -536,11 +538,11 @@ IMPORTANT FORMATTING RULES:
         try:
             # Step 1: Get chunks from declared files via index (capped)
             file_chunks = []
-            file_path_set = (
-                set(file_paths)
-                if not isinstance(file_paths, set)
-                else file_paths
-            )
+            # Normalise to forward slash so declared paths (POSIX from the
+            # LLM and codemap) match index keys regardless of host OS.
+            file_path_set = {
+                fp.replace('\\', '/') for fp in file_paths
+            }
             for fp in file_path_set:
                 indices = self._file_path_index.get(fp, [])
                 for idx in indices:
@@ -620,9 +622,16 @@ IMPORTANT FORMATTING RULES:
             # Step 1: Get chunks from declared files via filter
             file_chunks = []
             if file_paths:
-                # Build OData filter: filepath eq 'a' or filepath eq 'b'
+                # Normalise to forward slash so the OData filter matches the
+                # filepath stored in AI Search (always POSIX from indexing).
+                normalised_paths = [
+                    fp.replace('\\', '/') for fp in file_paths
+                ]
+                # Build OData filter: filepath eq 'a' or filepath eq 'b'.
+                # Escape single quotes per OData spec (double them).
                 conditions = [
-                    f"filepath eq '{fp}'" for fp in file_paths
+                    f"filepath eq '{fp.replace(chr(39), chr(39) * 2)}'"
+                    for fp in normalised_paths
                 ]
                 filter_expr = " or ".join(conditions)
                 file_chunks = search_as_documents(

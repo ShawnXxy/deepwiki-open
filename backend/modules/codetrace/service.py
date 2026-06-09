@@ -99,9 +99,10 @@ def generate_code_trace(
         'model': deployment,
         'messages': [
             {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': f'/no_think {user_prompt}'},
+            {'role': 'user', 'content': user_prompt},
         ],
-        'temperature': 0.7,
+        'reasoning_effort': 'medium',
+        'verbosity': 'medium',
         'max_completion_tokens': 16384,
     }
 
