@@ -28,6 +28,11 @@ MAX_INPUT_TOKENS = 7500  # Safe threshold below 8192 token limit
 # answer that is already \"no\".
 _HUGE_TEXT_THRESHOLD = 5_000_000
 
+# Module-level encoder. text-embedding-3-small / -3-large both use cl100k_base.
+# Avoids re-resolving the encoding on every count_tokens() call (was a
+# measurable hotspot on big repos).
+_ENCODING = tiktoken.get_encoding("cl100k_base")
+
 
 def safe_read_file(file_path: str) -> str:
     """
@@ -83,9 +88,7 @@ def count_tokens(text: str, embedder_type: str = None, is_ollama_embedder: bool 
     if len(text) > _HUGE_TEXT_THRESHOLD:
         return len(text) // 4
     try:
-        # Use OpenAI embedding model encoding for Azure OpenAI
-        encoding = tiktoken.encoding_for_model("text-embedding-3-small")
-        return len(encoding.encode(text))
+        return len(_ENCODING.encode(text))
     except Exception as e:
         # Fallback to a simple approximation if tiktoken fails
         logger.warning(f"Error counting tokens with tiktoken: {e}")

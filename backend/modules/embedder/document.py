@@ -6,6 +6,7 @@ Provides functions for reading, splitting, and embedding documents.
 
 import gc
 import os
+import re
 import logging
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -25,6 +26,48 @@ from backend.modules.embedder.code_splitter import split_and_enrich_documents
 from backend.utils.filter import load_gitignore, is_gitignored
 
 logger = logging.getLogger(__name__)
+
+
+# Per-file size caps (bytes). Files above the cap for their category are
+# skipped before tokenization. Stops a single multi-MB SQL dump or
+# generated CSV from blocking the embedding pass and OOMing AML compute.
+_SIZE_CAP_BYTES_CODE = 1_000_000     # 1 MB for source code
+_SIZE_CAP_BYTES_DATA = 500_000       # 500 KB for json/yaml/xml
+_SIZE_CAP_BYTES_DOC = 200_000        # 200 KB for markdown / rst
+
+_DATA_EXTENSIONS = {'.json', '.yaml', '.yml', '.xml', '.xaml'}
+
+
+def _size_cap_for(ext: str, is_code: bool) -> int:
+    """Return the per-file size cap (bytes) for an extension."""
+    if ext in _DATA_EXTENSIONS:
+        return _SIZE_CAP_BYTES_DATA
+    if is_code:
+        return _SIZE_CAP_BYTES_CODE
+    return _SIZE_CAP_BYTES_DOC
+
+
+# Path patterns that mark a file as a test / fixture / mock. A file
+# matching any of these gets `is_implementation=False` and is dropped
+# from the index entirely when the caller is in wiki-gen mode (default).
+_TEST_PATH_PATTERNS = [
+    re.compile(r'(^|/)tests?(/|$)', re.IGNORECASE),
+    re.compile(r'(^|/)e2e(/|$)', re.IGNORECASE),
+    re.compile(r'(^|/)__mocks__(/|$)'),
+    re.compile(r'(^|/)__fixtures__(/|$)'),
+    re.compile(r'(^|/)__snapshots__(/|$)'),
+    re.compile(r'(^|/)conftest\.py$'),
+    re.compile(r'(^|/)[^/]+\.test\.[A-Za-z0-9]+$'),
+    re.compile(r'(^|/)[^/]+\.spec\.[A-Za-z0-9]+$'),
+    re.compile(r'(^|/)[^/]+_test\.[A-Za-z0-9]+$'),
+    re.compile(r'(^|/)test_[^/]+\.py$'),
+]
+
+
+def _is_test_path(relative_path: str) -> bool:
+    """True if the file path matches a test / fixture / mock convention."""
+    norm = relative_path.replace('\\', '/')
+    return any(pat.search(norm) for pat in _TEST_PATH_PATTERNS)
 
 
 def read_all_documents(
@@ -183,17 +226,26 @@ def read_all_documents(
                 doc_files.append((full_path, ext))
 
     # Process code files first (higher priority for embedding)
+    skipped_oversize = 0
     for file_path, ext in code_files:
         relative_path = os.path.relpath(file_path, path)
+
+        cap = _size_cap_for(ext, is_code=True)
+        try:
+            size = os.path.getsize(file_path)
+        except OSError:
+            size = 0
+        if size > cap:
+            skipped_oversize += 1
+            logger.info(
+                f"Skipped (oversize {size} > {cap}): {relative_path}"
+            )
+            continue
 
         try:
             content = safe_read_file(file_path)
 
-            is_implementation = (
-                not relative_path.startswith("test_")
-                and not relative_path.startswith("app_")
-                and "test" not in relative_path.lower()
-            )
+            is_implementation = not _is_test_path(relative_path)
 
             token_count = count_tokens(content, embedder_type)
             if token_count > MAX_EMBEDDING_TOKENS * 10:
@@ -221,6 +273,18 @@ def read_all_documents(
     # Then process documentation files
     for file_path, ext in doc_files:
         relative_path = os.path.relpath(file_path, path)
+
+        cap = _size_cap_for(ext, is_code=False)
+        try:
+            size = os.path.getsize(file_path)
+        except OSError:
+            size = 0
+        if size > cap:
+            skipped_oversize += 1
+            logger.info(
+                f"Skipped (oversize {size} > {cap}): {relative_path}"
+            )
+            continue
 
         try:
             content = safe_read_file(file_path)
@@ -252,7 +316,8 @@ def read_all_documents(
         f"Found {len(documents)} documents. "
         f"Skipped: {skipped_gitignore} gitignored, "
         f"{skipped_excluded} excluded, "
-        f"{skipped_ext} unsupported ext"
+        f"{skipped_ext} unsupported ext, "
+        f"{skipped_oversize} oversize"
     )
     return documents
 
@@ -529,6 +594,17 @@ def transform_documents_and_save_as_json(
         # --- Read this batch of files into Documents ---
         batch_docs = []
         for full_path, relative_path, ext, is_code in batch_infos:
+            cap = _size_cap_for(ext, is_code=is_code)
+            try:
+                size = os.path.getsize(full_path)
+            except OSError:
+                size = 0
+            if size > cap:
+                logger.info(
+                    f"Skipped (oversize {size} > {cap}): {relative_path}"
+                )
+                continue
+
             try:
                 content = safe_read_file(full_path)
 
@@ -540,11 +616,7 @@ def transform_documents_and_save_as_json(
                         f"(will be split into ~{token_count // 2000} chunks)"
                     )
 
-                is_implementation = is_code and (
-                    not relative_path.startswith("test_")
-                    and not relative_path.startswith("app_")
-                    and "test" not in relative_path.lower()
-                )
+                is_implementation = is_code and not _is_test_path(relative_path)
 
                 doc = Document(
                     text=content,

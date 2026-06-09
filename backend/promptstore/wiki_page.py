@@ -202,6 +202,10 @@ def build_wiki_page_prompt(
     file_summaries: str = None,
     language_name: str = "English",
     repo_type: str = "github",
+    page_description: str = "",
+    page_importance: str = "",
+    section_title: str = "",
+    related_page_titles: list = None,
 ) -> str:
     """
     Build the complete wiki page generation prompt.
@@ -209,6 +213,13 @@ def build_wiki_page_prompt(
     Single source of truth — replaces the frontend template.
     Injects server-side data (commit hash, page catalog,
     file summaries) that the frontend can't access.
+
+    Optional ``page_description``, ``page_importance``, ``section_title``
+    and ``related_page_titles`` come from the upstream wiki-structure
+    XML. When supplied they get rendered as a ``PAGE INTENT`` block so
+    the LLM treats each page as a deliberately-shaped slice of the
+    wiki instead of an isolated essay -- this is the main lever for
+    reducing cross-page overlap.
     """
     file_paths_list = format_file_paths_list(
         file_paths, repo_url, commit_hash=commit_hash,
@@ -220,6 +231,36 @@ def build_wiki_page_prompt(
         file_paths_list=file_paths_list,
         language_name=language_name,
     )
+
+    # Page intent block -- only added when the upstream structure
+    # actually provides one of these fields. Empty strings are skipped
+    # so older callers that don't supply intent fields get the original
+    # prompt verbatim.
+    intent_lines = []
+    if section_title:
+        intent_lines.append(f"Owning section: {section_title}")
+    if page_description:
+        intent_lines.append(f"Scope: {page_description}")
+    if page_importance:
+        intent_lines.append(f"Importance: {page_importance}")
+    if intent_lines:
+        prompt += (
+            "\n\nPAGE INTENT (from the wiki structure):\n"
+            + "\n".join(f"- {line}" for line in intent_lines)
+            + "\nStay inside this scope. Defer other topics to their "
+            "own pages via deepwiki:// links.\n"
+        )
+
+    # Strongly-related pages: small list of titles the LLM should link
+    # to instead of restating. Capped to keep the prompt tight.
+    if related_page_titles:
+        titles = [t for t in related_page_titles if t][:6]
+        if titles:
+            prompt += (
+                "\n\nSTRONGLY RELATED PAGES (link, don't restate):\n"
+                + "\n".join(f"- {t}" for t in titles)
+                + "\n"
+            )
 
     # Cross-page references
     if page_catalog:
