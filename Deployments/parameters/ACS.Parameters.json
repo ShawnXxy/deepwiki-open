@@ -20,6 +20,9 @@
         "deploymentIdentityPrincipalType": {
             "value": "User"
         },
+        "privateNetwork": {
+            "value": {{private_network}}
+        },
         "resourceTags": {
             "value": {{resource_tags}}
         }

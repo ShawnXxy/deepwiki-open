@@ -43,6 +43,13 @@
                 "description": "Specifies the type of the principal doing the deployment."
             }
         },
+        "privateNetwork": {
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "When true, the Search service is created with public network access disabled (reachable only through its private endpoint). When false, public access stays enabled (original behavior)."
+            }
+        },
         "resourceTags": {
             "defaultValue": {},
             "type": "object",
@@ -87,7 +94,7 @@
                 "replicaCount": 1,
                 "partitionCount": 1,
                 "hostingMode": "Default",
-                "publicNetworkAccess": "Enabled",
+                "publicNetworkAccess": "[if(parameters('privateNetwork'), 'Disabled', 'Enabled')]",
                 "networkRuleSet": {
                     "ipRules": []
                 },

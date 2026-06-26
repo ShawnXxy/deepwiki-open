@@ -1,0 +1,45 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "value": "{{location}}"
+        },
+        "privateNetwork": {
+            "value": {{private_network}}
+        },
+        "vnetName": {
+            "value": "{{vnet_name}}"
+        },
+        "vnetAddressPrefix": {
+            "value": "{{vnet_address_prefix}}"
+        },
+        "privateEndpointSubnetName": {
+            "value": "{{private_endpoint_subnet_name}}"
+        },
+        "privateEndpointSubnetPrefix": {
+            "value": "{{private_endpoint_subnet_prefix}}"
+        },
+        "appServiceSubnetName": {
+            "value": "{{app_service_subnet_name}}"
+        },
+        "appServiceSubnetPrefix": {
+            "value": "{{app_service_subnet_prefix}}"
+        },
+        "openAiResourceName": {
+            "value": "{{open_ai_resource_name}}"
+        },
+        "searchServiceName": {
+            "value": "{{search_service_name}}"
+        },
+        "appServiceName": {
+            "value": "{{app_service_name}}"
+        },
+        "managedIdentityName": {
+            "value": "{{dri_copilot_identity_name}}"
+        },
+        "resourceTags": {
+            "value": {{resource_tags}}
+        }
+    }
+}

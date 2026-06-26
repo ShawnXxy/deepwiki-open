@@ -41,6 +41,9 @@
         "openAiEmbeddingSkuName": {
             "value": "{{open_ai_embedding_sku_name}}"
         },
+        "privateNetwork": {
+            "value": {{private_network}}
+        },
         "resourceTags": {
             "value": {{resource_tags}}
         }

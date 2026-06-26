@@ -565,3 +565,119 @@ def provision_managed_network(subscription_id, resource_group, workspace_name, i
         print(f"  2. Go to 'Networking' -> 'Workspace managed outbound access'")
         print(f"  3. Click 'Provision' to activate the managed network")
         return False
+
+
+def _arm_request(method, url, body=None):
+    """Make an authenticated request to the Azure Resource Manager REST API.
+
+    Uses the Azure CLI credential (same auth as the rest of this module).
+    Returns the parsed JSON response (or {} for empty bodies).
+    Raises on HTTP errors, surfacing the ARM error body for diagnostics.
+    """
+    import json as _json
+    import urllib.request
+    import urllib.error
+
+    token = AzureCliCredential().get_token("https://management.azure.com/.default").token
+    data = _json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            raw = resp.read().decode("utf-8")
+            return _json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"ARM {method} failed ({e.code}): {detail}") from None
+
+
+def add_aml_managed_private_endpoint_rule(
+    subscription_id, resource_group, workspace_name,
+    rule_name, target_resource_id, subresource_target,
+):
+    """Add a managed-network outbound PRIVATE ENDPOINT rule to an AML workspace.
+
+    Required so the AML processor can reach a dependency (e.g. Azure OpenAI or
+    Azure AI Search) after that dependency's public network access is disabled.
+
+    The workspace's managed identity must hold a role that can approve private
+    endpoint connections on the target (e.g. "Azure AI Enterprise Network
+    Connection Approver"). That role is assigned by NETWORK.Template.json; if it
+    was just granted, allow a few minutes for RBAC propagation before this
+    succeeds (retry on a 400 "does not have required permissions" error).
+
+    Args:
+        subscription_id: Azure subscription ID
+        resource_group: Resource group of the workspace
+        workspace_name: AML workspace name
+        rule_name: Name for the outbound rule (e.g. "pe-aoai-deepwiki")
+        target_resource_id: Full ARM resource ID of the target service
+        subresource_target: Private-link sub-resource (e.g. "account" for
+            OpenAI/Cognitive Services, "searchService" for AI Search)
+
+    Returns:
+        The created/updated outbound rule object.
+    """
+    url = (
+        f"https://management.azure.com/subscriptions/{subscription_id}"
+        f"/resourceGroups/{resource_group}/providers/Microsoft.MachineLearningServices"
+        f"/workspaces/{workspace_name}/outboundRules/{rule_name}?api-version=2024-10-01"
+    )
+    body = {
+        "properties": {
+            "type": "PrivateEndpoint",
+            "category": "UserDefined",
+            "destination": {
+                "serviceResourceId": target_resource_id,
+                "subresourceTarget": subresource_target,
+                "sparkEnabled": False,
+            },
+        }
+    }
+    return _arm_request("PUT", url, body)
+
+
+def set_openai_private_network(subscription_id, resource_group, openai_resource_name, enabled):
+    """Toggle private networking on an existing Azure OpenAI account.
+
+    When ``enabled`` is True, sets ``publicNetworkAccess=Disabled`` AND
+    ``restrictOutboundNetworkAccess=true`` (outbound DLP) in a single PATCH.
+    Both are required together: the CloudGov_DLP_AzOpenAI policy rejects
+    disabling public access unless outbound DLP is also enabled.
+
+    Use this for the case where the OpenAI account already exists
+    (``is_creating_open_ai_endpoint = False``), so the AOAI ARM template that
+    would otherwise apply these settings is skipped.
+
+    Args:
+        subscription_id: Azure subscription ID
+        resource_group: Resource group of the OpenAI account
+        openai_resource_name: Name of the Cognitive Services / OpenAI account
+        enabled: True to lock down to private; False to re-open public access
+    """
+    url = (
+        f"https://management.azure.com/subscriptions/{subscription_id}"
+        f"/resourceGroups/{resource_group}/providers/Microsoft.CognitiveServices"
+        f"/accounts/{openai_resource_name}?api-version=2024-10-01"
+    )
+    if enabled:
+        properties = {
+            "publicNetworkAccess": "Disabled",
+            "restrictOutboundNetworkAccess": True,
+            "allowedFqdnList": [],
+            "networkAcls": {"defaultAction": "Deny"},
+        }
+    else:
+        properties = {
+            "publicNetworkAccess": "Enabled",
+            "restrictOutboundNetworkAccess": False,
+            "networkAcls": {"defaultAction": "Allow"},
+        }
+    return _arm_request("PATCH", url, {"properties": properties})

@@ -118,6 +118,75 @@ open_ai_embedding_version = "1"
 open_ai_embedding_sku_name = "Standard"
 
 
+# ===========================================================================
+# NETWORKING
+# The two sections below (Private Network and NSP) control all network
+# isolation for the deployment. Keep them configured together.
+# ===========================================================================
+
+# Private Network (VNet + Private Endpoints) Configuration
+# ---------------------------------------------------------------------------
+
+# Master switch for deploying the app into a secure, private virtual network.
+# Default is True (recommended for production, and required for compliance:
+# Azure OpenAI and Azure AI Search must NOT expose public network access).
+#
+# When private_network = True, the deployment creates and wires up the
+# following so that all data-plane traffic stays on the Microsoft backbone
+# and never traverses the public internet:
+#
+#   1. A Virtual Network (vnet_name) with two subnets:
+#        - private_endpoint_subnet : hosts the private endpoint NICs.
+#        - app_service_subnet      : delegated to Microsoft.Web/serverFarms
+#                                     for App Service regional VNet integration.
+#   2. Private DNS zones linked to the VNet, so each service FQDN resolves to
+#      its private endpoint IP instead of a public IP:
+#        - privatelink.openai.azure.com    (Azure OpenAI)
+#        - privatelink.search.windows.net  (Azure AI Search)
+#   3. Private endpoints in the private_endpoint_subnet for:
+#        - Azure OpenAI     (group-id: account)
+#        - Azure AI Search  (group-id: searchService)
+#   4. App Service regional VNet integration into app_service_subnet
+#      (with WEBSITE_VNET_ROUTE_ALL=1), so the backend reaches OpenAI / Search
+#      through the private endpoints rather than the internet.
+#   5. Azure ML managed-network outbound private endpoints to Azure OpenAI and
+#      Azure AI Search, so the offline processor pipeline keeps working after
+#      public access is turned off.
+#   6. Public network access is DISABLED on Azure OpenAI and Azure AI Search.
+#      For Azure OpenAI, Data Loss Prevention (restrictOutboundNetworkAccess =
+#      true) is enabled at the same time, because the CloudGov DLP policy
+#      (CloudGov_DLP_AzOpenAI) rejects disabling public access otherwise.
+#
+# PREREQUISITE: the managed identity (dri_copilot_identity_name) must be able
+# to approve the Azure ML managed private endpoints. The deployment assigns it
+# "Cognitive Services Contributor" on the OpenAI account and "Search Service
+# Contributor" on the Search service for this purpose.
+#
+# Set to False only for local development / non-compliant test environments;
+# in that case the services keep public network access enabled.
+private_network = True
+
+# Name of the virtual network created when private_network = True.
+# EXAMPLE: vnet-orcas-deepwiki
+vnet_name = "vnet-orcas-deepwiki"
+
+# Address space (CIDR) for the virtual network.
+# Must not overlap with any network you intend to peer with.
+# EXAMPLE: 10.2.0.0/16
+vnet_address_prefix = "10.2.0.0/16"
+
+# Subnet that hosts the private endpoints (network interfaces).
+# EXAMPLE: pe-subnet / 10.2.1.0/24
+private_endpoint_subnet_name = "pe-subnet"
+private_endpoint_subnet_prefix = "10.2.1.0/24"
+
+# Subnet delegated to App Service for regional VNet integration.
+# Must be delegated to Microsoft.Web/serverFarms and used by a single plan.
+# EXAMPLE: app-service-subnet / 10.2.2.0/24
+app_service_subnet_name = "app-service-subnet"
+app_service_subnet_prefix = "10.2.2.0/24"
+
+
 # NSP (network service perimeter) Configuration
 # ---------------------------------------------------------------------------
 
@@ -145,9 +214,6 @@ nsp_access_mode_for_key_vault = "Enforced"
 resource_tags = {"Owner" : "DaP CN Orcas"}
 
 
-########################################################################################
-## SECTION Reserved for future use - currently not implemented in deployment scripts ###
-########################################################################################
 
 # Azure Machine Learning
 # ---------------------------------------------------------------------------

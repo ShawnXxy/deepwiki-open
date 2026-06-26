@@ -68,6 +68,13 @@
                 "description": "Enable network restrictions with service tags."
             }
         },
+        "privateNetwork": {
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "When true, routes all App Service outbound traffic through the regional VNet integration (WEBSITE_VNET_ROUTE_ALL=1) so it reaches OpenAI/Search via private endpoints. The VNet integration itself is created by NETWORK.Template.json."
+            }
+        },
         "resourceTags": {
             "defaultValue": {},
             "type": "object",
@@ -181,6 +188,10 @@
                         {
                             "name": "AZURE_CLIENT_ID",
                             "value": "[reference(variables('managedIdentityId'), '2023-07-31-preview').clientId]"
+                        },
+                        {
+                            "name": "WEBSITE_VNET_ROUTE_ALL",
+                            "value": "[if(parameters('privateNetwork'), '1', '0')]"
                         }
                     ]
                 },
