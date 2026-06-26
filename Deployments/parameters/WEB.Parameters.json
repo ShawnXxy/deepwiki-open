@@ -29,6 +29,9 @@
         "enableNetworkRestrictions": {
             "value": {{enable_app_service_network_restrictions}}
         },
+        "privateNetwork": {
+            "value": {{private_network}}
+        },
         "resourceTags": {
             "value": {{resource_tags}}
         }

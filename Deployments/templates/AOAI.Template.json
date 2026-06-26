@@ -116,6 +116,13 @@
                 "description": "Specifies the SKU name of the embedding model."
             }
         },
+        "privateNetwork": {
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "When true, the OpenAI account is created with public network access disabled and outbound DLP (restrictOutboundNetworkAccess) enabled - required by the CloudGov_DLP_AzOpenAI policy when disabling public access. When false, public access stays enabled (original behavior)."
+            }
+        },
         "resourceTags": {
             "defaultValue": {},
             "type": "object",
@@ -143,11 +150,13 @@
             "properties": {
                 "customSubDomainName": "[parameters('openAiResourceName')]",
                 "networkAcls": {
-                    "defaultAction": "Allow",
+                    "defaultAction": "[if(parameters('privateNetwork'), 'Deny', 'Allow')]",
                     "virtualNetworkRules": [],
                     "ipRules": []
                 },
-                "publicNetworkAccess": "Enabled",
+                "publicNetworkAccess": "[if(parameters('privateNetwork'), 'Disabled', 'Enabled')]",
+                "restrictOutboundNetworkAccess": "[parameters('privateNetwork')]",
+                "allowedFqdnList": [],
                 "disableLocalAuth": true
             }
         },

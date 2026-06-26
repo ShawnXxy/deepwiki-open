@@ -1,0 +1,360 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "defaultValue": "[resourceGroup().location]",
+            "type": "string",
+            "metadata": {
+                "description": "Location for the virtual network and private endpoints."
+            }
+        },
+        "privateNetwork": {
+            "defaultValue": false,
+            "type": "bool",
+            "metadata": {
+                "description": "Master switch. When false, NOTHING in this template is created (every resource is conditioned on it), so the deployment is a safe no-op. When true, the VNet, subnets, private DNS zones, private endpoints, App Service VNet integration and the managed-identity approver role assignments are created."
+            }
+        },
+        "vnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the virtual network to create."
+            }
+        },
+        "vnetAddressPrefix": {
+            "defaultValue": "10.2.0.0/16",
+            "type": "string",
+            "metadata": {
+                "description": "Address space (CIDR) for the virtual network."
+            }
+        },
+        "privateEndpointSubnetName": {
+            "defaultValue": "pe-subnet",
+            "type": "string",
+            "metadata": {
+                "description": "Name of the subnet that hosts the private endpoints."
+            }
+        },
+        "privateEndpointSubnetPrefix": {
+            "defaultValue": "10.2.1.0/24",
+            "type": "string",
+            "metadata": {
+                "description": "Address prefix (CIDR) for the private endpoint subnet."
+            }
+        },
+        "appServiceSubnetName": {
+            "defaultValue": "app-service-subnet",
+            "type": "string",
+            "metadata": {
+                "description": "Name of the subnet delegated to App Service for regional VNet integration."
+            }
+        },
+        "appServiceSubnetPrefix": {
+            "defaultValue": "10.2.2.0/24",
+            "type": "string",
+            "metadata": {
+                "description": "Address prefix (CIDR) for the App Service delegated subnet."
+            }
+        },
+        "openAiResourceName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the existing Azure OpenAI account to expose through a private endpoint."
+            }
+        },
+        "searchServiceName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the existing Azure AI Search service to expose through a private endpoint."
+            }
+        },
+        "appServiceName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the existing App Service (Web App) to integrate into the VNet."
+            }
+        },
+        "managedIdentityName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the user-assigned managed identity that the AML managed network uses to approve its managed private endpoints to OpenAI and Search."
+            }
+        },
+        "openAiPrivateEndpointName": {
+            "defaultValue": "pe-aoai-orcas-deepwiki",
+            "type": "string",
+            "metadata": {
+                "description": "Name of the private endpoint for the OpenAI account. Defaults to the name used by the live deployment so re-runs are idempotent."
+            }
+        },
+        "searchPrivateEndpointName": {
+            "defaultValue": "pe-acs-orcas-deepwiki",
+            "type": "string",
+            "metadata": {
+                "description": "Name of the private endpoint for the AI Search service. Defaults to the name used by the live deployment so re-runs are idempotent."
+            }
+        },
+        "resourceTags": {
+            "defaultValue": {},
+            "type": "object",
+            "metadata": {
+                "description": "Tags to assign to the resources."
+            }
+        }
+    },
+    "variables": {
+        "vnetId": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]",
+        "peSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('privateEndpointSubnetName'))]",
+        "appSubnetId": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('appServiceSubnetName'))]",
+        "openAiResourceId": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAiResourceName'))]",
+        "searchServiceId": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
+        "managedIdentityId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName'))]",
+        "openAiPrivateDnsZoneName": "privatelink.openai.azure.com",
+        "searchPrivateDnsZoneName": "privatelink.search.windows.net",
+        "openAiPrivateEndpointName": "[parameters('openAiPrivateEndpointName')]",
+        "searchPrivateEndpointName": "[parameters('searchPrivateEndpointName')]",
+        "azureAiEnterpriseNetworkConnectionApproverRoleId": "b556d68e-0be0-4f35-a333-ad7ee1ce17ea"
+    },
+    "resources": [
+        {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2023-09-01",
+            "name": "[parameters('vnetName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[parameters('vnetAddressPrefix')]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[parameters('privateEndpointSubnetName')]",
+                        "properties": {
+                            "addressPrefix": "[parameters('privateEndpointSubnetPrefix')]",
+                            "privateEndpointNetworkPolicies": "Disabled"
+                        }
+                    },
+                    {
+                        "name": "[parameters('appServiceSubnetName')]",
+                        "properties": {
+                            "addressPrefix": "[parameters('appServiceSubnetPrefix')]",
+                            "delegations": [
+                                {
+                                    "name": "appServiceDelegation",
+                                    "properties": {
+                                        "serviceName": "Microsoft.Web/serverFarms"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Network/privateDnsZones",
+            "apiVersion": "2020-06-01",
+            "name": "[variables('openAiPrivateDnsZoneName')]",
+            "location": "global",
+            "tags": "[parameters('resourceTags')]"
+        },
+        {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Network/privateDnsZones",
+            "apiVersion": "2020-06-01",
+            "name": "[variables('searchPrivateDnsZoneName')]",
+            "location": "global",
+            "tags": "[parameters('resourceTags')]"
+        },
+        {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+            "apiVersion": "2020-06-01",
+            "name": "[concat(variables('openAiPrivateDnsZoneName'), '/link-openai')]",
+            "location": "global",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('openAiPrivateDnsZoneName'))]",
+                "[variables('vnetId')]"
+            ],
+            "properties": {
+                "registrationEnabled": false,
+                "virtualNetwork": {
+                    "id": "[variables('vnetId')]"
+                }
+            }
+        },
+        {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+            "apiVersion": "2020-06-01",
+            "name": "[concat(variables('searchPrivateDnsZoneName'), '/link-search')]",
+            "location": "global",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('searchPrivateDnsZoneName'))]",
+                "[variables('vnetId')]"
+            ],
+            "properties": {
+                "registrationEnabled": false,
+                "virtualNetwork": {
+                    "id": "[variables('vnetId')]"
+                }
+            }
+        },
+        {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Network/privateEndpoints",
+            "apiVersion": "2023-09-01",
+            "name": "[variables('openAiPrivateEndpointName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "dependsOn": [
+                "[variables('vnetId')]"
+            ],
+            "properties": {
+                "subnet": {
+                    "id": "[variables('peSubnetId')]"
+                },
+                "privateLinkServiceConnections": [
+                    {
+                        "name": "conn-aoai",
+                        "properties": {
+                            "privateLinkServiceId": "[variables('openAiResourceId')]",
+                            "groupIds": [
+                                "account"
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Network/privateEndpoints",
+            "apiVersion": "2023-09-01",
+            "name": "[variables('searchPrivateEndpointName')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('resourceTags')]",
+            "dependsOn": [
+                "[variables('vnetId')]"
+            ],
+            "properties": {
+                "subnet": {
+                    "id": "[variables('peSubnetId')]"
+                },
+                "privateLinkServiceConnections": [
+                    {
+                        "name": "conn-acs",
+                        "properties": {
+                            "privateLinkServiceId": "[variables('searchServiceId')]",
+                            "groupIds": [
+                                "searchService"
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+            "apiVersion": "2023-09-01",
+            "name": "[concat(variables('openAiPrivateEndpointName'), '/zg-aoai')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', variables('openAiPrivateEndpointName'))]",
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('openAiPrivateDnsZoneName'))]"
+            ],
+            "properties": {
+                "privateDnsZoneConfigs": [
+                    {
+                        "name": "openai",
+                        "properties": {
+                            "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('openAiPrivateDnsZoneName'))]"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+            "apiVersion": "2023-09-01",
+            "name": "[concat(variables('searchPrivateEndpointName'), '/zg-acs')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/privateEndpoints', variables('searchPrivateEndpointName'))]",
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('searchPrivateDnsZoneName'))]"
+            ],
+            "properties": {
+                "privateDnsZoneConfigs": [
+                    {
+                        "name": "search",
+                        "properties": {
+                            "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('searchPrivateDnsZoneName'))]"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "comments": "Regional VNet integration for the App Service. Added as a standalone networkConfig child resource so the existing WEB template does not need to depend on the VNet.",
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Web/sites/networkConfig",
+            "apiVersion": "2023-01-01",
+            "name": "[concat(parameters('appServiceName'), '/virtualNetwork')]",
+            "dependsOn": [
+                "[variables('vnetId')]"
+            ],
+            "properties": {
+                "subnetResourceId": "[variables('appSubnetId')]",
+                "swiftSupported": true
+            }
+        },
+        {
+            "comments": "Azure AI Enterprise Network Connection Approver on the OpenAI account. Lets the AML managed-network identity read/approve its managed private endpoint to OpenAI. See https://aka.ms/azureaipeapproval",
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, parameters('openAiResourceName'), parameters('managedIdentityName'), variables('azureAiEnterpriseNetworkConnectionApproverRoleId')))]",
+            "scope": "[concat('Microsoft.CognitiveServices/accounts/', parameters('openAiResourceName'))]",
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('azureAiEnterpriseNetworkConnectionApproverRoleId'))]",
+                "principalId": "[reference(variables('managedIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        },
+        {
+            "comments": "Azure AI Enterprise Network Connection Approver on the AI Search service. Lets the AML managed-network identity read/approve its managed private endpoint to Search.",
+            "condition": "[parameters('privateNetwork')]",
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2022-04-01",
+            "name": "[guid(concat(resourceGroup().id, parameters('searchServiceName'), parameters('managedIdentityName'), variables('azureAiEnterpriseNetworkConnectionApproverRoleId')))]",
+            "scope": "[concat('Microsoft.Search/searchServices/', parameters('searchServiceName'))]",
+            "properties": {
+                "roleDefinitionId": "[concat(subscription().id, '/providers/Microsoft.Authorization/roleDefinitions/', variables('azureAiEnterpriseNetworkConnectionApproverRoleId'))]",
+                "principalId": "[reference(variables('managedIdentityId'), '2023-07-31-preview').principalId]",
+                "principalType": "ServicePrincipal"
+            }
+        }
+    ],
+    "outputs": {
+        "vnetId": {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "string",
+            "value": "[variables('vnetId')]"
+        },
+        "openAiPrivateEndpointName": {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "string",
+            "value": "[variables('openAiPrivateEndpointName')]"
+        },
+        "searchPrivateEndpointName": {
+            "condition": "[parameters('privateNetwork')]",
+            "type": "string",
+            "value": "[variables('searchPrivateEndpointName')]"
+        }
+    }
+}

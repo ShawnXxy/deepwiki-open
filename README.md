@@ -56,6 +56,92 @@ The general workflow is:
 
 ![img](./img/flow.png)
 
+### Public Network Topology Diagram (Depercated)
+
+<details>
+
+```mermaid
+flowchart LR
+  User[Microsoft CorpNet user] -->|HTTPS, inbound CorpNet only| APP[App Service orcascodewiki]
+  APP -->|MSI / chat+embed| AOAI[Azure OpenAI koreacentral]
+  APP -->|MSI / vector retrieval| ACS[AI Search]
+  APP -.->|optional cache| BLOB[(Blob Storage)]
+  APP -->|image pull| ACR1[ACR Basic]
+
+  subgraph AMLNET[AML managed VNet]
+    PROC[code_processor cloud]
+  end
+  PROC -->|embed| AOAI
+  PROC -->|push vectors| ACS
+  PROC -->|artifacts| BLOB
+  PROC -->|managed PE| KV[Key Vault]
+  PROC -->|git clone, internet| ADO[Azure DevOps]
+  PROC -->|image pull| ACR2[ACR Premium]
+  ACS -->|indexer data source| BLOB
+```
+
+</details>
+
+### Private Network Topology Diagram 
+
+```mermaid
+flowchart TB
+    USER["CorpNet users"]
+    ADMIN["Admin / AML dispatcher"]
+
+    subgraph HUB["RG-P2S hub: vnet-p2s-ea 10.1.0.0/16"]
+        VPNGW["P2S VPN Gateway"]
+        RESOLVER["DNS Private Resolver"]
+    end
+
+    subgraph DWVNET["vnet-orcas-deepwiki 10.2.0.0/16 NEW"]
+        subgraph APPSUB["app-service-subnet delegated Web"]
+            VNETINT["App Service VNet integration"]
+        end
+        subgraph PESUB["pe-subnet"]
+            PEAOAI["PE to OpenAI"]
+            PEACS["PE to AI Search"]
+            PEBLOB["PE to Blob optional"]
+        end
+        DNSZ["Private DNS zones:<br/>privatelink.openai.azure.com<br/>privatelink.search.windows.net"]
+    end
+
+    subgraph AMLNET["AML managed VNet Microsoft-managed"]
+        PROC["code_processor cloud"]
+        MPE["Managed PEs: Storage, KeyVault, Workspace<br/>+ NEW: OpenAI, AI Search"]
+    end
+
+    APP["App Service orcascodewiki<br/>inbound: CorpNet only"]
+
+    AOAI["Azure OpenAI koreacentral<br/>public DISABLED"]
+    ACS["AI Search<br/>public DISABLED"]
+    BLOB["Blob Storage<br/>public DISABLED"]
+    KV["Key Vault<br/>public DISABLED"]
+    ADO["Azure DevOps repos"]
+
+    USER -->|HTTPS| APP
+    ADMIN -->|VPN| VPNGW
+    VPNGW --- RESOLVER
+    HUB <-->|VNet peering| DWVNET
+    RESOLVER -.->|DNS| DNSZ
+
+    APP --> VNETINT
+    VNETINT -->|route all outbound| PESUB
+    PESUB -.->|resolve via| DNSZ
+
+    PEAOAI ==> AOAI
+    PEACS ==> ACS
+    PEBLOB ==> BLOB
+
+    PROC --> MPE
+    MPE ==> AOAI
+    MPE ==> ACS
+    MPE ==> BLOB
+    MPE ==> KV
+    PROC -->|git clone internet| ADO
+    ACS -->|indexer reads| BLOB
+```
+
 ### Three Processing Modes
 
 | Mode | Config | Auth | Storage | Retrieval | Command |
@@ -100,7 +186,7 @@ Different tasks use different Azure OpenAI deployments configured in `infra.json
 ```json
 "azure_openai": {
   "chat":      { "deployment": "gpt-5.1-chat" },
-  "reasoning": { "deployment": "gpt-5.1" },
+  "reasoning": { "deployment": "gpt-5.4" },
   "embedding": { "deployment": "text-embedding-3-large" }
 }
 ```
@@ -108,9 +194,9 @@ Different tasks use different Azure OpenAI deployments configured in `infra.json
 | Task | Model Type | Deployment | Why |
 |------|-----------|------------|-----|
 | Chat Q&A | Chat | `gpt-5.1-chat` | Fast, low latency for interactive conversations |
-| Deep Research | Reasoning | `gpt-5.1` | Multi-turn investigation benefits from deeper reasoning |
-| Wiki Structure | Reasoning | `gpt-5.1` | Architectural planning across large codebases |
-| Wiki Pages | Reasoning | `gpt-5.1` | Technical documentation with diagrams and citations |
+| Deep Research | Reasoning | `gpt-5.4` | Multi-turn investigation benefits from deeper reasoning |
+| Wiki Structure | Reasoning | `gpt-5.4` | Architectural planning across large codebases |
+| Wiki Pages | Reasoning | `gpt-5.4` | Technical documentation with diagrams and citations |
 | Embedding | Embedding | `text-embedding-3-large` | 3072-dimension vectors for code search |
 
 ### Project Structure
