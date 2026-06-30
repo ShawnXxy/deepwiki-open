@@ -134,6 +134,8 @@ def _build_credential() -> DefaultAzureCredential:
     * Local: MSI step fails, chain falls back to Azure CLI / VS Code.
     """
     try:
+        from backend.config import get_infra_config
+
         infra = get_infra_config()
         client_id = infra.managed_identity.client_id if infra.managed_identity else None
     except Exception:
