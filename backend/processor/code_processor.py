@@ -602,27 +602,22 @@ def step_push_to_search(
             )
 
         # iter_documents_for_sources only reads chunks for changed files —
-        # cheap on blob storage because we know the exact file list.
-        PUSH_BATCH_SIZE = 1000
+        # cheap on blob storage because we know the exact file list. It needs
+        # the manifest to resolve each source path to its chunk-file blobs.
+        # (read_manifest sanitises `branch` internally, matching the path the
+        # embed step wrote, so the raw branch value is safe to pass here.)
+        manifest = vector_storage.read_manifest(repo_name, branch) or {}
         pushed = 0
-        batch: list = []
         _log_rss("before push_to_search load")
-        for doc in vector_storage.iter_documents_for_sources(
-            repo_name, branch, norm_sources,
+        for batch in vector_storage.iter_documents_for_sources(
+            repo_name, branch, norm_sources, manifest,
         ):
-            batch.append(doc)
-            if len(batch) >= PUSH_BATCH_SIZE:
-                push_documents(idx_name, batch, repo_name, branch)
-                pushed += len(batch)
-                for d in batch:
-                    d.vector = None
-                batch = []
-        if batch:
+            if not batch:
+                continue
             push_documents(idx_name, batch, repo_name, branch)
             pushed += len(batch)
             for d in batch:
                 d.vector = None
-            batch = []
         _log_rss("after push_to_search load")
 
         if pushed == 0:
