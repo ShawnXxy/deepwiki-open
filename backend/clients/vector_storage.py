@@ -799,8 +799,10 @@ class VectorStorage:
                     for rp in rel_paths:
                         blob_path = f"{vectors_path}/{rp}"
                         try:
-                            blob_client.delete_blob(blob_path)
-                            deleted += 1
+                            if blob_client.delete(blob_path):
+                                deleted += 1
+                            else:
+                                logger.warning(f"[Vec] Failed to delete blob {blob_path}")
                         except Exception as e:
                             logger.warning(f"[Vec] Failed to delete blob {blob_path}: {e}")
             else:

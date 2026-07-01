@@ -185,7 +185,7 @@ async def delete_codemap_cache(
         try:
             blob_client = get_blob_storage_client()
             if blob_client and blob_client.exists(blob_path):
-                blob_client.delete_blob(blob_path)
+                blob_client.delete(blob_path)
                 logger.info(f"Deleted codemap from blob: {blob_path}")
                 return True
         except Exception as e:
