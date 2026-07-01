@@ -52,7 +52,8 @@ logger = logging.getLogger(__name__)
 
 
 def build_file_tree(repo_path: str, max_depth: int = 6,
-                    max_entries: int = 10000) -> str:
+                    max_entries: int = 10000,
+                    max_chars: int = 200_000) -> str:
     """Build a file tree string from a cloned repo directory.
 
     Honours `excluded.json` (dirs + file patterns) and the supported-extension
@@ -61,13 +62,18 @@ def build_file_tree(repo_path: str, max_depth: int = 6,
     references Makefiles, .tmplt, .csproj, .props etc. that never get indexed,
     producing wiki pages with declared file paths the retriever can't resolve.
 
-    For large repos (>max_entries entries), switches to directory-only
-    output mid-walk to avoid building a massive string then discarding it.
+    For large repos, switches to directory-only output mid-walk once the
+    collected tree exceeds ``max_entries`` entries OR ``max_chars`` characters.
+    The size guard matters because a repo can stay under the entry cap yet
+    still produce a byte-heavy tree (e.g. deep vendored paths) large enough to
+    stall the structure-generation LLM until an upstream gateway drops the
+    connection. Collapsing to directories keeps the structure prompt bounded.
     """
     lines = []
     repo_path = repo_path.rstrip(os.sep)
     prefix_len = len(repo_path) + 1
     entry_count = 0
+    total_chars = 0
 
     # Load filter config (single source of truth) and build a FileFilter
     # equivalent to the one document.py uses in exclusion mode.
@@ -100,6 +106,7 @@ def build_file_tree(repo_path: str, max_depth: int = 6,
         if rel_posix:
             lines.append(rel_posix + '/')
             entry_count += 1
+            total_chars += len(rel_posix) + 2
         for f in sorted(files):
             if f.startswith('.'):
                 continue
@@ -113,11 +120,20 @@ def build_file_tree(repo_path: str, max_depth: int = 6,
                 continue
             lines.append(rel_file)
             entry_count += 1
-            if entry_count > max_entries:
-                # Bail early — convert to dirs-only from what's collected
+            total_chars += len(rel_file) + 1
+            # Bail early when the full listing would be too large — by entry
+            # count OR byte size. An oversized tree makes the structure prompt
+            # huge, which can stall the reasoning LLM until an upstream gateway
+            # drops the connection. Collapse to dirs-only from what's collected.
+            if entry_count > max_entries or total_chars > max_chars:
+                reason = (
+                    f"entries={entry_count}>{max_entries}"
+                    if entry_count > max_entries
+                    else f"chars={total_chars}>{max_chars}"
+                )
                 logger.info(
-                    f"Large repo (>{max_entries} entries), switching "
-                    f"to directory-only tree mid-walk"
+                    f"Large repo ({reason}), switching to directory-only "
+                    f"tree mid-walk"
                 )
                 return _file_tree_dirs_only('\n'.join(lines))
 
