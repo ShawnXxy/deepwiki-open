@@ -1,0 +1,102 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "vnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the existing virtual network."
+            }
+        },
+        "privateEndpointSubnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the existing private endpoint subnet."
+            }
+        },
+        "privateEndpointSubnetPrefix": {
+            "type": "string",
+            "metadata": {
+                "description": "Current address prefix of the private endpoint subnet."
+            }
+        },
+        "privateEndpointSubnetNsgName": {
+            "type": "string",
+            "metadata": {
+                "description": "Current network security group attached to the private endpoint subnet."
+            }
+        },
+        "appServiceSubnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Name of the existing App Service integration subnet."
+            }
+        },
+        "appServiceSubnetPrefix": {
+            "type": "string",
+            "metadata": {
+                "description": "Current address prefix of the App Service integration subnet."
+            }
+        },
+        "appServiceSubnetNsgName": {
+            "type": "string",
+            "metadata": {
+                "description": "Current network security group attached to the App Service integration subnet."
+            }
+        },
+        "appServiceDelegationName": {
+            "type": "string",
+            "metadata": {
+                "description": "Current delegation name on the App Service integration subnet."
+            }
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Network/virtualNetworks/subnets",
+            "apiVersion": "2024-07-01",
+            "name": "[concat(parameters('vnetName'), '/', parameters('privateEndpointSubnetName'))]",
+            "properties": {
+                "addressPrefix": "[parameters('privateEndpointSubnetPrefix')]",
+                "defaultOutboundAccess": false,
+                "networkSecurityGroup": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('privateEndpointSubnetNsgName'))]"
+                },
+                "privateEndpointNetworkPolicies": "Disabled",
+                "privateLinkServiceNetworkPolicies": "Enabled"
+            }
+        },
+        {
+            "type": "Microsoft.Network/virtualNetworks/subnets",
+            "apiVersion": "2024-07-01",
+            "name": "[concat(parameters('vnetName'), '/', parameters('appServiceSubnetName'))]",
+            "properties": {
+                "addressPrefix": "[parameters('appServiceSubnetPrefix')]",
+                "defaultOutboundAccess": false,
+                "networkSecurityGroup": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('appServiceSubnetNsgName'))]"
+                },
+                "delegations": [
+                    {
+                        "name": "[parameters('appServiceDelegationName')]",
+                        "properties": {
+                            "serviceName": "Microsoft.Web/serverFarms"
+                        }
+                    }
+                ],
+                "privateEndpointNetworkPolicies": "Disabled",
+                "privateLinkServiceNetworkPolicies": "Enabled"
+            }
+        }
+    ],
+    "outputs": {
+        "privateEndpointSubnetId": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('privateEndpointSubnetName'))]"
+        },
+        "appServiceSubnetId": {
+            "type": "string",
+            "value": "[resourceId('Microsoft.Network/virtualNetworks/subnets', parameters('vnetName'), parameters('appServiceSubnetName'))]"
+        }
+    }
+}

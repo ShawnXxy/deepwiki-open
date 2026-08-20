@@ -13,13 +13,20 @@
             "defaultValue": false,
             "type": "bool",
             "metadata": {
-                "description": "Master switch. When false, NOTHING in this template is created (every resource is conditioned on it), so the deployment is a safe no-op. When true, the VNet, subnets, private DNS zones, private endpoints, App Service VNet integration and the managed-identity approver role assignments are created."
+                "description": "Controls all private-network resources in this template. When false, no resources are deployed. When true, private networking is deployed; manageVirtualNetwork separately controls whether the parent VNet and its subnets are created or updated."
+            }
+        },
+        "manageVirtualNetwork": {
+            "defaultValue": true,
+            "type": "bool",
+            "metadata": {
+                "description": "Controls only the parent VNet resource and its subnet definitions. When true, the template creates or updates them. When false, the existing VNet and subnets are reused while the other private-network resources remain enabled. Use false when existing subnet properties are managed outside this template."
             }
         },
         "vnetName": {
             "type": "string",
             "metadata": {
-                "description": "Name of the virtual network to create."
+                "description": "Name of the virtual network to create or reuse."
             }
         },
         "vnetAddressPrefix": {
@@ -118,7 +125,7 @@
     },
     "resources": [
         {
-            "condition": "[parameters('privateNetwork')]",
+            "condition": "[and(parameters('privateNetwork'), parameters('manageVirtualNetwork'))]",
             "type": "Microsoft.Network/virtualNetworks",
             "apiVersion": "2023-09-01",
             "name": "[parameters('vnetName')]",
@@ -135,6 +142,7 @@
                         "name": "[parameters('privateEndpointSubnetName')]",
                         "properties": {
                             "addressPrefix": "[parameters('privateEndpointSubnetPrefix')]",
+                            "defaultOutboundAccess": false,
                             "privateEndpointNetworkPolicies": "Disabled"
                         }
                     },
@@ -142,6 +150,7 @@
                         "name": "[parameters('appServiceSubnetName')]",
                         "properties": {
                             "addressPrefix": "[parameters('appServiceSubnetPrefix')]",
+                            "defaultOutboundAccess": false,
                             "delegations": [
                                 {
                                     "name": "appServiceDelegation",

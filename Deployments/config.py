@@ -131,9 +131,10 @@ open_ai_embedding_sku_name = "Standard"
 # Default is True (recommended for production, and required for compliance:
 # Azure OpenAI and Azure AI Search must NOT expose public network access).
 #
-# When private_network = True, the deployment creates and wires up the
-# following so that all data-plane traffic stays on the Microsoft backbone
-# and never traverses the public internet:
+# When private_network = True, the deployment wires up the following so that
+# all data-plane traffic stays on the Microsoft backbone and never traverses
+# the public internet. The VNet in item 1 is created or updated only when
+# manage_virtual_network = True; otherwise, the existing VNet is reused.
 #
 #   1. A Virtual Network (vnet_name) with two subnets:
 #        - private_endpoint_subnet : hosts the private endpoint NICs.
@@ -166,7 +167,21 @@ open_ai_embedding_sku_name = "Standard"
 # in that case the services keep public network access enabled.
 private_network = True
 
-# Name of the virtual network created when private_network = True.
+# Controls only whether NETWORK.Template.json creates or updates the VNet and
+# its two subnet definitions. Other private-network resources remain controlled
+# by private_network.
+#
+# True: create or update the VNet and subnets. Use this for initial provisioning.
+# False: reuse the existing VNet and skip the parent VNet resource.
+#
+# Keep this False for the current environment. Its subnets have policy-added NSG
+# associations and an App Service service association that are not represented
+# in this template, so redeploying the parent VNet could remove them. With this
+# setting False, the subnet properties in NETWORK.Template.json do not update
+# the live subnets; any live subnet change must be applied separately.
+manage_virtual_network = False
+
+# Name of the virtual network created or reused when private_network = True.
 # EXAMPLE: vnet-orcas-deepwiki
 vnet_name = "vnet-orcas-deepwiki"
 
