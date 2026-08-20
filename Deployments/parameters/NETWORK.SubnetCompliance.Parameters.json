@@ -1,0 +1,30 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "vnetName": {
+            "value": "vnet-orcas-deepwiki"
+        },
+        "privateEndpointSubnetName": {
+            "value": "pe-subnet"
+        },
+        "privateEndpointSubnetPrefix": {
+            "value": "10.2.1.0/24"
+        },
+        "privateEndpointSubnetNsgName": {
+            "value": "vnet-orcas-deepwiki-pe-subnet-nsg"
+        },
+        "appServiceSubnetName": {
+            "value": "app-service-subnet"
+        },
+        "appServiceSubnetPrefix": {
+            "value": "10.2.2.0/24"
+        },
+        "appServiceSubnetNsgName": {
+            "value": "vnet-orcas-deepwiki-app-service-subnet-nsg"
+        },
+        "appServiceDelegationName": {
+            "value": "0"
+        }
+    }
+}

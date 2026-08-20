@@ -8,6 +8,9 @@
         "privateNetwork": {
             "value": {{private_network}}
         },
+        "manageVirtualNetwork": {
+            "value": {{manage_virtual_network}}
+        },
         "vnetName": {
             "value": "{{vnet_name}}"
         },

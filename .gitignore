@@ -80,7 +80,9 @@ certs/
 # ignore AI instruction files
 .github/
 .copilot/
+.azure
 
 # ignore azure logs
 webapp-logs/
 webapp-logs.zip
+
