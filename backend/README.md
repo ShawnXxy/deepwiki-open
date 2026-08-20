@@ -74,9 +74,12 @@ python -m backend.processor.code_processor --config=backend/run.json
 # Docker mode
 python -m backend.processor.code_processor --mode=docker --repo=URL --branch=main
 
-# Cloud mode — setup AML resources (run from your machine)
+# Cloud mode — new schedules submit one immediate job
 python -m backend.processor.aml_dispatcher --config=backend/run.json
-# Processing runs automatically inside AML pipeline
+
+# Submit an existing scheduled pipeline immediately
+python -m backend.processor.aml_dispatcher \
+    --config=backend/run.json --run-now
 ```
 
 ### 2. FastAPI Server (optional, for Ask/Chat only)

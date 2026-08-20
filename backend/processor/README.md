@@ -261,11 +261,15 @@ python -m backend.processor.code_processor \
     --repo="https://dev.azure.com/org/proj/_git/repo" \
     --branch=main --mode=docker
 
-# Cloud mode — setup AML resources (run once from your machine)
+# Cloud setup — new schedules submit one immediate AML job
 python -m backend.processor.aml_dispatcher --config=backend/run.json
 
-# Cloud mode — processing (runs automatically inside AML pipeline)
-# AML command: python -m backend.processor.code_processor --mode=cloud ...
+# Submit an existing scheduled pipeline immediately
+python -m backend.processor.aml_dispatcher \
+    --config=backend/run.json --run-now
+
+# AML job command: python -m backend.processor.code_processor --mode=cloud ...
+# Use code_processor --full-reprocess only to bypass incremental processing.
 ```
 
 Config file format (`run.json`):

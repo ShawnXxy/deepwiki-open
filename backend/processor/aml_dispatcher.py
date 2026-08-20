@@ -7,6 +7,7 @@ The AML pipeline will then run code_processor.py --mode cloud inside AML.
 
 Usage:
     python -m backend.processor.aml_dispatcher --config=backend/run.json
+    python -m backend.processor.aml_dispatcher --config=backend/run.json --run-now
     python -m backend.processor.aml_dispatcher --repo=URL --branch=main
 """
 
@@ -31,6 +32,14 @@ def _parse_args() -> argparse.Namespace:
                         help='Azure DevOps repo URL')
     parser.add_argument('--branch', type=str, default=None,
                         help='Branch name')
+    parser.add_argument(
+        '--run-now',
+        action='store_true',
+        help=(
+            'Submit the AML pipeline immediately after resource setup. '
+            'New schedules run immediately without this flag.'
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -45,6 +54,7 @@ def _parse_args() -> argparse.Namespace:
     final = {
         'repo': args.repo or config.get('repo'),
         'branch': args.branch or config.get('branch'),
+        'run_now': args.run_now,
     }
     if not final['repo']:
         parser.error("--repo is required (or set 'repo' in config file)")
@@ -69,7 +79,7 @@ def main():
 
     logger.info(
         f"DeepWiki AML Dispatcher: repo={args.repo}, branch={args.branch}, "
-        f"owner={owner}, repo={repo}"
+        f"owner={owner}, repo={repo}, run_now={args.run_now}"
     )
 
     # Step 1: Copy config to .cloud/ with Azure services force-enabled
@@ -88,6 +98,7 @@ def main():
         branch=args.branch,
         owner=owner,
         repo=repo,
+        run_now=args.run_now,
     )
     logger.info(f"Cloud setup complete: resources={resources}")
 

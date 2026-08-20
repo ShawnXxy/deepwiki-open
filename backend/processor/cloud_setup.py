@@ -163,20 +163,21 @@ def setup_cloud_resources(
     branch: str,
     owner: str,
     repo: str,
+    run_now: bool = False,
 ) -> dict:
-    """Create/update all cloud resources for a repo.
-
-    1. AI Search index (if search is configured)
-    2. AML scheduled pipeline (if AML is configured)
+    """Create/update cloud resources and optionally submit the AML pipeline.
 
     Args:
-        repo_url: Full repository URL
-        branch: Branch name
-        owner: Repository owner (organization)
-        repo: Repository name
+        repo_url: Full repository URL.
+        branch: Branch name.
+        owner: Repository owner or organization.
+        repo: Repository name.
+        run_now: Submit an immediate job for an existing schedule. New
+            schedules always submit one immediate job.
 
     Returns:
-        Dict with created resource names
+        Created resource names. Includes ``aml_job`` only when an immediate
+        job was submitted.
     """
     result = {}
     repo_name = f"{owner}_{repo}"
@@ -228,11 +229,13 @@ def setup_cloud_resources(
             _ensure_compute(ml_client, pipeline_config)
 
             # Create/update scheduled pipeline
-            _create_or_update_pipeline(
+            submitted_job_name = _create_or_update_pipeline(
                 ml_client, name, repo_url, branch,
-                owner, repo, pipeline_config,
+                owner, repo, pipeline_config, run_now=run_now,
             )
             result['aml_pipeline'] = name
+            if submitted_job_name:
+                result['aml_job'] = submitted_job_name
             logger.info(f"Pipeline ready: {name}")
         except Exception as e:
             logger.error(f"AML setup failed: {e}")
@@ -320,16 +323,22 @@ def _create_or_update_pipeline(
     repo_url: str, branch: str,
     owner: str, repo: str,
     config: dict,
-) -> None:
-    """Create or update an AML scheduled pipeline job."""
+    run_now: bool = False,
+) -> str | None:
+    """Create or update an AML schedule and optionally submit its pipeline."""
+    import os
     import re
-    from azure.ai.ml import command, Input
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+
+    from azure.ai.ml import command
+    from azure.ai.ml.constants import TimeZone
     from azure.ai.ml.dsl import pipeline
     from azure.ai.ml.entities import (
         RecurrenceTrigger,
         JobSchedule,
     )
-    from pathlib import Path
+    from azure.core.exceptions import ResourceNotFoundError
 
     # Command that runs INSIDE AML.
     # --mode cloud makes the processor read from config/.cloud/
@@ -346,7 +355,6 @@ def _create_or_update_pipeline(
     # Pass REPO_ACCESS_TOKEN to the AML job if available.
     # In cloud mode, resolve_auth() tries PAT first before MSI.
     # Without this, the PAT from local .env never reaches AML.
-    import os
     env_vars = {}
     pat = (os.environ.get('REPO_ACCESS_TOKEN', ''))
     if pat:
@@ -383,31 +391,64 @@ def _create_or_update_pipeline(
     experiment = re.sub(r'[^a-zA-Z0-9_-]', '-', f"{owner}-{repo}-{branch}")
     pipeline_job.experiment_name = experiment
 
-    # Check if schedule already exists
-    is_new = True
     try:
         ml_client.schedules.get(name)
-        # Disable old, create new
-        ml_client.schedules.begin_disable(name).result()
-        logger.info(f"Disabled existing schedule: {name}")
+    except ResourceNotFoundError:
+        is_new = True
+        logger.info(f"Schedule does not exist yet: {name}")
+    else:
         is_new = False
-    except Exception:
-        pass  # Schedule doesn't exist yet
+        logger.info(f"Updating existing schedule: {name}")
 
-    # Create recurring schedule
     interval_hours = config.get('schedule_interval_hours', 480)
+    next_run = datetime.now(timezone.utc) + timedelta(
+        hours=interval_hours
+    )
+    next_run_iso = next_run.strftime("%Y-%m-%dT%H:%M:%S")
     schedule = JobSchedule(
         name=name,
         trigger=RecurrenceTrigger(
             frequency="hour",
             interval=interval_hours,
+            start_time=next_run_iso,
+            time_zone=TimeZone.UTC,
         ),
         create_job=pipeline_job,
     )
 
-    ml_client.schedules.begin_create_or_update(schedule).result()
-    logger.info(f"Created/updated schedule: {name} (every {interval_hours}h)")
-    # RecurrenceTrigger fires immediately on creation — no explicit first run needed
+    updated_schedule = (
+        ml_client.schedules.begin_create_or_update(schedule).result()
+    )
+    if not updated_schedule.is_enabled:
+        ml_client.schedules.begin_enable(name).result()
+        logger.info(f"Enabled schedule: {name}")
+    logger.info(
+        f"Created/updated schedule: {name} "
+        f"(every {interval_hours}h, next run={next_run_iso})"
+    )
+
+    if not (is_new or run_now):
+        logger.info(
+            f"Immediate job not submitted for existing schedule: {name}"
+        )
+        return None
+
+    reason = "new schedule" if is_new else "--run-now requested"
+    logger.info(f"Submitting immediate AML pipeline job ({reason}): {name}")
+    try:
+        submitted_job = ml_client.jobs.create_or_update(pipeline_job)
+    except Exception:
+        logger.exception(
+            f"Immediate AML job submission failed for {name}. "
+            "The schedule is configured; retry with --run-now."
+        )
+        raise
+
+    logger.info(
+        f"Submitted AML job: name={submitted_job.name}, "
+        f"status={submitted_job.status}"
+    )
+    return submitted_job.name
 
 
 def teardown_cloud_resources(owner: str, repo: str, branch: str) -> None:
