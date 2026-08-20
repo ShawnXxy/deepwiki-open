@@ -400,10 +400,14 @@ python -m backend.processor.code_processor \
 #### Option 3 Cloud Processing (AML Pipeline)
 
 ```bash
-# Setup AML resources and create scheduled pipeline (run once)
+# New repository: setup resources, create the schedule, and submit one job now
 python -m backend.processor.aml_dispatcher --config=backend/run.json
 
-# AML pipeline runs code_processor --mode=cloud automatically on schedule
+# Existing schedule: reconcile resources and submit one additional job now
+python -m backend.processor.aml_dispatcher \
+    --config=backend/run.json --run-now
+
+# Future jobs run automatically at azure_ml.schedule_interval_hours
 ```
 
 ## Architecture V0 (Upstream Origin)

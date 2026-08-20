@@ -36,6 +36,7 @@ wheels/
 *.bak
 # testing
 /coverage
+/test/
 
 # next.js
 /.next/
@@ -81,6 +82,7 @@ certs/
 .github/
 .copilot/
 .azure
+superpowers/
 
 # ignore azure logs
 webapp-logs/
