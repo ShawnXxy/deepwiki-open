@@ -29,6 +29,16 @@ $ACR_NAME = Get-ConfigValue "container_registry_name"
 $CONTAINER_IMAGE_NAME = Get-ConfigValue "container_image_name"
 $CONTAINER_IMAGE_TAG = "latest"  # Always use latest
 $MSI_NAME = Get-ConfigValue "dri_copilot_identity_name"
+$NPM_REGISTRY = if ($env:DEEPWIKI_NPM_REGISTRY) {
+    $env:DEEPWIKI_NPM_REGISTRY
+} else {
+    "https://packagefeedproxy.microsoft.io/npm/"
+}
+$PYPI_REGISTRY = if ($env:DEEPWIKI_PYPI_REGISTRY) {
+    $env:DEEPWIKI_PYPI_REGISTRY
+} else {
+    "https://packagefeedproxy.microsoft.io/pypi/simple/"
+}
 
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host " Azure Web App Deployment for DeepWiki" -ForegroundColor Cyan
@@ -42,6 +52,8 @@ Write-Host "   ACR Name:          $ACR_NAME"
 Write-Host "   Image Name:        $CONTAINER_IMAGE_NAME"
 Write-Host "   Image Tag:         $CONTAINER_IMAGE_TAG"
 Write-Host "   Managed Identity:  $MSI_NAME"
+Write-Host "   npm Registry:      $NPM_REGISTRY"
+Write-Host "   PyPI Registry:     $PYPI_REGISTRY"
 Write-Host ""
 
 # ============================================
@@ -172,7 +184,13 @@ $IMAGE_TAG = "${ACR_LOGIN_SERVER}/${CONTAINER_IMAGE_NAME}:${CONTAINER_IMAGE_TAG}
 
 # Build locally with --no-cache to ensure latest code is included
 Write-Host "   Building Docker image locally (--no-cache for fresh build)..." -ForegroundColor Gray
-docker build --no-cache -t $IMAGE_TAG -f Dockerfile .
+docker build `
+    --no-cache `
+    --build-arg "NPM_REGISTRY=$NPM_REGISTRY" `
+    --build-arg "PYPI_REGISTRY=$PYPI_REGISTRY" `
+    -t $IMAGE_TAG `
+    -f Dockerfile `
+    .
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "❌ Docker build failed!" -ForegroundColor Red

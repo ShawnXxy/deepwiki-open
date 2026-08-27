@@ -384,6 +384,12 @@ npm run dev
 .\publish-web.ps1
 ```
 
+The Docker build uses the organization package proxies by default:
+`https://packagefeedproxy.microsoft.io/npm/` for npm and
+`https://packagefeedproxy.microsoft.io/pypi/simple/` for pip and Poetry.
+Set `DEEPWIKI_NPM_REGISTRY` or `DEEPWIKI_PYPI_REGISTRY` before running
+`publish-web.ps1` to override either URL.
+
 ### 4. WIKI Generation flow (standalone process sided by web app)
 
 The Web App started via above but you need WIKI generation flow via below options:
