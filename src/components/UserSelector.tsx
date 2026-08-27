@@ -151,13 +151,13 @@ export default function UserSelector({
             name: 'Azure OpenAI',
             supportsCustomModel: false,
             models: [
-              { id: 'o4-mini', name: 'o4-mini' }
+              { id: 'gpt-5.6-luna', name: 'gpt-5.6-luna' }
             ]
           }]
         });
         if (!provider) {
           setProvider('azure');
-          setModel('o4-mini');
+          setModel('gpt-5.6-luna');
         }
       } finally {
         setIsLoading(false);

@@ -97,7 +97,7 @@ IMPORTANT FORMATTING RULES:
         generator_config = get_model_config(self.provider, self.model)
 
         # Use shared Azure AI client instance (singleton)
-        model_client = get_azure_ai_client(self.model)
+        model_client = get_azure_ai_client(task='chat')
 
         # Set up the main generator
         self.generator = adal.Generator(

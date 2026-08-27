@@ -100,14 +100,29 @@ open_ai_resource_name = "aoai-orcas-deepwiki-kc"
 # EXAMPLE: "RG-SHARED-OPENAI"
 open_ai_resource_group = "RG-ORCAS-DEEPWIKI"
 
+# Chat Model Configuration
+# Purpose: Fast, cost-efficient interactive chat and repository Q&A.
+open_ai_chat_model_deployment_name = "gpt-5.6-luna"
+open_ai_chat_model_model_name = "gpt-5.6-luna"
+open_ai_chat_model_tokens_per_minute = 200
+open_ai_chat_model_version = "2026-07-09"
+open_ai_chat_model_sku_name = "GlobalStandard"
+
 # Reasoning Model Configuration
-# Purpose: A specialized model for complex reasoning and decision-making tasks (e.g., o4-mini).
-# Use Cases: Code generation, debugging, and complex data interpretation.
-open_ai_reasoning_model_deployment_name = "o4-mini"
-open_ai_reasoning_model_model_name = "o4-mini"
+# Purpose: Balanced reasoning for wiki pages, reviews, and CodeTrace.
+open_ai_reasoning_model_deployment_name = "gpt-5.6-terra"
+open_ai_reasoning_model_model_name = "gpt-5.6-terra"
 open_ai_reasoning_model_tokens_per_minute = 200
-open_ai_reasoning_model_version = "2025-04-16"
+open_ai_reasoning_model_version = "2026-07-09"
 open_ai_reasoning_model_sku_name = "GlobalStandard"
+
+# Premium Reasoning Model Configuration
+# Purpose: Deep Research and wiki structure generation.
+open_ai_premium_reasoning_model_deployment_name = "gpt-5.6-sol"
+open_ai_premium_reasoning_model_model_name = "gpt-5.6-sol"
+open_ai_premium_reasoning_model_tokens_per_minute = 200
+open_ai_premium_reasoning_model_version = "2026-07-09"
+open_ai_premium_reasoning_model_sku_name = "GlobalStandard"
 
 # Embedding Model Configuration
 # Purpose: Text embedding model for vector search and RAG.

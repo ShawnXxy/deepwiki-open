@@ -14,6 +14,7 @@ from backend.types.config_types import (
     InfraConfig,
     EmbedderConfig,
     GeneratorConfig,
+    ModelKwargs,
     FileFiltersConfig,
     IncludedConfig,
     LanguageConfig,
@@ -22,6 +23,10 @@ from backend.types.config_types import (
     AzureMLConfig,
 )
 from backend.types.converter import from_dict
+from backend.model_routing import (
+    ModelTask,
+    build_model_kwargs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +41,7 @@ _file_filters_config: Optional[FileFiltersConfig] = None
 _included_config: Optional[IncludedConfig] = None
 _lang_config: Optional[LanguageConfig] = None
 _client_classes: Optional[Dict[str, Any]] = None
-_azure_ai_client: Optional[Any] = None
+_azure_ai_clients: Dict[tuple[str, str, str], Any] = {}
 
 # ============================================================================
 # Environment Configuration
@@ -62,7 +67,7 @@ def set_config_dir(path: str) -> None:
     global CONFIG_DIR
     global _infra_config, _embedder_config, _generator_config
     global _file_filters_config, _included_config, _lang_config
-    global _client_classes, _azure_ai_client
+    global _client_classes, _azure_ai_clients
 
     CONFIG_DIR = path
 
@@ -74,7 +79,7 @@ def set_config_dir(path: str) -> None:
     _included_config = None
     _lang_config = None
     _client_classes = None
-    _azure_ai_client = None
+    _azure_ai_clients = {}
 
 
 # ============================================================================
@@ -194,22 +199,36 @@ def enable_cloud_services() -> None:
     logger.info("Cloud services force-enabled: AI Search, Blob, AML")
 
 
-def get_azure_openai_config(task: str = 'chat') -> Dict[str, str]:
+def _get_azure_openai_llm_config(task: ModelTask):
+    """Return the configured Azure OpenAI section for a model task."""
+    infra = get_infra_config()
+    sections = {
+        "chat": infra.azure_openai.chat,
+        "reasoning": infra.azure_openai.reasoning,
+        "premium_reasoning": infra.azure_openai.premium_reasoning,
+    }
+    try:
+        return sections[task]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported Azure OpenAI task: {task}") from exc
+
+
+def get_azure_openai_config(task: ModelTask = 'chat') -> Dict[str, str]:
     """
     Get Azure OpenAI configuration for a specific task.
 
     Args:
-        task: 'chat' or 'reasoning'
+        task: 'chat', 'reasoning', or 'premium_reasoning'
 
     Returns:
         Dict containing endpoint, api_version, deployment
     """
-    infra = get_infra_config()
-    section = infra.azure_openai.chat if task == 'chat' else infra.azure_openai.reasoning
+    section = _get_azure_openai_llm_config(task)
     return {
         "endpoint": section.endpoint,
         "api_version": section.api_version,
-        "deployment": section.deployment
+        "deployment": section.deployment,
+        "model_name": section.model_name or section.deployment,
     }
 
 
@@ -259,18 +278,20 @@ def is_azure_openai_configured() -> bool:
         return False
 
 
-def get_azure_openai_text_config(task: str = 'chat') -> Dict[str, Any]:
+def get_azure_openai_text_config(
+    task: ModelTask = 'chat'
+) -> Dict[str, Any]:
     """
     Get Azure OpenAI configuration for text generation with MSI authentication.
 
     Args:
-        task: 'chat' or 'reasoning'
+        task: 'chat', 'reasoning', or 'premium_reasoning'
 
     Returns:
         Dict containing azure_endpoint, api_version, and managed_identity_client_id
     """
     infra = get_infra_config()
-    section = infra.azure_openai.chat if task == 'chat' else infra.azure_openai.reasoning
+    section = _get_azure_openai_llm_config(task)
     return {
         "azure_endpoint": section.endpoint,
         "api_version": section.api_version,
@@ -278,23 +299,31 @@ def get_azure_openai_text_config(task: str = 'chat') -> Dict[str, Any]:
     }
 
 
-def get_azure_deployment_name(task: str = 'chat', model_name: str = None) -> str:
+def get_azure_deployment_name(
+    task: ModelTask = 'chat',
+    model_name: str = None,
+) -> str:
     """
     Get the Azure OpenAI deployment name for a specific task.
 
     Args:
-        task: 'chat' or 'reasoning'
+        task: 'chat', 'reasoning', or 'premium_reasoning'
         model_name: Ignored - always uses infra.json deployment for the task
     
     Returns:
         The deployment name from infra.json for the specified task
     """
-    infra = get_infra_config()
-    section = infra.azure_openai.chat if task == 'chat' else infra.azure_openai.reasoning
+    section = _get_azure_openai_llm_config(task)
     deployment = section.deployment
     if model_name and model_name != deployment:
         logger.info(f"Using {task} deployment '{deployment}' (ignoring '{model_name}')")
     return deployment
+
+
+def get_azure_model_name(task: ModelTask = 'chat') -> str:
+    """Return the underlying model name for capability detection."""
+    section = _get_azure_openai_llm_config(task)
+    return section.model_name or section.deployment
 
 
 def get_azure_openai_embedding_config() -> Dict[str, Any]:
@@ -372,13 +401,12 @@ def get_generator_full_config() -> GeneratorConfig:
     """
     global _generator_config
     if _generator_config is None:
-        infra = get_infra_config()
+        model_config = get_model_config(task='chat')
         _generator_config = GeneratorConfig(
             client_class="AzureAIClient",
+            model_kwargs=ModelKwargs(**model_config["model_kwargs"]),
+            initialize_kwargs=get_azure_openai_text_config('chat'),
         )
-        _generator_config.model_kwargs.model = infra.azure_openai.chat.deployment
-        _generator_config.model_kwargs.temperature = infra.azure_openai.chat.temperature
-        _generator_config.initialize_kwargs = get_azure_openai_text_config('chat')
         logger.info("Generator config built from infra.json")
     return _generator_config
 
@@ -507,54 +535,72 @@ def get_client_classes() -> Dict[str, Any]:
     return _client_classes
 
 
-def get_azure_ai_client(task: str = 'chat', model: Optional[str] = None) -> Any:
+def get_azure_ai_client(
+    task: ModelTask = 'chat',
+    model: Optional[str] = None,
+) -> Any:
     """
     Get a shared Azure AI client instance (singleton pattern).
     
     Args:
-        task: 'chat' or 'reasoning' (used to get initialize_kwargs)
+        task: 'chat', 'reasoning', or 'premium_reasoning'
         model: Optional model name (ignored)
         
     Returns:
         Cached AzureAIClient instance
     """
-    global _azure_ai_client
-    if _azure_ai_client is None:
+    global _azure_ai_clients
+    initialize_kwargs = get_azure_openai_text_config(task)
+    cache_key = (
+        initialize_kwargs["azure_endpoint"],
+        initialize_kwargs["api_version"],
+        initialize_kwargs["managed_identity_client_id"] or "",
+    )
+    if cache_key not in _azure_ai_clients:
         from backend.clients.azureai_client import AzureAIClient
-        initialize_kwargs = get_azure_openai_text_config(task)
-        _azure_ai_client = AzureAIClient(**initialize_kwargs)
-        logger.info("[Config] Created shared AzureAIClient instance")
-    return _azure_ai_client
+        _azure_ai_clients[cache_key] = AzureAIClient(**initialize_kwargs)
+        logger.info(
+            f"[Config] Created shared AzureAIClient instance for task={task}"
+        )
+    return _azure_ai_clients[cache_key]
 
 
-def get_model_config(provider: str = None, model: str = None, task: str = 'chat') -> Dict[str, Any]:
+def get_model_config(
+    provider: str = None,
+    model: str = None,
+    task: ModelTask = 'chat',
+) -> Dict[str, Any]:
     """
     Get configuration for Azure OpenAI model.
 
     Parameters:
         provider: Model provider (ignored, always uses 'azure')
         model: Model name (ignored, always uses deployment from infra.json)
-        task: 'chat' or 'reasoning'
+        task: 'chat', 'reasoning', or 'premium_reasoning'
 
     Returns:
         dict: Configuration containing model_client, model and other parameters
     """
-    infra = get_infra_config()
-    section = infra.azure_openai.chat if task == 'chat' else infra.azure_openai.reasoning
+    section = _get_azure_openai_llm_config(task)
     deployment = section.deployment
-    temperature = section.temperature
 
     logger.info(f"Using Azure OpenAI {task} deployment: {deployment}")
 
     client_classes = get_client_classes()
 
+    model_kwargs = build_model_kwargs(
+        deployment,
+        model_name=section.model_name,
+        temperature=section.temperature,
+        reasoning_effort=section.reasoning_effort,
+        verbosity=section.verbosity,
+        max_completion_tokens=section.max_completion_tokens,
+    )
+
     return {
         "model_client": client_classes.get("AzureAIClient"),
         "initialize_kwargs": get_azure_openai_text_config(task),
-        "model_kwargs": {
-            "model": deployment,
-            "temperature": temperature
-        }
+        "model_kwargs": model_kwargs,
     }
 
 

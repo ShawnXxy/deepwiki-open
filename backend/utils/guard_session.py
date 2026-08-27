@@ -198,12 +198,13 @@ class GuardSession:
             credential = _build_credential()
             deployments = _list_deployments(credential, sub_id, rg, account)
 
-            # Find the policy bound to chat and reasoning. Embedding is
+            # Find the policies bound to the three LLM deployments. Embedding is
             # excluded by name match: we only care about the deployments
             # the pipeline will actually call for LLM completions.
             wanted_deployments = {
                 infra.azure_openai.chat.deployment,
                 infra.azure_openai.reasoning.deployment,
+                infra.azure_openai.premium_reasoning.deployment,
             }
             policy_names: List[str] = []
             for d in deployments:

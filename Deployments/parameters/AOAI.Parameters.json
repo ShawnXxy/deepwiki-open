@@ -11,6 +11,21 @@
         "isCreatingOpenAiEndpoint": {
             "value": {{is_creating_open_ai_endpoint}}
         },
+        "openAiChatModelDeploymentName": {
+            "value": "{{open_ai_chat_model_deployment_name}}"
+        },
+        "openAiChatModelModelName": {
+            "value": "{{open_ai_chat_model_model_name}}"
+        },
+        "openAiChatModelTokensPerMinute": {
+            "value": {{open_ai_chat_model_tokens_per_minute}}
+        },
+        "openAiChatModelVersion": {
+            "value": "{{open_ai_chat_model_version}}"
+        },
+        "openAiChatModelSkuName": {
+            "value": "{{open_ai_chat_model_sku_name}}"
+        },
         "openAiReasoningModelDeploymentName": {
             "value": "{{open_ai_reasoning_model_deployment_name}}"
         },
@@ -25,6 +40,21 @@
         },
         "openAiReasoningModelSkuName": {
             "value": "{{open_ai_reasoning_model_sku_name}}"
+        },
+        "openAiPremiumReasoningModelDeploymentName": {
+            "value": "{{open_ai_premium_reasoning_model_deployment_name}}"
+        },
+        "openAiPremiumReasoningModelModelName": {
+            "value": "{{open_ai_premium_reasoning_model_model_name}}"
+        },
+        "openAiPremiumReasoningModelTokensPerMinute": {
+            "value": {{open_ai_premium_reasoning_model_tokens_per_minute}}
+        },
+        "openAiPremiumReasoningModelVersion": {
+            "value": "{{open_ai_premium_reasoning_model_version}}"
+        },
+        "openAiPremiumReasoningModelSkuName": {
+            "value": "{{open_ai_premium_reasoning_model_sku_name}}"
         },
         "openAiEmbeddingDeploymentName": {
             "value": "{{open_ai_embedding_deployment_name}}"
