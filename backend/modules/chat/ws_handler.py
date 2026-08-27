@@ -16,7 +16,6 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from backend.config import (
     get_model_config,
-    configs,
     get_azure_deployment_name,
     get_azure_ai_client,
 )
@@ -37,6 +36,7 @@ from backend.promptstore.wiki_structure import (
     file_tree_dirs_only as _file_tree_dirs_only,
     LANGUAGE_DISPLAY_NAMES,
 )
+from backend.model_routing import select_chat_model_task
 
 # Thread pool for running blocking operations (like embedding)
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -470,8 +470,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                 repo_type=repo_type,
             )
 
-            # Use the backend-built prompt, prepend /no_think
-            prompt = f"/no_think {wiki_prompt}"
+            prompt = wiki_prompt
             logger.info(
                 f"Wiki page prompt built server-side for: "
                 f"{request.page_title} "
@@ -510,7 +509,7 @@ async def handle_websocket_chat(websocket: WebSocket):
             )
 
             # Build the prompt
-            prompt = f"/no_think {system_prompt}\n\n"
+            prompt = f"{system_prompt}\n\n"
 
             if conversation_history:
                 prompt += (
@@ -543,44 +542,29 @@ async def handle_websocket_chat(websocket: WebSocket):
                 f"<query>\n{query}\n</query>\n\nAssistant: "
             )
 
-        # Select model based on task: reasoning for deep research, chat for Q&A
-        task = 'reasoning' if is_deep_research else 'chat'
-        logger.info(f"Using Azure OpenAI task={task} (deep_research={is_deep_research})")
+        task = select_chat_model_task(
+            is_deep_research=is_deep_research,
+            wiki_structure_request=bool(request.wiki_structure_request),
+            wiki_page_request=bool(request.wiki_page_request),
+        )
+        logger.info(
+            f"Using Azure OpenAI task={task} "
+            f"(deep_research={is_deep_research}, "
+            f"wiki_structure={bool(request.wiki_structure_request)}, "
+            f"wiki_page={bool(request.wiki_page_request)})"
+        )
 
         # Get deployment name for the task
         deployment_name = get_azure_deployment_name(task=task)
 
         # Get config for the deployment name (includes initialize_kwargs)
         model_config = get_model_config("azure", deployment_name, task=task)
-        deployment_config = model_config["model_kwargs"]
-        logger.info(f"Azure deployment_config: {deployment_config}")
+        model_kwargs = dict(model_config["model_kwargs"])
+        model_kwargs["stream"] = True
+        logger.info(f"Azure model_kwargs: {model_kwargs}")
 
         # Use shared Azure AI client instance (singleton)
         model = get_azure_ai_client(task=task)
-
-        # Check if this is an o-series reasoning model (o1, o3, o4, etc.)
-        is_reasoning_model = deployment_name.startswith("o") and len(deployment_name) > 1 and deployment_name[1].isdigit()
-
-        # Get temperature from deployment config
-        temperature = deployment_config.get("temperature", 1.0)
-
-        model_kwargs = {
-            "model": deployment_name,
-            "stream": True,
-            "temperature": temperature,
-        }
-        # Only add top_p if it exists (reasoning models don't support it)
-        if "top_p" in deployment_config:
-            model_kwargs["top_p"] = deployment_config["top_p"]
-
-        # Add max_completion_tokens for o-series reasoning models (o1-mini, o4-mini, etc.)
-        # These models require max_completion_tokens instead of max_tokens
-        # Default to 16384 to allow for comprehensive wiki structure generation
-        if is_reasoning_model:
-            model_kwargs["max_completion_tokens"] = deployment_config.get(
-                "max_completion_tokens", 16384
-            )
-            logger.info(f"Reasoning model {deployment_name}: max_completion_tokens={model_kwargs['max_completion_tokens']}")
 
         # Debug: Log model_kwargs before conversion
         debug_model_kwargs = {k: v for k, v in model_kwargs.items() if k != 'messages'}
@@ -612,7 +596,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                     return
 
             # Start a keepalive task that pings every 15s while waiting
-            # for the LLM to respond. Reasoning models (o4-mini) can
+            # for the LLM to respond. Reasoning models can
             # take 30-130s before the first chunk — without pings the
             # browser closes the idle WebSocket on inactive tabs.
             _llm_keepalive_active = True
@@ -750,7 +734,7 @@ async def handle_websocket_chat(websocket: WebSocket):
                     )
                     request.messages[-1].content = retry_prompt
                     retry_kwargs = model.convert_inputs_to_api_kwargs(
-                        input=f"/no_think {retry_prompt}",
+                        input=retry_prompt,
                         model_kwargs=model_kwargs,
                         model_type=ModelType.LLM,
                     )
@@ -856,7 +840,7 @@ async def _handle_fallback_request(
 ):
     """Handle fallback request when token limit is exceeded."""
     try:
-        simplified_prompt = f"/no_think {system_prompt}\n\n"
+        simplified_prompt = f"{system_prompt}\n\n"
         if conversation_history:
             simplified_prompt += (
                 f"<conversation_history>\n{conversation_history}"

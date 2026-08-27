@@ -11,8 +11,7 @@ from adalflow.core.types import ModelType
 from fastapi.responses import StreamingResponse
 
 from backend.config import (
-    get_model_config, configs, get_azure_deployment_name,
-    get_azure_ai_client
+    get_model_config, get_azure_deployment_name, get_azure_ai_client,
 )
 from backend.modules.embedder import RAG
 from backend.modules.embedder.tokenizer import count_tokens
@@ -24,6 +23,7 @@ from backend.modules.chat.service import (
     format_conversation_history,
     format_context_text,
 )
+from backend.model_routing import select_chat_model_task
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +232,7 @@ async def chat_completions_stream(request: ChatCompletionRequest):
         conversation_history = format_conversation_history(request_rag.memory())
 
         # Build the prompt
-        prompt = f"/no_think {system_prompt}\n\n"
+        prompt = f"{system_prompt}\n\n"
 
         if conversation_history:
             prompt += (
@@ -254,8 +254,9 @@ async def chat_completions_stream(request: ChatCompletionRequest):
 
         prompt += f"<query>\n{query}\n</query>\n\nAssistant: "
 
-        # Select model based on task: reasoning for deep research, chat for Q&A
-        task = 'reasoning' if is_deep_research else 'chat'
+        task = select_chat_model_task(
+            is_deep_research=is_deep_research,
+        )
         logger.info(f"Using Azure OpenAI task={task} (deep_research={is_deep_research})")
 
         # Use shared Azure AI client instance (singleton)
@@ -263,16 +264,12 @@ async def chat_completions_stream(request: ChatCompletionRequest):
         deployment_name = get_azure_deployment_name(task=task)
         logger.info(f"Using Azure deployment: {deployment_name}")
 
-        deployment_config = get_model_config("azure", deployment_name, task=task)["model_kwargs"]
-        temperature = deployment_config.get("temperature", 1.0)
-
-        model_kwargs = {
-            "model": deployment_name,
-            "stream": True,
-            "temperature": temperature,
-        }
-        if "top_p" in deployment_config:
-            model_kwargs["top_p"] = deployment_config["top_p"]
+        model_kwargs = dict(
+            get_model_config(
+                "azure", deployment_name, task=task
+            )["model_kwargs"]
+        )
+        model_kwargs["stream"] = True
 
         logger.info(f"Azure model_kwargs: {model_kwargs}")
 

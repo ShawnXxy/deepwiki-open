@@ -10,15 +10,30 @@
   "azure_openai": {
     "chat": {
       "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
-      "api_version": "2025-04-01-preview",
-      "deployment": "gpt-5.1-chat",
-      "temperature": 1.0
+      "api_version": "v1",
+      "deployment": "gpt-5.6-luna",
+      "model_name": "gpt-5.6-luna",
+      "reasoning_effort": "low",
+      "verbosity": "medium",
+      "max_completion_tokens": 16384
     },
     "reasoning": {
       "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
-      "api_version": "2025-04-01-preview",
-      "deployment": "gpt-5.4",
-      "temperature": 1.0
+      "api_version": "v1",
+      "deployment": "gpt-5.6-terra",
+      "model_name": "gpt-5.6-terra",
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "max_completion_tokens": 16384
+    },
+    "premium_reasoning": {
+      "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",
+      "api_version": "v1",
+      "deployment": "gpt-5.6-sol",
+      "model_name": "gpt-5.6-sol",
+      "reasoning_effort": "xhigh",
+      "verbosity": "medium",
+      "max_completion_tokens": 16384
     },
     "embedding": {
       "endpoint": "https://aoai-orcas-deepwiki-kc.openai.azure.com",

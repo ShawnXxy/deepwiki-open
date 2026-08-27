@@ -185,18 +185,20 @@ Different tasks use different Azure OpenAI deployments configured in `infra.json
 
 ```json
 "azure_openai": {
-  "chat":      { "deployment": "gpt-5.1-chat" },
-  "reasoning": { "deployment": "gpt-5.4" },
+  "chat":             { "deployment": "gpt-5.6-luna" },
+  "reasoning":        { "deployment": "gpt-5.6-terra" },
+  "premium_reasoning": { "deployment": "gpt-5.6-sol" },
   "embedding": { "deployment": "text-embedding-3-large" }
 }
 ```
 
 | Task | Model Type | Deployment | Why |
 |------|-----------|------------|-----|
-| Chat Q&A | Chat | `gpt-5.1-chat` | Fast, low latency for interactive conversations |
-| Deep Research | Reasoning | `gpt-5.4` | Multi-turn investigation benefits from deeper reasoning |
-| Wiki Structure | Reasoning | `gpt-5.4` | Architectural planning across large codebases |
-| Wiki Pages | Reasoning | `gpt-5.4` | Technical documentation with diagrams and citations |
+| Chat Q&A | Chat | `gpt-5.6-luna` | Efficient, high-volume interactive conversations |
+| CodeTrace | Reasoning | `gpt-5.6-terra` | Balanced code analysis and cost |
+| Wiki Pages and Review | Reasoning | `gpt-5.6-terra` | Balanced documentation generation |
+| Deep Research | Premium reasoning | `gpt-5.6-sol` | Quality-first, multi-turn investigation |
+| Wiki Structure | Premium reasoning | `gpt-5.6-sol` | Architectural planning across large codebases |
 | Embedding | Embedding | `text-embedding-3-large` | 3072-dimension vectors for code search |
 
 ### Project Structure
@@ -258,7 +260,7 @@ For detailed module documentation, see:
 > 
 > | Resource | Purpose |
 > |----------|---------|
-> | **Azure OpenAI** | Text generation (gpt-5.1/o4-mini) + embeddings (text-embedding-3-large) |
+> | **Azure OpenAI** | Text generation (`gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`) + embeddings (`text-embedding-3-large`) |
 > | **Azure Blob Storage** | Store vectors, wiki cache, repos (cloud mode) |
 > | **Managed Identity (UMI)** | Authenticate between Azure resources |
 > | **Azure Machine Learning** | Scheduled processing pipeline (cloud mode) |
@@ -299,15 +301,30 @@ Edit `backend/config/infra.json` with your Azure endpoints:
   "azure_openai": {
     "chat": {
       "endpoint": "https://your-resource.openai.azure.com",
-      "api_version": "2025-04-01-preview",
-      "deployment": "gpt-5.1-chat",
-      "temperature": 1.0
+      "api_version": "v1",
+      "deployment": "gpt-5.6-luna",
+      "model_name": "gpt-5.6-luna",
+      "reasoning_effort": "low",
+      "verbosity": "medium",
+      "max_completion_tokens": 16384
     },
     "reasoning": {
       "endpoint": "https://your-resource.openai.azure.com",
-      "api_version": "2025-04-01-preview",
-      "deployment": "gpt-5.1",
-      "temperature": 1.0
+      "api_version": "v1",
+      "deployment": "gpt-5.6-terra",
+      "model_name": "gpt-5.6-terra",
+      "reasoning_effort": "medium",
+      "verbosity": "medium",
+      "max_completion_tokens": 16384
+    },
+    "premium_reasoning": {
+      "endpoint": "https://your-resource.openai.azure.com",
+      "api_version": "v1",
+      "deployment": "gpt-5.6-sol",
+      "model_name": "gpt-5.6-sol",
+      "reasoning_effort": "xhigh",
+      "verbosity": "medium",
+      "max_completion_tokens": 16384
     },
     "embedding": {
       "endpoint": "https://your-resource.openai.azure.com",
@@ -366,6 +383,12 @@ npm run dev
 # Ensure Deployments/config.py has correct resource names
 .\publish-web.ps1
 ```
+
+The Docker build uses the organization package proxies by default:
+`https://packagefeedproxy.microsoft.io/npm/` for npm and
+`https://packagefeedproxy.microsoft.io/pypi/simple/` for pip and Poetry.
+Set `DEEPWIKI_NPM_REGISTRY` or `DEEPWIKI_PYPI_REGISTRY` before running
+`publish-web.ps1` to override either URL.
 
 ### 4. WIKI Generation flow (standalone process sided by web app)
 
@@ -769,13 +792,22 @@ All configuration is centralized in `backend/config/infra.json`.
 | `managed_identity.name` | Name of the User-Assigned Managed Identity |
 | `managed_identity.client_id` | Client ID of the Managed Identity |
 | `azure_openai.chat.endpoint` | Azure OpenAI endpoint for chat models |
-| `azure_openai.chat.api_version` | API version (e.g., `2025-04-01-preview`) |
-| `azure_openai.chat.deployment` | Deployment name for interactive chat (e.g., `gpt-5.1-chat`) |
-| `azure_openai.chat.temperature` | Temperature for chat responses (default `1.0`) |
+| `azure_openai.chat.api_version` | Azure OpenAI data-plane API (`v1` for GPT-5.6) |
+| `azure_openai.chat.deployment` | Deployment name for interactive chat (for example, `gpt-5.6-luna`) |
+| `azure_openai.chat.model_name` | Underlying model name used for capability detection |
+| `azure_openai.chat.reasoning_effort` | Default reasoning effort for interactive chat |
 | `azure_openai.reasoning.endpoint` | Azure OpenAI endpoint for reasoning models |
 | `azure_openai.reasoning.api_version` | API version for reasoning |
-| `azure_openai.reasoning.deployment` | Deployment name for wiki generation + deep research (e.g., `gpt-5.1`) |
-| `azure_openai.reasoning.temperature` | Temperature for reasoning responses (default `1.0`) |
+| `azure_openai.reasoning.deployment` | Balanced deployment for wiki pages, reviews, and CodeTrace |
+| `azure_openai.reasoning.model_name` | Underlying balanced model name |
+| `azure_openai.reasoning.reasoning_effort` | Default reasoning effort for balanced workloads |
+| `azure_openai.premium_reasoning.endpoint` | Azure OpenAI endpoint for premium reasoning |
+| `azure_openai.premium_reasoning.api_version` | API version for premium reasoning |
+| `azure_openai.premium_reasoning.deployment` | Premium deployment for Deep Research and wiki structure |
+| `azure_openai.premium_reasoning.model_name` | Underlying premium model name |
+| `azure_openai.premium_reasoning.reasoning_effort` | Default reasoning effort for premium workloads |
+| `azure_openai.*.verbosity` | Default response verbosity (`low`, `medium`, or `high`) |
+| `azure_openai.*.max_completion_tokens` | Maximum reasoning and visible output tokens |
 | `azure_openai.embedding.endpoint` | Azure OpenAI endpoint for embeddings |
 | `azure_openai.embedding.api_version` | API version for embeddings |
 | `azure_openai.embedding.deployment` | Deployment name for embeddings (e.g., `text-embedding-3-large`) |

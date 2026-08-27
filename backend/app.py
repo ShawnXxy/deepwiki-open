@@ -72,7 +72,7 @@ async def get_model_config_endpoint():
     """Return available model providers from infra.json."""
     try:
         azure_config = get_azure_openai_config(task='chat')
-        deployment = azure_config.get("deployment", "o4-mini")
+        deployment = azure_config.get("deployment", "gpt-5.6-luna")
         return ModelConfig(
             providers=[
                 Provider(
@@ -92,7 +92,12 @@ async def get_model_config_endpoint():
                     id="azure",
                     name="Azure OpenAI",
                     supportsCustomModel=False,
-                    models=[Model(id="o4-mini", name="o4-mini")],
+                    models=[
+                        Model(
+                            id="gpt-5.6-luna",
+                            name="gpt-5.6-luna",
+                        )
+                    ],
                 )
             ],
             defaultProvider="azure",
@@ -157,7 +162,7 @@ async def health_openai():
 
     try:
         azure_config = get_azure_openai_config(task='chat')
-        deployment = azure_config.get("deployment", "o4-mini")
+        deployment = azure_config.get("deployment", "gpt-5.6-luna")
         model = get_azure_ai_client(task='chat')
         deployment_name = get_azure_deployment_name(task='chat')
 

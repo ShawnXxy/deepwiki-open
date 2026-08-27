@@ -86,8 +86,7 @@ def repair_wiki_structure_xml(partial: str) -> Optional[str]:
     if not partial:
         return None
 
-    # Strip any leading non-XML content (reasoning model may emit
-    # thinking tokens before the XML even with /no_think).
+    # Strip any leading non-XML content the model emitted before the XML.
     ws_start = partial.find('<wiki_structure>')
     if ws_start < 0:
         # Maybe partial starts with <wiki_structure but was cut inside

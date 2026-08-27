@@ -39,7 +39,13 @@ for name, module in zip(azure_module_names, azure_modules):
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 # from azure.core.credentials import AccessToken
-from openai import AzureOpenAI, AsyncAzureOpenAI, Stream
+from openai import (
+    AsyncAzureOpenAI,
+    AsyncOpenAI,
+    AzureOpenAI,
+    OpenAI,
+    Stream,
+)
 from openai import (
     APIConnectionError,
     APITimeoutError,
@@ -618,10 +624,21 @@ class AzureAIClient(ModelClient):
         if not api_version:
             raise ValueError("AZURE_OPENAI_VERSION must be set")
 
+        use_v1_api = api_version.lower() == "v1"
+        base_url = (
+            f"{azure_endpoint.rstrip('/')}/openai/v1/"
+            if use_v1_api else None
+        )
+
         if self._should_use_api_key():
             api_key = os.getenv("AZURE_OPENAI_API_KEY", "").strip()
             masked = api_key[:6] + '***' if len(api_key) > 6 else '***'
             log.info(f"🔑 [AzureOpenAI] Auth method: API Key ({masked})")
+            if use_v1_api:
+                return OpenAI(
+                    api_key=api_key,
+                    base_url=base_url,
+                )
             return AzureOpenAI(
                 api_key=api_key,
                 azure_endpoint=azure_endpoint,
@@ -632,8 +649,18 @@ class AzureAIClient(ModelClient):
                      "(MSI/CLI fallback)")
             credential = self._get_credential()
             token_provider = get_bearer_token_provider(
-                credential, "https://cognitiveservices.azure.com/.default"
+                credential,
+                (
+                    "https://ai.azure.com/.default"
+                    if use_v1_api
+                    else "https://cognitiveservices.azure.com/.default"
+                ),
             )
+            if use_v1_api:
+                return OpenAI(
+                    api_key=token_provider,
+                    base_url=base_url,
+                )
             return AzureOpenAI(
                 azure_ad_token_provider=token_provider,
                 azure_endpoint=azure_endpoint,
@@ -659,10 +686,21 @@ class AzureAIClient(ModelClient):
         if not api_version:
             raise ValueError("AZURE_OPENAI_VERSION must be set")
 
+        use_v1_api = api_version.lower() == "v1"
+        base_url = (
+            f"{azure_endpoint.rstrip('/')}/openai/v1/"
+            if use_v1_api else None
+        )
+
         if self._should_use_api_key():
             api_key = os.getenv("AZURE_OPENAI_API_KEY", "").strip()
             masked = api_key[:6] + '***' if len(api_key) > 6 else '***'
             log.info(f"🔑 [AzureOpenAI Async] Auth method: API Key ({masked})")
+            if use_v1_api:
+                return AsyncOpenAI(
+                    api_key=api_key,
+                    base_url=base_url,
+                )
             return AsyncAzureOpenAI(
                 api_key=api_key,
                 azure_endpoint=azure_endpoint,
@@ -672,8 +710,21 @@ class AzureAIClient(ModelClient):
             log.info("🔐 [AzureOpenAI Async] Auth method: Azure Identity")
             credential = self._get_credential()
             token_provider = get_bearer_token_provider(
-                credential, "https://cognitiveservices.azure.com/.default"
+                credential,
+                (
+                    "https://ai.azure.com/.default"
+                    if use_v1_api
+                    else "https://cognitiveservices.azure.com/.default"
+                ),
             )
+            if use_v1_api:
+                async def async_token_provider() -> str:
+                    return await asyncio.to_thread(token_provider)
+
+                return AsyncOpenAI(
+                    api_key=async_token_provider,
+                    base_url=base_url,
+                )
             return AsyncAzureOpenAI(
                 azure_ad_token_provider=token_provider,
                 azure_endpoint=azure_endpoint,

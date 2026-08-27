@@ -63,7 +63,7 @@ Frontend (Ask.tsx)
 
 4. **Wiki generation support** — The handler also processes `wiki_structure_request` and `wiki_page_request` messages, building server-side prompts and streaming wiki content back. This is the WebSocket path (alternative to the CLI processor).
 
-5. **LLM keepalive pings** — For reasoning models (`o1-mini`, `o4-mini`) that may think for 30+ seconds, sends 15-second keepalive pings during generation.
+5. **LLM keepalive pings** — For reasoning models that may take 30+ seconds before the first token, sends 15-second keepalive pings during generation.
 
 6. **Content filter retry** — If Azure OpenAI returns a content filter error, automatically retries with a sanitized file tree (directories only, README omitted).
 

@@ -7,14 +7,27 @@
 #   docker run -v ~/.adalflow:/root/.adalflow --env-file backend/.env \
 #     deepwiki-processor --config=backend/run.json
 
+ARG PYPI_REGISTRY="https://packagefeedproxy.microsoft.io/pypi/simple/"
+ARG POETRY_VERSION="2.0.1"
+ARG POETRY_MIRROR_PLUGIN_VERSION="0.5.0"
+
 FROM python:3.11-slim AS py_deps
+ARG PYPI_REGISTRY
+ARG POETRY_VERSION
+ARG POETRY_MIRROR_PLUGIN_VERSION
 WORKDIR /app
 COPY pyproject.toml poetry.lock ./
-RUN python -m pip install poetry==2.0.1 --no-cache-dir && \
+RUN python -m pip install \
+        --index-url "${PYPI_REGISTRY}" \
+        --no-cache-dir \
+        "poetry==${POETRY_VERSION}" \
+        "poetry-plugin-pypi-mirror==${POETRY_MIRROR_PLUGIN_VERSION}" && \
     poetry config virtualenvs.create true --local && \
     poetry config virtualenvs.in-project true --local && \
     poetry config virtualenvs.options.always-copy --local true && \
-    POETRY_MAX_WORKERS=10 poetry install --no-interaction --no-ansi --only main && \
+    POETRY_PYPI_MIRROR_URL="${PYPI_REGISTRY}" \
+        POETRY_MAX_WORKERS=10 \
+        poetry install --no-interaction --no-ansi --only main && \
     poetry cache clear --all .
 
 FROM python:3.11-slim

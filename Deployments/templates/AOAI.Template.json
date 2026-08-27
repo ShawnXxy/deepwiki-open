@@ -22,23 +22,64 @@
                 "description": "Specifies whether to create the OpenAI endpoint. If not, we assume the endpoint already exists."
             }
         },
+        "openAiChatModelDeploymentName": {
+            "defaultValue": "gpt-5.6-luna",
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the chat model deployment name."
+            }
+        },
+        "openAiChatModelModelName": {
+            "defaultValue": "gpt-5.6-luna",
+            "allowedValues": [
+                "gpt-5.6-luna",
+                "gpt-5.6-terra",
+                "gpt-5.6-sol"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the chat model."
+            }
+        },
+        "openAiChatModelTokensPerMinute": {
+            "defaultValue": 200,
+            "type": "int",
+            "metadata": {
+                "description": "Token capacity for the chat model."
+            }
+        },
+        "openAiChatModelVersion": {
+            "defaultValue": "2026-07-09",
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the chat model version."
+            }
+        },
+        "openAiChatModelSkuName": {
+            "defaultValue": "GlobalStandard",
+            "allowedValues": [
+                "Standard",
+                "GlobalStandard",
+                "DataZoneStandard"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the chat model SKU."
+            }
+        },
         "openAiReasoningModelDeploymentName": {
-            "defaultValue": "o4-mini",
+            "defaultValue": "gpt-5.6-terra",
             "type": "string",
             "metadata": {
                 "description": "Specifies the name of the reasoning model deployment."
             }
         },
         "openAiReasoningModelModelName": {
-            "defaultValue": "o4-mini",
+            "defaultValue": "gpt-5.6-terra",
             "allowedValues": [
-                "o1-preview",
-                "o3-mini",
-                "o3",
-                "o3-pro",
-                "o4-mini",
-                "gpt-5",
-                "gpt-5-mini"
+                "gpt-5.6-luna",
+                "gpt-5.6-terra",
+                "gpt-5.6-sol"
             ],
             "type": "string",
             "metadata": {
@@ -53,7 +94,7 @@
             }
         },
         "openAiReasoningModelVersion": {
-            "defaultValue": "2025-04-16",
+            "defaultValue": "2026-07-09",
             "type": "string",
             "metadata": {
                 "description": "Specifies the version of the reasoning model."
@@ -69,6 +110,51 @@
             "type": "string",
             "metadata": {
                 "description": "Specifies the SKU name of the reasoning model."
+            }
+        },
+        "openAiPremiumReasoningModelDeploymentName": {
+            "defaultValue": "gpt-5.6-sol",
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the premium reasoning deployment name."
+            }
+        },
+        "openAiPremiumReasoningModelModelName": {
+            "defaultValue": "gpt-5.6-sol",
+            "allowedValues": [
+                "gpt-5.6-luna",
+                "gpt-5.6-terra",
+                "gpt-5.6-sol"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the premium reasoning model."
+            }
+        },
+        "openAiPremiumReasoningModelTokensPerMinute": {
+            "defaultValue": 200,
+            "type": "int",
+            "metadata": {
+                "description": "Token capacity for the premium reasoning model."
+            }
+        },
+        "openAiPremiumReasoningModelVersion": {
+            "defaultValue": "2026-07-09",
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the premium reasoning model version."
+            }
+        },
+        "openAiPremiumReasoningModelSkuName": {
+            "defaultValue": "GlobalStandard",
+            "allowedValues": [
+                "Standard",
+                "GlobalStandard",
+                "DataZoneStandard"
+            ],
+            "type": "string",
+            "metadata": {
+                "description": "Specifies the premium reasoning model SKU."
             }
         },
         "openAiEmbeddingDeploymentName": {
@@ -133,7 +219,9 @@
     },
     "variables": {
         "openAiResourceId": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAiResourceName'))]",
-        "openAiReasoningModelDeploymentId": "[resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('openAiResourceName'), parameters('openAiReasoningModelDeploymentName'))]"
+        "openAiChatModelDeploymentId": "[resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('openAiResourceName'), parameters('openAiChatModelDeploymentName'))]",
+        "openAiReasoningModelDeploymentId": "[resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('openAiResourceName'), parameters('openAiReasoningModelDeploymentName'))]",
+        "openAiPremiumReasoningModelDeploymentId": "[resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('openAiResourceName'), parameters('openAiPremiumReasoningModelDeploymentName'))]"
     },
     "resources": [
         {
@@ -164,6 +252,29 @@
             "condition": "[parameters('isCreatingOpenAiEndpoint')]",
             "type": "Microsoft.CognitiveServices/accounts/deployments",
             "apiVersion": "2025-04-01-preview",
+            "name": "[concat(parameters('openAiResourceName'), '/', parameters('openAiChatModelDeploymentName'))]",
+            "dependsOn": [
+                "[variables('openAiResourceId')]"
+            ],
+            "sku": {
+                "name": "[parameters('openAiChatModelSkuName')]",
+                "capacity": "[parameters('openAiChatModelTokensPerMinute')]"
+            },
+            "properties": {
+                "model": {
+                    "format": "OpenAI",
+                    "name": "[parameters('openAiChatModelModelName')]",
+                    "version": "[parameters('openAiChatModelVersion')]"
+                },
+                "versionUpgradeOption": "OnceNewDefaultVersionAvailable",
+                "currentCapacity": "[parameters('openAiChatModelTokensPerMinute')]",
+                "raiPolicyName": "Microsoft.Default"
+            }
+        },
+        {
+            "condition": "[parameters('isCreatingOpenAiEndpoint')]",
+            "type": "Microsoft.CognitiveServices/accounts/deployments",
+            "apiVersion": "2025-04-01-preview",
             "name": "[concat(parameters('openAiResourceName'), '/', parameters('openAiReasoningModelDeploymentName'))]",
             "dependsOn": [
                 "[variables('openAiResourceId')]"
@@ -186,11 +297,36 @@
         {
             "condition": "[parameters('isCreatingOpenAiEndpoint')]",
             "type": "Microsoft.CognitiveServices/accounts/deployments",
+            "apiVersion": "2025-04-01-preview",
+            "name": "[concat(parameters('openAiResourceName'), '/', parameters('openAiPremiumReasoningModelDeploymentName'))]",
+            "dependsOn": [
+                "[variables('openAiResourceId')]"
+            ],
+            "sku": {
+                "name": "[parameters('openAiPremiumReasoningModelSkuName')]",
+                "capacity": "[parameters('openAiPremiumReasoningModelTokensPerMinute')]"
+            },
+            "properties": {
+                "model": {
+                    "format": "OpenAI",
+                    "name": "[parameters('openAiPremiumReasoningModelModelName')]",
+                    "version": "[parameters('openAiPremiumReasoningModelVersion')]"
+                },
+                "versionUpgradeOption": "OnceNewDefaultVersionAvailable",
+                "currentCapacity": "[parameters('openAiPremiumReasoningModelTokensPerMinute')]",
+                "raiPolicyName": "Microsoft.Default"
+            }
+        },
+        {
+            "condition": "[parameters('isCreatingOpenAiEndpoint')]",
+            "type": "Microsoft.CognitiveServices/accounts/deployments",
             "apiVersion": "2023-10-01-preview",
             "name": "[concat(parameters('openAiResourceName'), '/', parameters('openAiEmbeddingDeploymentName'))]",
             "dependsOn": [
                 "[variables('openAiResourceId')]",
-                "[variables('openAiReasoningModelDeploymentId')]"
+                "[variables('openAiChatModelDeploymentId')]",
+                "[variables('openAiReasoningModelDeploymentId')]",
+                "[variables('openAiPremiumReasoningModelDeploymentId')]"
             ],
             "sku": {
                 "name": "[parameters('openAiEmbeddingSkuName')]",

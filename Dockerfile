@@ -2,13 +2,20 @@
 
 # Build argument for custom certificates directory
 ARG CUSTOM_CERT_DIR="certs"
+ARG NPM_REGISTRY="https://packagefeedproxy.microsoft.io/npm/"
+ARG PYPI_REGISTRY="https://packagefeedproxy.microsoft.io/pypi/simple/"
+ARG POETRY_VERSION="2.0.1"
+ARG POETRY_MIRROR_PLUGIN_VERSION="0.5.0"
 
 FROM node:20-alpine3.22 AS node_base
 
 FROM node_base AS node_deps
+ARG NPM_REGISTRY
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --legacy-peer-deps
+RUN npm config set registry "${NPM_REGISTRY}" && \
+    npm config set replace-registry-host always && \
+    npm ci --legacy-peer-deps --no-audit --no-fund
 
 FROM node_base AS node_builder
 WORKDIR /app
@@ -23,14 +30,23 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN NODE_ENV=production npm run build
 
 FROM python:3.11-slim AS py_deps
+ARG PYPI_REGISTRY
+ARG POETRY_VERSION
+ARG POETRY_MIRROR_PLUGIN_VERSION
 WORKDIR /app
 COPY pyproject.toml .
 COPY poetry.lock .
-RUN python -m pip install poetry==2.0.1 --no-cache-dir && \
+RUN python -m pip install \
+        --index-url "${PYPI_REGISTRY}" \
+        --no-cache-dir \
+        "poetry==${POETRY_VERSION}" \
+        "poetry-plugin-pypi-mirror==${POETRY_MIRROR_PLUGIN_VERSION}" && \
     poetry config virtualenvs.create true --local && \
     poetry config virtualenvs.in-project true --local && \
     poetry config virtualenvs.options.always-copy --local true && \
-    POETRY_MAX_WORKERS=10 poetry install --no-interaction --no-ansi --only main && \
+    POETRY_PYPI_MIRROR_URL="${PYPI_REGISTRY}" \
+        POETRY_MAX_WORKERS=10 \
+        poetry install --no-interaction --no-ansi --only main && \
     poetry cache clear --all .
 
 # Use Python 3.11 as final image

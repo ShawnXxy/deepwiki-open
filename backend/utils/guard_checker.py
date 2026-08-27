@@ -327,8 +327,8 @@ def check_content_filters(
                 "resource_group": "...",
                 "deployments": [
                     {
-                        "name": "gpt-5.1-chat",
-                        "model": "gpt-5.1",
+                        "name": "gpt-5.6-luna",
+                        "model": "gpt-5.6-luna",
                         "rai_policy": "Microsoft.DefaultV2",
                         "filters": [
                             {"name": "Hate", "source": "Prompt",

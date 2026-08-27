@@ -3,7 +3,7 @@ Type classes for DeepWiki configuration JSON files.
 These classes provide strong typing and validation for configuration data.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field, validator
 
 
@@ -26,9 +26,15 @@ class AzureAccountConfig(BaseModel):
 class AzureOpenAILLMConfig(BaseModel):
     """Azure OpenAI configuration for a single LLM deployment (chat or reasoning)."""
     endpoint: str
-    api_version: str = "2025-04-01-preview"
+    api_version: str = "v1"
     deployment: str
-    temperature: float = 1.0
+    model_name: Optional[str] = None
+    temperature: Optional[float] = None
+    reasoning_effort: Optional[
+        Literal["none", "low", "medium", "high", "xhigh"]
+    ] = None
+    verbosity: Optional[Literal["low", "medium", "high"]] = None
+    max_completion_tokens: int = 16384
 
 
 class AzureOpenAIEmbeddingConfig(BaseModel):
@@ -40,9 +46,10 @@ class AzureOpenAIEmbeddingConfig(BaseModel):
 
 
 class AzureOpenAIGroupConfig(BaseModel):
-    """Groups all Azure OpenAI deployments: chat, reasoning, embedding."""
+    """Groups the chat, balanced, premium, and embedding deployments."""
     chat: AzureOpenAILLMConfig
     reasoning: AzureOpenAILLMConfig
+    premium_reasoning: AzureOpenAILLMConfig
     embedding: AzureOpenAIEmbeddingConfig
 
 

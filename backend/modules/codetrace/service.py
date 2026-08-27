@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 
 from adalflow.core.types import ModelType
 
-from backend.config import get_azure_ai_client, get_azure_deployment_name
+from backend.config import (
+    get_azure_ai_client,
+    get_azure_deployment_name,
+    get_azure_model_name,
+)
 from backend.modules.chat.service import (
     format_context_text,
     get_language_info,
@@ -23,6 +27,7 @@ from backend.promptstore.code_trace import (
     CODE_TRACE_SYSTEM_PROMPT,
     CODE_TRACE_USER_PROMPT,
 )
+from backend.model_routing import build_model_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -94,17 +99,19 @@ def generate_code_trace(
     logger.info("[CodeTrace] Calling LLM for code trace generation")
     model_client = get_azure_ai_client(task='reasoning')
     deployment = get_azure_deployment_name(task='reasoning')
+    model_name = get_azure_model_name(task='reasoning')
 
-    api_kwargs = {
-        'model': deployment,
-        'messages': [
-            {'role': 'system', 'content': system_prompt},
-            {'role': 'user', 'content': user_prompt},
-        ],
-        'reasoning_effort': 'medium',
-        'verbosity': 'medium',
-        'max_completion_tokens': 16384,
-    }
+    api_kwargs = build_model_kwargs(
+        deployment,
+        model_name=model_name,
+        reasoning_effort='medium',
+        verbosity='medium',
+        max_completion_tokens=16384,
+    )
+    api_kwargs['messages'] = [
+        {'role': 'system', 'content': system_prompt},
+        {'role': 'user', 'content': user_prompt},
+    ]
 
     response = model_client.call(
         api_kwargs=api_kwargs, model_type=ModelType.LLM,
